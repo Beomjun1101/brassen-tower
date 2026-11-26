@@ -2431,6 +2431,10 @@
     line(context, [gauge, [gauge[0] - camera.unit * 0.10, gauge[1] + camera.unit * 0.055]], "#bcdae0", 1.4);
   }
 
+  function storyDevicePosition(entry) {
+    return entry.atExit ? { x: entry.x - 0.6, y: entry.y - 0.95 } : entry;
+  }
+
   function storyApparatus(context, camera, entry, palette, seconds, reduced) {
     const { unit } = camera;
     const { x, y } = entry;
@@ -2668,7 +2672,10 @@
     const swingRemaining = actor.swingLife ?? actor.attackFlash ?? 0;
     const swingAngle = prior && swingRemaining > 0 && swingRemaining <= prior.swingRemaining + 0.006
       ? prior.swingAngle : targetAngle;
-    const pose = { x: actor.x, y: actor.y, hp: actor.hp, look, facingRight, travel, gait, cadence, peak, anticipation, windup: enemyWindup,
+    const verticalLook = Math.sin(look);
+    const armSide = clamp(horizontalLook * 2.8 + verticalLook * 0.55, -1, 1);
+    const armDepth = verticalLook * 0.071;
+    const pose = { x: actor.x, y: actor.y, hp: actor.hp, look, facingRight, armSide, armDepth, travel, gait, cadence, peak, anticipation, windup: enemyWindup,
       guarded, charge, dashing, releaseAge, recoil: reduced ? 0 : recoil, impact, swingAngle, swingRemaining,
       hurtAge, stepLength: profile[1] * gait * 0.72, stride: Math.sin(cadence) * profile[1] * gait * 0.70, lift: profile[2],
       breath: reduced ? 0 : Math.sin(cadence * 0.38 + actor.x * 0.18) * (1 - gait) * 0.027 };
@@ -2700,6 +2707,39 @@
     line(context, [[ax, ay], [ax * 0.52 + bx * 0.48, ay * 0.52 + by * 0.48]], light, 0.85);
   }
 
+  function armJoints(shoulder, target, size, bend, upper = 0.24, lower = 0.22) {
+    const dx = target[0] - shoulder[0];
+    const dy = target[1] - shoulder[1];
+    const length = Math.hypot(dx, dy);
+    const ux = length > 0.001 ? dx / length : 0;
+    const uy = length > 0.001 ? dy / length : 1;
+    const reach = clamp(length / size, Math.abs(upper - lower) + 0.012, upper + lower - 0.012);
+    const fold = (reach * reach + upper * upper - lower * lower) / (2 * reach);
+    // Keep a visible forearm when the side-on bend foreshortens near the camera axis.
+    const front = 1 - Math.min(1, Math.abs(bend) * 2);
+    const along = fold + (clamp(fold, reach * 0.32, reach * 0.68) - fold) * front;
+    const across = Math.sqrt(Math.max(0, upper * upper - fold * fold)) * bend;
+    return [shoulder, [shoulder[0] + (ux * along - uy * across) * size,
+      shoulder[1] + (uy * along + ux * across) * size],
+    [shoulder[0] + ux * reach * size, shoulder[1] + uy * reach * size]];
+  }
+
+  function paintArm(context, [shoulder, elbow, wrist], size, metal, edge) {
+    const normal = (a, b) => {
+      const dx = b[0] - a[0], dy = b[1] - a[1];
+      const length = Math.hypot(dx, dy) || 1;
+      return [-dy / length, dx / length];
+    };
+    const upper = normal(shoulder, elbow);
+    const lower = normal(elbow, wrist);
+    const middle = [(upper[0] + lower[0]) * 0.5, (upper[1] + lower[1]) * 0.5];
+    const offset = (point, axis, amount) => [point[0] + axis[0] * amount * size, point[1] + axis[1] * amount * size];
+    forgedPlate(context, [
+      offset(shoulder, upper, 0.118), offset(elbow, middle, 0.095), offset(wrist, lower, 0.062),
+      offset(wrist, lower, -0.062), offset(elbow, middle, -0.096), offset(shoulder, upper, -0.118),
+    ], metal, { materialShade: edge }, size, 0.24);
+  }
+
   function legStride(context, ground, body, facing, pose, scale, shade, boot, lunge = 0, chunky = false) {
     const [fx, fy] = facing;
     for (const side of [-1, 1]) {
@@ -2723,7 +2763,7 @@
     }
   }
 
-  function swordPose(at, angle, profile, progress, reduced) {
+  function swordPose(at, size, armSide, idleAngle, strikeAngle, profile, progress, reduced, carrySwing) {
     const active = progress !== null;
     let sweep = 0;
     let extension = 0;
@@ -2748,27 +2788,31 @@
     } else if (active) {
       const settle = 1 - eased((progress - 0.62) / 0.38);
       sweep = profile.pass * settle;
-      extension = profile.reach * 0.7 * settle;
+      extension = profile.reach * 0.69 * settle;
       dip = profile.cutY * settle;
     }
+    const weight = active ? Math.min(eased(progress / 0.18), eased((1 - progress) / 0.38)) : 0;
+    const difference = strikeAngle - idleAngle;
+    const angle = idleAngle + Math.atan2(Math.sin(difference), Math.cos(difference)) * weight;
     const [forwardX, forwardY] = unitVector(angle);
     const [edgeX, edgeY] = unitVector(angle + sweep);
-    const hand = at(forwardX * 0.10 + edgeX * 0.26, -0.60 + forwardY * 0.09 + edgeY * 0.19 + dip);
-    return {
-      hand,
-      tip: at(forwardX * 0.10 + edgeX * (0.92 + extension),
-        -0.60 + forwardY * 0.09 + edgeY * (0.68 + extension * 0.52) + dip),
-    };
+    const shoulder = at(armSide * 0.223, -0.762);
+    const target = at(armSide * 0.205 + edgeX * (0.105 + extension * 0.55),
+      -0.485 + forwardY * 0.041 + edgeY * 0.094 + dip * 0.73 + carrySwing * (1 - weight));
+    const joints = armJoints(shoulder, target, size, -armSide * 0.76);
+    const hand = joints[2];
+    const tip = [hand[0] + edgeX * size * 0.735, hand[1] + edgeY * size * 0.585];
+    return { joints, hand, tip };
   }
 
-  function swordTrail(context, at, angle, profile, progress) {
+  function swordTrail(context, progress, sample) {
     const end = Math.min(progress, 0.62);
     const start = Math.max(0.18, progress - 0.23);
     if (end <= start) return;
     const inner = [];
     const outer = [];
     for (let index = 0; index <= 7; index++) {
-      const { hand, tip } = swordPose(at, angle, profile, start + (end - start) * index / 7, false);
+      const { hand, tip } = sample(start + (end - start) * index / 7);
       outer.push(tip);
       inner.push([hand[0] * 0.36 + tip[0] * 0.64, hand[1] * 0.36 + tip[1] * 0.64]);
     }
@@ -2828,6 +2872,8 @@
     const unit = camera.unit * (camera.width < 500 ? 1.12 : 1);
     const [fx, fy] = unitVector(pose.look);
     const side = pose.facingRight ? 1 : -1;
+    const armSide = pose.armSide;
+    const armDepth = pose.armDepth;
     const stride = pose.stride;
     const variant = Number.isInteger(actor.attackVariant) && swingProfiles[actor.attackVariant] ? actor.attackVariant : 0;
     const profile = swingProfiles[variant];
@@ -2855,10 +2901,10 @@
     }
     legStride(context, base, at, unitVector(pose.travel), pose, unit, "#3d454b", boot[1], 0, true);
 
-    const lamp = -side * (0.35 + stride * 0.13);
-    const grip = at(lamp, -0.46 + Math.abs(stride) * 0.08);
-    articulatedLimb(context, [at(-side * 0.19, -0.81), at(-side * 0.35, -0.65), grip],
-      [unit * 0.24, unit * 0.216, unit * 0.17], cloth[0], "#182b2f", cloth[2]);
+    const lampArm = armJoints(at(-armSide * 0.218, -0.775 - armDepth),
+      at(-armSide * 0.33 - stride * 0.16, -0.48 - armDepth + stride * 0.12 - tuck * 0.48), unit, armSide * 0.64);
+    const grip = lampArm[2];
+    paintArm(context, lampArm, unit, cloth, "#182b2f");
     forgedPlate(context, [at(-0.29, -0.80), at(-0.16, -0.92), at(0.17, -0.92), at(0.28, -0.76),
       at(0.22, -0.51), at(0.33, -0.24), at(0.15, -0.165), at(-0.01, -0.252), at(-0.22, -0.18), at(-0.30, -0.35)],
     cloth, palette, unit, 0.28);
@@ -2877,15 +2923,16 @@
     forgedPlate(context, [at(-0.20, -0.926), at(-0.10, -0.94), at(0.05, -0.904), at(0.21, -0.933),
       at(0.20, -0.846), at(0.064, -0.792), at(-0.13, -0.817)], scarf, palette, unit, 0.25);
 
-    const swordAngle = progress === null ? pose.look + stride * 0.53 : pose.swingAngle;
-    const { hand, tip } = swordPose(at, swordAngle, profile, progress, reduced);
-    if (!reduced && progress !== null) swordTrail(context, at, swordAngle, profile, progress);
-    const shoulder = at(side * 0.217, -0.762);
-    const elbow = at(fx * (0.31 + thrust * 0.23), -0.62 + Math.abs(stride) * 0.09);
-    articulatedLimb(context, [shoulder, elbow, hand], [unit * 0.235, unit * 0.20, unit * 0.183],
-      brass[1], "#312b2e", brass[2]);
-    forgedPlate(context, [at(side * 0.115, -.84), at(side * 0.28, -.87), at(side * 0.35, -.78),
-      at(side * 0.28, -.68), at(side * 0.125, -.68)], brass, palette, unit, .24);
+    const idleAngle = pose.look + stride * 0.24;
+    const swordArm = (u, v) => at(u, v + armDepth);
+    const sampleSwing = (phase) => swordPose(swordArm, unit, armSide, idleAngle, pose.swingAngle, profile, phase, reduced,
+      stride * 0.12 - tuck * 0.58);
+    const { joints, hand, tip } = sampleSwing(progress);
+    if (!reduced && progress !== null) swordTrail(context, progress, sampleSwing);
+    paintArm(context, joints, unit, brass, "#312b2e");
+    const sleeveCap = (u, v) => swordArm(armSide * 0.223 + u, v);
+    forgedPlate(context, [sleeveCap(-0.114, -.827), sleeveCap(-0.053, -.872), sleeveCap(0.084, -.856),
+      sleeveCap(0.124, -.766), sleeveCap(0.062, -.695), sleeveCap(-0.095, -.71)], brass, palette, unit, .26);
     heroBlade(context, hand, tip, unit);
     ellipse(context, ...hand, unit * 0.08, unit * 0.083, boot[1], "#30282b", Math.max(.75, unit * .017));
 
@@ -2957,15 +3004,6 @@
     ellipse(context, px - size * 0.006, py - size * 0.006, size * 0.012, size * 0.010, metal[2]);
   }
 
-  function guardianArm(context, from, elbow, hand, size, metal, reach = 1) {
-    articulatedLimb(context, [from, elbow, hand], [size * 0.22, size * 0.19, size * 0.13],
-      metal[0], "#1b1820", metal[1]);
-    const forearm = [elbow[0] * 0.37 + hand[0] * 0.63, elbow[1] * 0.37 + hand[1] * 0.63];
-    line(context, [elbow, forearm], metal[1], size * 0.142 * reach);
-    line(context, [[elbow[0], elbow[1] - size * 0.019], [forearm[0], forearm[1] - size * 0.02]],
-      metal[2], Math.max(0.55, size * 0.029));
-  }
-
   function pressureGunner(context, at, facing, actor, pose, size, metal, palette) {
     const mortar = actor.kind === "mortar";
     const [fx, fy] = facing;
@@ -3011,25 +3049,30 @@
     const human = actor.faction === "human";
     const ranged = human && (actor.kind === "sentry" || actor.kind === "mortar");
     const side = pose.facingRight ? 1 : -1;
+    const armSide = pose.armSide;
+    const armDepth = pose.armDepth;
+    const weaponSide = clamp(fx * 2.8, -1, 1);
     const breadth = boss ? 1.19 : runner ? 0.82 : warden ? 1.08 : 1;
     const chest = (x, y) => at(x * breadth + fx * (0.077 * Math.max(0, -y - 0.48)), y);
     const wind = pose.anticipation;
     const follow = Math.max(pose.charge * 0.74, pose.recoil * 0.86);
     const folding = warden ? pose.guarded * 0.21 : 0;
-    const wristX = side * (0.43 + follow * 0.25 - wind * 0.12) + pose.stride * 0.31;
-    const wristY = -0.49 + fy * 0.14 - wind * 0.33 + follow * 0.11 - folding;
-    const hand = at(wristX, wristY);
-
-    const farHand = at(-side * (0.40 - follow * 0.13) - pose.stride * 0.23, -0.47 - wind * 0.15);
+    const wristX = armSide * (0.38 + follow * 0.17 - wind * 0.08) + pose.stride * 0.15;
+    const wristY = -0.48 + armDepth + fy * 0.083 - wind * 0.24 + follow * 0.072 - folding;
+    const nearArm = armJoints(chest(armSide * 0.258, -0.742 + armDepth),
+      at(wristX, ranged ? wristY - 0.105 : wristY), size, -armSide * 0.74, 0.248, 0.23);
+    const hand = nearArm[2];
+    const gunAngle = -0.14 + fy * 0.24 - wind * 0.09 + pose.recoil * 0.09;
+    const gunPoint = (distance) => [hand[0] + distance * weaponSide * size, hand[1] + distance * gunAngle * size];
+    const farTarget = ranged ? gunPoint(-0.26) :
+      at(-armSide * (0.33 - follow * 0.09) - pose.stride * 0.14, -0.45 - armDepth - wind * 0.10);
+    const farArm = armJoints(chest(-armSide * 0.235, -0.74 - armDepth), farTarget, size, armSide * 0.69);
     const coat = human ? ["#3c3036", runner ? "#886749" : warden ? "#665675" : "#805644", "#bb936d"]
       : [metal[0], metal[0], metal[1]];
-    guardianArm(context, chest(-side * 0.235, -0.74), at(-side * 0.36, -0.58), farHand, size, coat, 0.89);
+    paintArm(context, farArm, size, coat, "#1b1820");
     forgedPlate(context, [chest(-0.24, -0.60), chest(0.24, -0.60), chest(0.27, -0.39),
       chest(0.13, human ? -0.24 + pose.stride * 0.26 : -0.29),
       chest(-0.19, human ? -0.26 - pose.stride * 0.16 : -0.31), chest(-0.28, -0.43)], coat, palette, size, .24, !human);
-    guardianArm(context, chest(side * 0.26, -0.74),
-      at(side * (0.39 - wind * 0.08), -0.60 - wind * 0.15 - folding * 0.42), hand, size, human ? coat : metal);
-
     forgedPlate(context, [chest(-0.35, -0.70), chest(-0.31, boss ? -0.96 : -0.87), chest(-0.12, -0.865),
       chest(0.12, -0.87), chest(0.31, boss ? -0.96 : -0.88), chest(0.365, -0.68),
       chest(0.25, -0.53), chest(0.13, -0.43), chest(-0.18, -0.46), chest(-0.29, -0.55)], metal, palette, size, .24, !human);
@@ -3073,10 +3116,15 @@
       }
     }
 
+    paintArm(context, nearArm, size, human ? coat : metal, "#1b1820");
+    const pauldron = (x, y) => chest(armSide * 0.258 + x, y + armDepth);
+    forgedPlate(context, [pauldron(-0.115, -0.80), pauldron(-0.071, -0.866), pauldron(0.071, -0.863),
+      pauldron(0.129, -0.758), pauldron(0.071, -0.695), pauldron(-0.101, -0.707)],
+      metal, palette, size, 0.28);
     if (lancer) {
-      const roll = 0.22 + fy * side * 0.40 - wind * 0.39 + pose.charge * 0.16;
+      const roll = 0.14 + fy * 0.39 - wind * 0.23 + pose.charge * 0.16;
       const blade = (distance, width = 0) =>
-        [hand[0] + side * distance * size, hand[1] + (distance * roll + width) * size];
+        [hand[0] + weaponSide * distance * size, hand[1] + (distance * roll + width) * size];
       line(context, [blade(-0.67), blade(0.60 + pose.charge * 0.23)], "#2c2024", size * 0.091);
       line(context, [blade(-0.67, -0.018), blade(0.60 + pose.charge * 0.23, -0.018)], metal[2], size * 0.035);
       const reach = 0.59 + pose.charge * 0.23;
@@ -3085,17 +3133,19 @@
       ellipse(context, ...hand, size * 0.075, size * 0.068, metal[1], metal[0], 0.72);
     } else if (ranged) {
       const launcher = actor.kind === "mortar";
-      const stock = chest(-side * 0.20, -0.64);
-      const muzzle = at(wristX + side * (launcher ? 0.31 : 0.47), wristY - (launcher ? 0.20 : 0.07) + fy * 0.11);
+      const stock = gunPoint(-0.44);
+      const muzzle = gunPoint(launcher ? 0.36 : 0.51);
       line(context, [stock, muzzle], palette.materialShade, size * (launcher ? 0.22 : 0.14));
       line(context, [[stock[0], stock[1] - size * 0.022], [muzzle[0], muzzle[1] - size * 0.025]],
         metal[2], size * (launcher ? 0.095 : 0.055));
       ellipse(context, ...muzzle, size * 0.044, size * (launcher ? 0.066 : 0.039),
         actor.windup > 0 ? "#ffcc8a" : metal[0], metal[2], 0.7);
+      ellipse(context, ...farArm[2], size * 0.061, size * 0.049, coat[1], metal[0], 0.72);
       ellipse(context, ...hand, size * 0.071, size * 0.057, coat[1], metal[0], 0.74);
     } else if (warden) {
       const shield = (x, y) =>
-        [hand[0] + side * x * size, hand[1] + (y + fy * x * 0.18) * size];
+        [hand[0] + (x * (0.75 + Math.abs(armSide) * 0.25) + armSide * 0.035) * size,
+          hand[1] + (y + fy * x * 0.18) * size];
       const emboss = actor.guarded ? "#9fe6ee" : "#b2a1c6";
       forgedPlate(context, [shield(0.02, -0.29), shield(0.26, -0.22), shield(0.29, 0.08),
         shield(0.16, 0.26), shield(-0.13, 0.23), shield(-0.20, -0.04), shield(-0.16, -0.21)],
@@ -3103,7 +3153,7 @@
       line(context, [shield(-0.08, -0.185), shield(0.05, -0.232), shield(0.18, -0.17)], emboss, 1.0);
       line(context, [shield(0.019, -0.13), shield(0.026, 0.16)], emboss + "ab", Math.max(0.72, size * 0.024));
     } else {
-      const gauntlet = (x, y) => [hand[0] + side * x * size, hand[1] + y * size];
+      const gauntlet = (x, y) => [hand[0] + (x - 0.06 + armSide * 0.06) * size, hand[1] + y * size];
       const knuckle = human ? 0.035 : 0;
       forgedPlate(context, [gauntlet(-0.08, -0.08 - knuckle), gauntlet(0.12 + (boss ? 0.075 : 0), -0.075 - knuckle),
         gauntlet(0.15 + knuckle + (boss ? 0.075 : 0), 0.04), gauntlet(0.052, 0.115 + knuckle), gauntlet(-0.065, 0.065)],
@@ -3196,8 +3246,10 @@
         skin[2] + "ad", Math.max(0.7, size * 0.037));
     }
     if (!low) {
-      const forelimb = body(0.42 + thrust, -0.34 - fore * 0.25);
-      guardianArm(context, body(0.16, -0.69), body(0.29, -0.49 - fore * 0.13), forelimb, size, skin);
+      const forearm = armJoints(body(0.16, -0.69), body(0.42 + thrust, -0.34 - fore * 0.25),
+        size, -side * 0.68, 0.26, 0.235);
+      paintArm(context, forearm, size, skin, "#281e29");
+      const forelimb = forearm[2];
       line(context, [forelimb, [forelimb[0] + side * size * 0.105, forelimb[1] + size * 0.05]],
         "#d1b192", size * 0.034);
     }
@@ -3524,8 +3576,7 @@
     if (state.gateMarker) objects.push({ ...state.gateMarker, type: "item", kind: "exit" });
     if (state.storyPoint) {
       const marker = state.storyPoint;
-      objects.push({ ...marker, type: "story", x: marker.x - (marker.atExit ? 0.6 : 0),
-        y: marker.y - (marker.atExit ? 0.95 : 0) });
+      objects.push({ ...marker, ...storyDevicePosition(marker), type: "story" });
     }
     if (state.player) objects.push({ ...state.player, type: "player", pose: actorPose(motion, state.player, "player") });
     const painterDepth = (entry) => entry.x + entry.y + (entry.kind === "exit" ? 0.64 : 0);
@@ -3590,5 +3641,15 @@
     return { x, y };
   }
 
-  window.TowerRenderer = { draw, screenToWorld };
+  function storyDeviceHit(canvas, clientX, clientY, state) {
+    const marker = state.storyPoint;
+    const camera = frameCameras.get(canvas)?.camera;
+    if (!marker?.active || !camera) return false;
+    const bounds = canvas.getBoundingClientRect();
+    const device = storyDevicePosition(marker);
+    const [x, y] = point(onSurface(camera, state.elevation, device), device.x, device.y, 0.78);
+    return Math.hypot(clientX - bounds.left - x, clientY - bounds.top - y) <= Math.max(16, camera.unit * 0.53);
+  }
+
+  window.TowerRenderer = { draw, screenToWorld, storyDeviceHit };
 })();

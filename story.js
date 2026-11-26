@@ -8,12 +8,11 @@
 
   const scenes = {
     commission: {
-      art: "prologue", chapter: "하층 구역", title: "진료소의 배관이 식었다",
-      device: "radio", prompt: "진료소 무전 받기", choicePrompt: "출발 소식을 누구에게 알릴까요?",
+      art: "prologue", chapter: "1막 · 식어가는 하층", title: "새벽까지 온수를",
+      device: "radio", prompt: "진료소 무전 받기", choicePrompt: "수문으로 가기 전에 누구에게 알릴까요?",
       beats: () => [
-        radio("진료소", "배관이 식어서 병실 두 칸을 비웠어요."),
-        radio("라온", "급수로는 경비대가 막고 있어요."),
-        player("수문부터."),
+        radio("진료소", "보일러가 멎었어요. 남은 연료로는 새벽까지만 버텨요."),
+        radio("라온", "수문은 아직 수동으로 열 수 있어요. 거기서 끊긴 관을 따라가죠."),
       ],
       response: ({ commission }) => commission === "open"
         ? radio("주민", "수문까지 쓸 보호막을 보냈어요.")
@@ -24,14 +23,14 @@
       ],
     },
     reservoir: {
-      art: "shelter", chapter: "5층 · 저수조", title: "남은 열의 행선지",
-      device: "valve", prompt: "저수조 밸브 확인", choicePrompt: "남은 온수를 어느 쪽으로 보낼까요?",
+      art: "shelter", chapter: "1막 · 5층 저수조", title: "한쪽 관만 열 수 있다",
+      device: "valve", cue: "reservoir-lead", prompt: "저수조 밸브 확인", choicePrompt: "남은 온수를 어느 쪽으로 보낼까요?",
       beats: ({ commission } = {}) => [
-        terminal("저수조 계기판", "비축 온수 있음 · 진료소 / 비상 전열"),
+        terminal("저수조 계기판", "비축량 부족. 진료소와 관문 전열 중 한 곳만 연결 가능."),
         commission === "open"
           ? radio("진료소", "병실 하나 더 열어도 될까요?")
-          : radio("정비조", "진료소 연료는 자정까지 버텨요."),
-        radio("라온", "아래로 보내면 수리조는 연료통을 져야 해요."),
+          : radio("정비조", "관문이 얼면 수리조는 손으로 열어야 해요."),
+        radio("라온", "진료소는 밤을 버텨야 하고, 수리조는 이 관문을 지나야 해요."),
       ],
       response: ({ reservoir }) => reservoir === "district"
         ? radio("진료소", "관이 데워져요. 병실을 열게요.")
@@ -42,15 +41,15 @@
       ],
     },
     ledger: {
-      art: "pressure", chapter: "329층 · 압력 기록실", title: "사흘 동안 닫혀 있던 밸브",
-      device: "ledger", prompt: "사고 장부 열기", choicePrompt: "장부를 공개할까요, 당직자 이야기를 먼저 들을까요?",
+      art: "pressure", chapter: "2막 · 329층 압력 기록실", title: "닫는 사람과 여는 사람",
+      device: "ledger", cue: "ledger-lead", prompt: "사고 장부 열기", choicePrompt: "장부를 공개할까요, 당직자 이야기를 먼저 들을까요?",
       beats: ({ reservoir } = {}) => [
-        terminal("압력 기록기", "진료소 밸브 폐쇄 · 승인 라온 · 인수 없음"),
-        radio("라온", "터진 관 옆에 작업자가 셋 있었어요."),
+        terminal("압력 기록기", "하층 차단 승인: 라온. 압력 안정 뒤 재개 명령 없음."),
+        radio("라온", "터진 관에서 사람을 빼려고 잠갔어요. 압력이 내려가면 다시 열기로 했고요."),
         reservoir === "district"
           ? radio("진료소", "보내 준 온수로 병실 하나를 열었어요.")
           : radio("정비조", "동파는 막았어요. 진료소는 아직 추워요."),
-        radio("구역 대표", "작업자들이 나온 뒤엔 누가 맡았죠?"),
+        terminal("압력 기록기", "기본 복귀 규칙 발동. 생산관 우선. 하층 공급 수동 승인 대기."),
       ],
       response: ({ ledger }) => ledger === "public"
         ? radio("구역 대표", "장부를 구역 게시판에 걸었어요.")
@@ -61,14 +60,14 @@
       ],
     },
     relay: {
-      art: "memory", chapter: "665층 · 전송실", title: "받지 못한 호출",
-      device: "relay", prompt: "교환대 호출 듣기", choicePrompt: "구조 전화를 연결할까요, 기록을 먼저 복사할까요?",
+      art: "memory", chapter: "3막 · 665층 전송실", title: "이번에는 전화를 받을 수 있다",
+      device: "relay", cue: "relay-lead", prompt: "교환대 호출 듣기", choicePrompt: "구조 전화를 연결할까요, 기록을 먼저 복사할까요?",
       beats: ({ ledger } = {}) => [
         ledger === "public"
           ? radio("야간조", "장부를 대조하니 구조 호출 열두 건이 빠졌어요.")
           : radio("생존 정비공", "열두 번 걸었는데 구조대엔 안 닿았어요."),
-        terminal("전송 장치", "우회 연결 시 임시 기록 소거"),
-        radio("라온", "복사하는 동안 구조대는 도면 없이 찾아야 해요."),
+        radio("하층 수리조", "지금도 한 명이 갇혀 있어요. 안쪽에선 도면을 받을 수 없어요."),
+        terminal("전송 장치", "즉시 우회하면 미복구 정비 기록 소거. 복사 중에는 통화 연결 불가."),
       ],
       response: ({ relay }) => relay === "rescue"
         ? radio("구조대", "연결됐어요. 지하 점검로로 갑니다.")
@@ -79,16 +78,16 @@
       ],
     },
     key: {
-      art: "heart", chapter: "1009층 · 인계실", title: "다음 겨울의 당직표",
-      device: "terminal", prompt: "제어권 인계 확인", choicePrompt: "복구 후 비상 차단은 누가 맡을까요?",
+      art: "heart", chapter: "4막 · 1009층 인계실", title: "다음 겨울의 당직표",
+      device: "terminal", cue: "handoff-lead", prompt: "제어권 인계 확인", choicePrompt: "복구 후 비상 차단은 누가 맡을까요?",
       beats: ({ relay, ledger } = {}) => [
-        terminal("인계 단말기", "배분실 도면 열림 · 차단 권한 인계 대기"),
+        terminal("인계 단말기", "재가동 준비 완료. 새 비상 차단 담당자를 지정하세요."),
         relay === "rescue"
           ? radio("구조대", "그 전화 덕에 마지막 작업자를 찾았어요.")
           : radio("라온", "그 기록대로면 밸브를 열어도 압력을 잡을 수 있어요."),
         ledger === "public"
-          ? radio("구역 대표", "누가 왜 잠그는지 우리도 봐야죠.")
-          : radio("야간조", "밤에 관이 터지면 누가 먼저 잠급니까?"),
+          ? radio("구역 대표", "생산관이 먼저였던 규칙을 바꾸고 싶어요. 각 구역에서 우리 관을 볼 수 있게요.")
+          : radio("야간조", "관이 터지면 압력이 어디로 쏠릴지 저희가 알아요. 대신 혼자 결정하는 일은 끝내야죠."),
       ],
       response: ({ key }) => key === "districts"
         ? radio("구역 대표", "구역마다 공동 당직표에 서명하고 있어요.")
@@ -101,14 +100,22 @@
   };
 
   const cues = {
-    "sluice-open": () => radio("라온", "급수로 압력이 돌아왔어요. 다음은 전원이에요."),
-    "relay-cell": () => radio("라온", "전력 셀 하나 잡혔어요. 두 개 더 연결해요."),
-    "pressure-start": () => radio("라온", "전원 들어왔어요. 위층 밸브에서 압력을 잡아요."),
+    "sluice-open": ({ commission } = {}) => commission === "open"
+      ? radio("주민", "수문 쪽 계량기가 움직여요. 진료소로 가는 펌프는 아직 꺼져 있어요.")
+      : radio("정비조", "수문은 열렸어요. 진료소 쪽 펌프에 전원이 필요합니다."),
+    "relay-cell": () => radio("라온", "계량기가 켜졌어요. 펌프를 돌릴 전원은 아직 부족해요."),
+    "pressure-start": () => radio("라온", "펌프가 돌아요. 압력을 잡으면 5층 저수조에 닿을 수 있어요."),
     "reservoir-lead": () => radio("라온", "저수조에 온수가 남았어요. 진료소를 연결할게요."),
-    frontier: () => radio("라온", "35층부터는 사람이 올라간 기록이 없어요."),
+    frontier: () => radio("라온", "여기부터는 우리 쪽 지도가 없어요. 옛 설비는 아래에서 원격으로 돌렸대요."),
     "ledger-lead": () => radio("라온", "장부가 열렸어요. 제 이름부터 찾으세요."),
-    "relay-lead": () => radio("야간조", "끊겼던 구조 호출이 넘어옵니다."),
+    "relay-lead": () => radio("야간조", "교환대에 들어가면 녹음과 실시간 통화가 따로 들릴 거예요."),
     "handoff-lead": () => radio("라온", "열쇠를 넘기기 전에 당직자를 정해야 해요."),
+    "gate-gauge": () => radio("라온", "관문이 열렸어요. 양쪽 계량기 중 어디가 올라갔는지 보세요."),
+    "return-signal": () => radio("라온", "복귀 회선에 잡음이 줄었어요. 교환대에서 받아보세요."),
+    "shift-signal": () => radio("야간조", "옛 근무표를 방금 읽을 수 있게 됐어요."),
+    "heating-signal": () => radio("라온", "난방 중계기가 살아났어요. 아래에선 어느 관이 데워졌나 확인해 볼게요."),
+    "test-signal": () => radio("라온", "시험 공급이 끝났어요. 하층 보고가 계기판에 도착했어요."),
+    "handoff-signal": () => radio("라온", "배분실까지 한 구간 남았어요. 자동 차단기부터 확인해요."),
     "iron-gate-open": ({ reservoir } = {}) => reservoir === "district"
       ? radio("진료소", "아래 계량기가 움직여요. 밤새 멈춰 있던 바늘이요.")
       : radio("정비조", "비축 온수로 관문의 얼음을 녹였어요."),
@@ -128,41 +135,76 @@
   const interludes = {
     9: {
       art: "pressure", chapter: "9층 · 주철 관문", title: "물이 한 층 더 오른다",
-      device: "valve", prompt: "관문 계량기 확인", cue: "iron-gate-open",
+      device: "valve", prompt: "관문 계량기 확인", cue: "gate-gauge", supply: "reservoir",
       beats: (choices) => [cues["iron-gate-open"](choices), radio("라온", "수리조는 복귀 회선을 따라갈게요.")],
     },
     29: {
       art: "pressure", chapter: "29층 · 복귀 회선", title: "첫 통화",
-      device: "relay", prompt: "복귀 회선 듣기", cue: "return-line-open",
+      device: "relay", prompt: "복귀 회선 듣기", cue: "return-signal",
       beats: () => [cues["return-line-open"](), radio("라온", "압력이 오르면 다시 잠겨요. 조절실로 가요.")],
     },
     35: {
       art: "pressure", chapter: "35층 · 미측량 구역", title: "사람이 남긴 마지막 표지",
       device: "terminal", prompt: "경계 표지 확인", cue: "frontier",
-      beats: () => [room("개척선 표지", "정비 통행 종료 · 35층부터 미측량"),
-        cues.frontier(), player("먼지에 발톱 자국이 있어요.")],
+      beats: () => [room("개척선 표지", "현장 정비 종료. 상층 원격 운전만 허용."),
+        player("사람 발자국은 여기서 끝나는데, 안쪽에선 뭔가 나왔어요.")],
     },
     489: {
       art: "memory", chapter: "489층 · 점검실", title: "명단에 없는 교대",
-      device: "ledger", prompt: "야간 근무표 읽기", cue: "shift-log",
+      device: "ledger", prompt: "야간 근무표 읽기", cue: "shift-signal",
       beats: (choices) => [cues["shift-log"](choices), terminal("하층 당직 메모", "교대 미완료 · 지하 점검 구간 인수 대기")],
     },
     829: {
       art: "memory", chapter: "829층 · 난방 중계기", title: "먼저 데워진 곳",
-      device: "relay", prompt: "난방 중계기 확인", cue: "heating-relay-open",
+      device: "relay", prompt: "난방 중계기 확인", cue: "heating-signal",
       beats: (choices) => [cues["heating-relay-open"](choices), radio("라온", "수리조가 쓰는 계단부터 녹일게요.")],
     },
     1199: {
       art: "heart", chapter: "1199층 · 상층 송수관", title: "시험 공급",
-      device: "valve", prompt: "시험 공급 기록 확인", cue: "test-feed",
+      device: "valve", prompt: "시험 공급 기록 확인", cue: "test-signal",
       beats: (choices) => [cues["test-feed"](choices), terminal("하층 시험 일지", "공급 확인 · 비상 차단 담당자 기록")],
     },
     1329: {
       art: "heart", chapter: "1329층 · 자동 차단기", title: "마지막 인계",
-      device: "terminal", prompt: "배분실 회선 받기", cue: "final-lead",
-      beats: () => [terminal("자동 차단기", "정지 · 배분실 연결 · 하층 유량 영"), cues["final-lead"](),
-        radio("진료소", "물이 돌면 무전할게요.")],
+      device: "terminal", prompt: "배분실 회선 받기", cue: "handoff-signal",
+      beats: () => [terminal("자동 차단기", "정지 확인. 배분실 연결. 하층 유량 0."),
+        radio("진료소", "여기서도 바늘을 보고 있어요. 물이 돌면 바로 알려드릴게요.")],
     },
+  };
+
+  const note = (floor, title, prompt, device, beats) => ({
+    art: "memory", chapter: floor + "층 · 정비 기록", title, prompt, device, beats, optional: true,
+  });
+  const shelterNotes = {
+    20: note(20, "보온포 세 장", "진료소 소식 확인", "radio", ({ reservoir } = {}) => [
+      reservoir === "district" ? radio("진료소", "보내 준 온수로 아이들 병실을 다시 열었어요.")
+        : radio("진료소", "남은 세 사람은 난로 옆으로 옮겼어요. 회선이 열리면 바로 연락 주세요."),
+    ]),
+    95: note(95, "낡은 분배도", "배관 도면 확인", "ledger", () => [
+      terminal("정비 도면", "한파 시 하층 난방관으로 유량 1/3 전환."),
+      player("여기 표시가 긁혔어요. 나중에 붙인 판엔 생산관이 먼저라고 쓰여 있어요."),
+    ]),
+    190: note(190, "우회로가 막힌 날", "고장 일지 확인", "terminal", ({ reservoir } = {}) => [
+      terminal("원격 계기판", "하층 우회 시험 실패. 차단 승인 번호는 압력 기록실에 보관."),
+      reservoir === "district" ? radio("라온", "병실 쪽은 시간을 벌었어요. 다음에도 이 밸브에 기대게 해선 안 돼요.")
+        : radio("정비조", "관문은 녹였지만 하층 펌프까지 열 수는 없었어요. 기록실에서 이유를 찾아요."),
+    ]),
+    275: note(275, "빈 승인란", "격리 회로 기록 확인", "terminal", () => [
+      terminal("격리 회로", "차단 정상. 압력 정상. 재개 승인 없음."),
+      radio("라온", "제가 잠근 밸브예요. 다시 열라는 지시가 왜 빠졌는지 기록실에서 확인해요."),
+    ]),
+    540: note(540, "지금 들어온 신호", "긴급 호출 기록 확인", "relay", ({ ledger } = {}) => [
+      ledger === "public" ? radio("야간조", "공개 장부에 찍힌 번호로 또 전화가 왔어요. 이번 건 녹음이 아니에요.")
+        : radio("생존 정비공", "제 증언에 나온 회선에서 방금 전화가 왔어요. 지금 누가 그 안에 있어요."),
+    ]),
+    765: note(765, "지도에 생긴 길", "하층 조치 결과 듣기", "radio", ({ relay } = {}) => [
+      relay === "rescue" ? radio("구조대", "연결된 도면대로 진입했어요. 안쪽에서 응답이 옵니다.")
+        : radio("정비조", "복구한 절차로 우회관을 열었어요. 구조대는 막힌 쪽을 계속 찾고 있습니다."),
+    ]),
+    1110: note(1110, "첫 시험 당직", "인계 확인서 읽기", "terminal", ({ key } = {}) => [
+      key === "districts" ? radio("구역 대표", "우리 구역 밸브는 제가 맡았어요. 옆 구역과 닫는 순서를 맞추고 있어요.")
+        : radio("야간조", "제어반을 인수했어요. 구역마다 한 사람씩 계기판을 보게 했습니다."),
+    ]),
   };
 
   function epilogue(choices = {}) {
@@ -181,13 +223,13 @@
         radio("진료소", "관에 물 돌아요. 밸브를 놓으세요."),
         districts
           ? radio("구역 대표", "구역마다 차단 열쇠를 맡았어요.")
-          : radio("야간조", "비상 차단은 저희가 맡고 점검은 함께합니다."),
+          : radio("야간조", "제어반은 우리가 맡아요. 다음 교대부터 구역 대표도 계기판을 읽습니다."),
         publicRecord
           ? radio("라온", "감독 자리에서 내려왔어요. 내일 청문회예요.")
           : radio("라온", "당직자들과 보고서에 함께 서명했어요."),
         rescued
           ? radio("구조대", "마지막 작업자도 교대 전에 돌아왔어요.")
-          : radio("정비조", "못 찾은 작업자의 호출은 기념실에 남겼어요."),
+          : radio("정비조", "그 사람은 돌아오지 못했어요. 복구한 도면에 막힌 점검로를 새로 표시했습니다."),
         heated
           ? radio("진료소", "첫날 온수 덕에 한파 내내 문을 열었어요.")
           : radio("진료소", "내년엔 저수조에 진료소 몫을 남긴대요."),
@@ -198,5 +240,5 @@
     };
   }
 
-  window.TowerStory = { scenes, interludes, epilogue, cues };
+  window.TowerStory = { scenes, interludes, shelterNotes, epilogue, cues };
 })();

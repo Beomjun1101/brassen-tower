@@ -49,7 +49,6 @@
     obstacles: [{ x: 2.6, y: 2.25, w: 1.7, h: 1.0 }, { x: 9.55, y: 2.25, w: 2.1, h: 1.3 }],
     stations: [], rolls: [],
   };
-  const storySignals = { reservoir: "reservoir-lead", ledger: "ledger-lead", relay: "relay-lead", key: "handoff-lead" };
   const storyControls = "가까이에서 상호작용";
   const enemyTypes = {
     guard: { hp: 84, speed: 2.57, damage: 24, range: 1.95, windup: 0.56, cooldown: 0.65, radius: 0.32 },
@@ -602,10 +601,17 @@
 
   function storyAtFloor(floor) {
     const chapter = storyChapters[floor];
-    if (chapter) return run.storyChoices[chapter] ? null : { scene: story.scenes[chapter], chapter };
+    if (chapter) {
+      const setting = run.storyChoices[chapter];
+      if (setting && !content.isShelterFloor(floor)) return null;
+      return { scene: story.scenes[chapter], chapter, setting };
+    }
     if (floor === content.floorCount) return { scene: story.epilogue(run.storyChoices) };
-    const scene = story.interludes[floor];
-    return scene && !run.scenesSeen.includes(floor) ? { scene } : null;
+    const scene = story.interludes[floor] ?? story.shelterNotes[floor];
+    if (!scene) return null;
+    const seen = run.scenesSeen.includes(floor);
+    if (seen && !content.isShelterFloor(floor)) return null;
+    return { scene, setting: seen ? "read" : undefined };
   }
 
   function openLanding(floor, health, encounter) {
@@ -618,13 +624,16 @@
     state.landing = landing.fixture;
     state.shelter = floor === 1 ? null : landing;
     state.stations = landing.stations;
-    if (encounter) state.storyPoint = { ...landing.storySocket, ...encounter, active: true };
+    if (encounter) {
+      state.storyPoint = { ...landing.storySocket, ...encounter, active: !encounter.setting,
+        triggeredAt: encounter.setting ? 0 : undefined };
+    }
     cellGoal = 0;
     notify(null);
     hideRadio();
     renderFloorSteps();
     enterPlayableScene();
-    if (encounter) showRadio(storySignals[encounter.chapter]);
+    if (state.storyPoint?.active) showRadio(encounter.scene.cue);
   }
 
   function hideRadio() {
@@ -696,8 +705,12 @@
     const choose = () => present(null, { options });
     function read(index) {
       const last = index === beats.length - 1;
-      const next = last ? options.length ? choose : leave : () => read(index + 1);
-      const primary = last ? options.length ? "선택하기" : "계속" : "다음 대사";
+      if (last && options.length) {
+        present(beats[index], { options });
+        return;
+      }
+      const next = last ? leave : () => read(index + 1);
+      const primary = last ? "계속" : "다음 대사";
       const skip = !last && (options.length
         ? { label: "선택으로", activate: choose }
         : { label: "건너뛰기", activate: leave });
@@ -954,7 +967,8 @@
     elements["stage-title"].hidden = !state.revealed;
     const point = state.storyPoint;
     setText("objective", state.revealed
-      ? point?.active ? (point.prompt ?? point.scene.prompt) + " · " + storyControls : stage.objective
+      ? point?.active && (!point.scene.optional || storyPointInReach(point))
+        ? (point.prompt ?? point.scene.prompt) + " · " + storyControls : stage.objective
       : "");
     if (minimapSection.hidden !== !state.revealed) minimapSection.hidden = !state.revealed;
     setText("health-label", Math.ceil(state.player.hp) + " / " + maxHp);
@@ -1280,6 +1294,7 @@
       if (!point.chapter && !point.atExit) run.scenesSeen.push(state.floor);
       if (point.chapter === "commission") enterFloor(1, state.player.hp);
       else if (state.shelter) {
+        point.setting ??= "read";
         point.active = false;
         saveVillage();
         enterPlayableScene();
@@ -1443,7 +1458,7 @@
       return;
     }
     if (station.kind === "departure") {
-      if (state.storyPoint?.active) {
+      if (state.storyPoint?.active && !state.storyPoint.scene.optional) {
         notify(state.storyPoint.scene.prompt + " · 출발 전에 확인하세요.", 1600);
         return;
       }
@@ -2064,8 +2079,13 @@
       notify(null);
       syncMusic();
       if (state.storyPoint) {
-        state.storyPoint.active = true;
-        showRadio(storySignals[state.storyPoint.chapter]);
+        const marker = state.storyPoint;
+        marker.active = true;
+        if (marker.scene.supply) {
+          marker.setting = run.storyChoices[marker.scene.supply];
+          marker.triggeredAt = marker.setting ? 0 : undefined;
+        }
+        showRadio(marker.scene.cue);
       } else {
         state.gateMarker.active = true;
         state.gateMarker.openSince = state.elapsed;
@@ -2276,7 +2296,7 @@
     const trials = run.trials.length ? " · 추가 목표 " + run.trials.length + "개 달성" : "";
     if (victory) {
       try { localStorage.removeItem(checkpointKey); } catch {}
-      panel({ kicker: "이야기 완료", title: "하층에 열이 돌아왔습니다", copy: progress + trials,
+      panel({ kicker: "이야기 완료", title: story.epilogue(run.storyChoices).title, copy: progress + trials,
         primary: "시작 화면으로", activate: () => setupTitle() });
       return;
     }
@@ -2363,8 +2383,10 @@
     canvas.focus({ preventScroll: true });
     const aim = renderer.screenToWorld(canvas, event.clientX, event.clientY, state);
     const point = state.storyPoint;
-    if (point?.active && distance(aim, point) < 1.55) {
-      interact();
+    if (point?.active && (distance(aim, point) < 1.55 ||
+        renderer.storyDeviceHit(canvas, event.clientX, event.clientY, state))) {
+      if (storyPointInReach(point)) useStoryPoint(point);
+      else notify((point.prompt ?? point.scene.prompt) + " · " + storyControls, 1300);
       return;
     }
     const station = state.stations?.find((entry) => distance(aim, entry) < 1.4);
