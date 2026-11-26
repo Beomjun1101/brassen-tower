@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#0d1414">
+    <title>Brassen Tower</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="content.js" defer></script>
+    <script src="render.js" defer></script>
+    <script src="rewards.js" defer></script>
+    <script src="rpg.js" defer></script>
+    <script src="story.js" defer></script>
+    <script src="audio.js" defer></script>
+    <script src="title.js" defer></script>
+    <script src="shelter.js" defer></script>
+    <script src="village.js" defer></script>
+    <script src="game.js" defer></script>
+  </head>
+  <body>
+    <div class="game-shell" data-app-mode="title">
+      <header class="masthead">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true"><i></i></div>
+          <h1 lang="en">Brassen Tower</h1>
+        </div>
+        <div class="masthead-controls">
+          <div class="shelter-rule"><span>쉼터 간격</span><strong>5층</strong></div>
+          <output id="music-track" class="music-track" aria-live="polite" hidden></output>
+          <button id="audio-toggle" class="audio-toggle" type="button" aria-label="배경 음악" aria-pressed="false">음악 끔</button>
+        </div>
+      </header>
+
+      <main class="game-layout">
+        <section class="run-strip" aria-label="등반 진행과 체력">
+          <div class="run-depth">
+            <div class="depth-readout">
+              <span class="section-label">층</span>
+              <strong id="floor-value" class="floor-value">1 / 1332</strong>
+            </div>
+            <div id="floor-steps" class="floor-steps" aria-label="층별 진행">
+              <span class="floor-step" data-state="current">1층</span>
+              <span class="floor-step" data-state="locked">2층</span>
+              <span class="floor-step" data-state="locked">3층</span>
+              <span class="floor-step" data-state="locked">4층</span>
+            </div>
+          </div>
+          <div class="run-mission">
+            <div class="mission-goal">
+              <p id="region-label" class="region-label" hidden></p>
+              <h2 id="stage-title" class="stage-title" hidden></h2>
+              <p id="objective" class="objective"></p>
+            </div>
+            <div class="mission-state">
+              <p id="stage-progress" class="stage-progress">입장 대기</p>
+              <output id="elevation-label" class="elevation-label" aria-label="현재 높이" aria-live="off" hidden></output>
+              <span id="threat-label" class="threat-label" hidden></span>
+              <span id="hazard-label" class="hazard-label"></span>
+              <output id="timer-label" class="timer-label" aria-label="경보 상태" aria-live="off" hidden></output>
+            </div>
+          </div>
+          <section class="vitals-section" aria-label="등반가 상태">
+            <div class="hero-identity">
+              <div class="hero-line">
+                <strong id="hero-label" class="hero-label">등반 준비</strong>
+                <span id="level-value" class="hero-level">Lv. –</span>
+              </div>
+              <div class="status-line gold-line">
+                <span><i class="gold-icon" aria-hidden="true"></i>금화</span>
+                <strong id="gold-value">0</strong>
+              </div>
+            </div>
+            <div class="hero-progress">
+              <div class="status-line health-line">
+                <span>체력</span>
+                <strong id="health-label">—</strong>
+              </div>
+              <div class="health-track" aria-hidden="true"><div id="health-fill" class="health-fill"></div></div>
+              <div class="status-line xp-line">
+                <span>경험치</span>
+                <strong id="xp-label">—</strong>
+              </div>
+              <div class="xp-track" role="progressbar" aria-label="경험치" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div id="xp-fill" class="xp-fill"></div>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="play-area" aria-label="게임 플레이">
+          <div id="game-stage" class="game-stage">
+            <canvas id="game-canvas" tabindex="-1" aria-label="2.5D 전투 화면" aria-describedby="keyboard-help">
+              캔버스를 지원하는 브라우저에서 플레이할 수 있습니다.
+            </canvas>
+            <p id="notification" class="notification"></p>
+            <p id="story-radio" class="story-radio" role="status" aria-live="polite" aria-atomic="true" hidden>
+              <strong id="story-radio-speaker"></strong>
+              <span id="story-radio-line"></span>
+            </p>
+            <div id="overlay" class="overlay" data-mode="title" data-title-menu="false" role="region" aria-labelledby="overlay-title">
+              <div class="overlay-panel">
+                <div class="overlay-heading">
+                  <span id="overlay-kicker" class="overlay-kicker"></span>
+                  <h2 id="overlay-title">Brassen Tower</h2>
+                </div>
+                <strong id="scene-speaker" class="scene-speaker" hidden></strong>
+                <p id="overlay-copy" class="overlay-copy">1,332층을 오르는 액션 로그라이크</p>
+                <section id="entry-results" class="entry-results" aria-label="확정된 주사위 결과" aria-live="polite" aria-atomic="true" hidden>
+                  <ul id="entry-result-dice" class="entry-result-dice"></ul>
+                </section>
+                <section id="build-editor" class="build-editor" aria-label="초기 능력치 배분" hidden>
+                  <div class="build-budget"><span>남은 점수</span><output id="build-points" aria-live="polite">5</output></div>
+                  <div id="build-stats" class="build-stats"></div>
+                </section>
+                <div id="overlay-choices" class="overlay-choices"></div>
+                <section id="gear-compare" class="gear-compare" aria-labelledby="compare-heading" hidden>
+                  <h3 id="compare-heading" class="compare-heading">교체 미리보기</h3>
+                  <div class="compare-items">
+                    <div class="compare-item compare-item-current">
+                      <span id="compare-current-label">현재 장착</span>
+                      <strong id="compare-equipped">—</strong>
+                    </div>
+                    <div class="compare-item compare-item-candidate">
+                      <span id="compare-candidate-label">선택한 보상</span>
+                      <strong id="compare-candidate" aria-live="polite">—</strong>
+                    </div>
+                  </div>
+                  <div class="compare-table" role="table" aria-label="교체 시 능력치 변화">
+                    <div class="comparison-row comparison-head" role="row">
+                      <span role="columnheader">능력치</span>
+                      <span role="columnheader">현재</span>
+                      <span role="columnheader">교체</span>
+                      <span role="columnheader">변화</span>
+                    </div>
+                    <div id="compare-stats" role="rowgroup"></div>
+                  </div>
+                  <p id="compare-detail" class="compare-detail"></p>
+                </section>
+                <div class="overlay-actions">
+                  <button id="back-to-title" class="secondary-action" type="button">타이틀로</button>
+                  <button id="skip-gear" class="secondary-action" type="button">이번 보상 건너뛰기</button>
+                  <button id="scene-skip" class="secondary-action scene-skip" type="button" hidden>건너뛰기</button>
+                  <button id="primary-action" class="primary-action" type="button" hidden>등반 시작</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <section id="keyboard-help" class="combat-hotbar" aria-label="키보드와 마우스 조작">
+            <dl class="control-list">
+              <div><dt>이동</dt><dd><kbd>WASD</kbd><kbd>↑↓←→</kbd></dd></div>
+              <div><dt>공격</dt><dd><kbd>Space</kbd><kbd>클릭</kbd></dd></div>
+              <div class="dash-readout">
+                <dt>회피</dt>
+                <dd><kbd>Shift</kbd><output id="dash-state" data-ready="true">준비</output></dd>
+              </div>
+              <div><dt>상호작용</dt><dd><kbd>E</kbd></dd></div>
+            </dl>
+          </section>
+
+          <div id="touch-controls" class="touch-controls" aria-label="터치 조작">
+            <div class="touch-movement" role="group" aria-label="이동">
+              <button type="button" data-move="up" aria-label="위로 이동">↑</button>
+              <button type="button" data-move="left" aria-label="왼쪽으로 이동">←</button>
+              <button type="button" data-move="down" aria-label="아래로 이동">↓</button>
+              <button type="button" data-move="right" aria-label="오른쪽으로 이동">→</button>
+            </div>
+            <div class="touch-actions" role="group" aria-label="행동">
+              <button type="button" data-action="interact">상호작용</button>
+              <button type="button" data-action="dash">회피</button>
+              <button type="button" data-action="attack">공격</button>
+            </div>
+          </div>
+        </section>
+
+        <aside class="status-panel" aria-label="등반가 정보">
+          <section class="status-section map-section" aria-labelledby="map-heading">
+            <h2 id="map-heading" class="section-heading">구역 지도</h2>
+            <canvas id="minimap" width="192" height="104" aria-label="현재 층 미니맵">현재 층 미니맵</canvas>
+            <ul class="map-key" aria-label="지도 기호">
+              <li><b aria-hidden="true">●</b> 나</li>
+              <li><b aria-hidden="true">△</b> 적</li>
+              <li><b aria-hidden="true">◆</b> 전력 셀</li>
+              <li><b aria-hidden="true">□</b> 출구</li>
+            </ul>
+            <ul id="elevation-legend" class="map-key elevation-key" aria-label="높이 지형" hidden>
+              <li><i class="map-swatch map-swatch-upper" aria-hidden="true"></i> 상단 발판</li>
+              <li><i class="map-swatch map-swatch-stairs" aria-hidden="true"></i> 계단</li>
+            </ul>
+          </section>
+
+          <section class="status-section gear-section" aria-labelledby="gear-heading">
+            <h2 id="gear-heading" class="section-heading">장비</h2>
+            <div id="gear-list" class="gear-list">
+              <div class="gear-slot gear-slot-empty" data-slot="weapon"><span class="gear-name">무기</span><small>비어 있음</small></div>
+              <div class="gear-slot gear-slot-empty" data-slot="armor"><span class="gear-name">방어구</span><small>비어 있음</small></div>
+              <div class="gear-slot gear-slot-empty" data-slot="boots"><span class="gear-name">신발</span><small>비어 있음</small></div>
+              <div class="gear-slot gear-slot-empty" data-slot="charm"><span class="gear-name">장신구</span><small>비어 있음</small></div>
+            </div>
+          </section>
+
+          <details id="pack-panel" class="status-section pack-details">
+            <summary class="section-heading">
+              <span class="pack-icon" aria-hidden="true"></span>
+              <span>가방</span>
+              <span id="pack-count" class="pack-count"></span>
+            </summary>
+            <div id="pack-list" class="pack-list">
+              <p class="pack-empty">가방이 비어 있습니다.</p>
+            </div>
+          </details>
+
+          <details id="dice-panel" class="status-section verdict-details" hidden>
+            <summary class="section-heading">시련 판정</summary>
+            <div id="dice-list" class="verdict-list"></div>
+          </details>
+        </aside>
+      </main>
+
+      <p id="live-status" class="visually-hidden" role="status" aria-live="polite"></p>
+      <noscript><p class="noscript-note">플레이하려면 브라우저의 자바스크립트를 활성화하세요.</p></noscript>
+    </div>
+  </body>
+</html>

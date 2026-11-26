@@ -1,0 +1,3594 @@
+(() => {
+  "use strict";
+
+  const biomes = {
+    sluice: {
+      fog: "#16505a", upper: "#071b24", lower: "#061018",
+      tiles: ["#2e4547", "#30494b", "#2b4348", "#2b4144"],
+      edge: "#567b7c", seam: "#152c33", inlay: "#86a9a4", sheen: "#a9ded340",
+      wallX: "#29444a", wallY: "#142a33", cap: "#779e99",
+      capSide: "#426965", capDark: "#315050", accent: "#a0dfd6",
+      conduit: "#549fa8", glow: "#60d3de", fixture: "#7daec7", obstacleHeight: 0.80,
+      materialLight: "#528c9e", materialShade: "#0b161e", surfaceJoint: "#14242966",
+    },
+    relay: {
+      fog: "#2a3a67", upper: "#121d35", lower: "#080d1d",
+      tiles: ["#333a49", "#353f4d", "#363e4b", "#343b47"],
+      edge: "#637494", seam: "#1c2336", inlay: "#7c93b4", sheen: "#a2c8ff35",
+      wallX: "#313c59", wallY: "#1d243a", cap: "#8299b2",
+      capSide: "#485878", capDark: "#334464", accent: "#d5deee",
+      conduit: "#637de0", glow: "#a1b7ff", fixture: "#f8c477", obstacleHeight: 0.97,
+      materialLight: "#8ea7d5", materialShade: "#121625", surfaceJoint: "#1b223166",
+    },
+    forge: {
+      fog: "#512e2b", upper: "#261321", lower: "#140b15",
+      tiles: ["#493939", "#503c3b", "#523e3b", "#463638"],
+      edge: "#8e635d", seam: "#2e2330", inlay: "#b88b76", sheen: "#e8b69135",
+      wallX: "#513338", wallY: "#392429", cap: "#ad816c",
+      capSide: "#6e4d49", capDark: "#553737", accent: "#e9baa0",
+      conduit: "#ac5f46", glow: "#ff985d", fixture: "#ebae80", obstacleHeight: 1.04,
+      materialLight: "#c98664", materialShade: "#20131b", surfaceJoint: "#2d1e2866",
+    },
+  };
+  const fallbackThemes = ["sluice", "relay", "forge"];
+  const backdropCache = new WeakMap();
+  const terrainCache = new WeakMap();
+  const terraceCache = new WeakMap();
+  const grainCache = new WeakMap();
+  const frameCameras = new WeakMap();
+  const motionFrames = new WeakMap();
+  const motionPreference = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+
+  const heroVisualHeight = 1.40;
+
+  const slope = 0.49;
+  const tau = Math.PI * 2;
+  const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
+  const fraction = (value) => value - Math.floor(value);
+  const noise = (a, b) => fraction(Math.sin(a * 27.125 + b * 43.261) * 12851.344);
+
+  function surfaceHeight(elevation, x, y) {
+    return elevation ? (window.TowerContent?.heightAt?.(elevation, x, y) || 0) : 0;
+  }
+
+  function cameraFor(width, height, map, player, elevation) {
+    const total = map.width + map.height;
+    const fit = Math.min(width / (total + 2.45), height / (total * slope + 3.5));
+    const isNarrowArena = width / height < 0.9 && total > 24;
+    const largeArena = total > 36;
+    const scaleWithMap = largeArena ? Math.max(1, total / 46) : 1;
+    const maxZoom = isNarrowArena
+      ? (largeArena ? Math.min(3.10, 2.16 * scaleWithMap) : 1.60)
+      : (largeArena ? Math.min(2.50, 1.73 * scaleWithMap) : 1.45);
+    const zoom = player ? clamp(total / (isNarrowArena ? 20 : 22), 1, maxZoom) : 1;
+    const unit = fit * zoom;
+    const camera = {
+      width,
+      height,
+      unit,
+      x: (width - (map.width - map.height) * unit) / 2,
+      y: (height - total * unit * slope) / 2 - unit * 0.16,
+    };
+    if (zoom > 1) {
+      const [playerX, playerY] = point(camera, player.x, player.y, surfaceHeight(elevation, player.x, player.y));
+      const panX = Math.max(0, (total * unit - width) / 2 + unit * 1.25);
+      const panY = Math.max(0, (total * unit * slope - height) / 2
+        + unit * (1.65 + (elevation?.height || 0) * 0.42));
+      camera.x += clamp((width * 0.5 - playerX) * 0.83, -panX, panX);
+      camera.y += clamp((height * 0.54 - playerY) * 0.83, -panY, panY);
+    }
+    return camera;
+  }
+
+  function frameCamera(canvas, bounds, state, theme, now, reduced) {
+    const camera = cameraFor(bounds.width, bounds.height, state.map, state.player, state.elevation);
+    const story = state.mode === "story" && state.storyPoint;
+    const gate = !reduced && state.mode === "playing" && state.gateMarker?.active && state.gateMarker;
+    const key = `${theme}:${state.floor}:${state.map.width}:${state.map.height}:${bounds.width}:${bounds.height}:${Boolean(story)}`;
+    if (story) {
+      const focus = state.storyShot === "player" ? state.player : story;
+      const wide = state.storyShot === "wide";
+      const x = wide ? (focus.x + state.player.x) / 2 : focus.x;
+      const y = wide ? (focus.y + state.player.y) / 2 : focus.y;
+      camera.unit *= bounds.width > 580 ? 1.24 : 1.17;
+      camera.x = bounds.width * 0.51 - (x - y) * camera.unit;
+      const height = surfaceHeight(state.elevation, x, y);
+      camera.y = bounds.height * 0.43 - ((x + y) * slope - height - 0.54) * camera.unit;
+    }
+    const previous = frameCameras.get(canvas);
+    const elapsed = previous ? now - previous.now : Infinity;
+    if (!reduced && previous?.key === key && elapsed >= 0 && elapsed < 130
+      && Math.hypot(camera.x - previous.x, camera.y - previous.y) < camera.unit * 8) {
+      const ease = 1 - Math.exp(-Math.max(1, elapsed) / (story ? 160 : 86));
+      camera.x = previous.x + (camera.x - previous.x) * ease;
+      camera.y = previous.y + (camera.y - previous.y) * ease;
+    }
+    const x = camera.x;
+    const y = camera.y;
+    if (gate) {
+      const [gx, gy] = point(camera, gate.x, gate.y, 0.7);
+      const push = 0.83 * eased((state.elapsed - gate.openSince + 0.045) / 0.30);
+      camera.x += (bounds.width * 0.52 - gx) * push;
+      camera.y += (bounds.height * 0.48 - gy) * push;
+    } else if (!story && !reduced && state.cameraShakeEnabled !== false && state.cameraShake > 0) {
+      const strength = clamp(state.cameraShake / 0.22, 0, 1) * Math.min(2.9, camera.unit * 0.09);
+      camera.x += Math.sin(now * 0.091) * strength;
+      camera.y += Math.cos(now * 0.12) * strength * 0.55;
+    }
+    frameCameras.set(canvas, { key, now, x, y, camera,
+      floor: state.floor, elevation: state.elevation, mapWidth: state.map.width, mapHeight: state.map.height });
+    return camera;
+  }
+
+  function point(camera, x, y, z = 0) {
+    return [
+      camera.x + (x - y) * camera.unit,
+      camera.y + (x + y) * camera.unit * slope - z * camera.unit,
+    ];
+  }
+
+  function rectangle(camera, x, y, width, height, z = 0) {
+    return [
+      point(camera, x, y, z),
+      point(camera, x + width, y, z),
+      point(camera, x + width, y + height, z),
+      point(camera, x, y + height, z),
+    ];
+  }
+
+  function raisedCamera(camera, height) {
+    return height ? { ...camera, y: camera.y - camera.unit * height } : camera;
+  }
+
+  function onSurface(camera, elevation, actor) {
+    return elevation ? raisedCamera(camera, surfaceHeight(elevation, actor.x, actor.y)) : camera;
+  }
+
+  function centeredBounds(entry) {
+    return { left: entry.x - entry.w / 2, back: entry.y - entry.h / 2,
+      right: entry.x + entry.w / 2, front: entry.y + entry.h / 2 };
+  }
+
+  function withinSurface(bounds, x, y) {
+    const tolerance = 0.00001;
+    return x >= bounds.left - tolerance && x <= bounds.right + tolerance
+      && y >= bounds.back - tolerance && y <= bounds.front + tolerance;
+  }
+
+  function basePlanePoint(camera, x, y) {
+    const horizontal = (x - camera.x) / camera.unit;
+    const vertical = (y - camera.y) / (camera.unit * slope);
+    return { x: (horizontal + vertical) / 2, y: (vertical - horizontal) / 2 };
+  }
+
+  function surfaceHit(elevation, ground, includeWalls) {
+    if (!elevation) return { ...ground, z: 0 };
+    const fullHeight = elevation.height || 0;
+    const worldAt = (z) => ({ x: ground.x + z / (2 * slope), y: ground.y + z / (2 * slope), z });
+    let hit = { ...ground, z: 0 };
+    const apply = (z, bounds, face, owner) => {
+      if (!(z > hit.z && z <= fullHeight + 0.00001)) return;
+      const candidate = worldAt(z);
+      if (!withinSurface(bounds, candidate.x, candidate.y)) return;
+      if (face && surfaceHeight(elevation, candidate.x + (face === "x" ? 0.025 : 0),
+        candidate.y + (face === "y" ? 0.025 : 0)) >= z - 0.012) return;
+      hit = { ...candidate, face, bounds, owner };
+    };
+
+    for (const deck of elevation.decks ?? []) {
+      const bounds = centeredBounds(deck);
+      apply(fullHeight, bounds, null, deck);
+      if (includeWalls) {
+        apply((bounds.right - ground.x) * (2 * slope), bounds, "x", deck);
+        apply((bounds.front - ground.y) * (2 * slope), bounds, "y", deck);
+      }
+    }
+    for (const stairs of elevation.stairs ?? []) {
+      const horizontal = stairs.axis === "x";
+      const runs = horizontal ? stairs.w : stairs.h;
+      const rise = stairs.rise < 0 ? -1 : 1;
+      const start = horizontal ? ground.x - stairs.x : ground.y - stairs.y;
+      const incline = fullHeight * rise / runs;
+      const divisor = 1 - incline / (2 * slope);
+      const bounds = centeredBounds(stairs);
+      if (Math.abs(divisor) > 0.000001) {
+        apply((fullHeight * 0.5 + incline * start) / divisor, bounds, null, stairs);
+      }
+      if (includeWalls) {
+        for (const [distance, face] of [[bounds.right - ground.x, "x"], [bounds.front - ground.y, "y"]]) {
+          const edgeHeight = distance * (2 * slope);
+          const { x, y } = worldAt(edgeHeight);
+          if (edgeHeight <= surfaceHeight(elevation, x, y) + 0.00001) apply(edgeHeight, bounds, face, stairs);
+        }
+      }
+    }
+    return hit;
+  }
+
+  function poly(context, points, fill, stroke, width = 1) {
+    context.beginPath();
+    context.moveTo(...points[0]);
+    for (const next of points.slice(1)) context.lineTo(...next);
+    context.closePath();
+    if (fill) {
+      context.fillStyle = fill;
+      context.fill();
+    }
+    if (stroke) {
+      context.strokeStyle = stroke;
+      context.lineWidth = width;
+      context.stroke();
+    }
+  }
+
+  function line(context, points, stroke, width = 1) {
+    context.beginPath();
+    context.moveTo(...points[0]);
+    for (const next of points.slice(1)) context.lineTo(...next);
+    context.strokeStyle = stroke;
+    context.lineWidth = width;
+    context.stroke();
+  }
+
+  function ellipse(context, x, y, radiusX, radiusY, fill, stroke, width = 1) {
+    context.beginPath();
+    context.ellipse(x, y, radiusX, radiusY, 0, 0, tau);
+    if (fill) {
+      context.fillStyle = fill;
+      context.fill();
+    }
+    if (stroke) {
+      context.strokeStyle = stroke;
+      context.lineWidth = width;
+      context.stroke();
+    }
+  }
+
+  function groundRing(context, camera, x, y, radius, fill, stroke, width) {
+    const center = point(camera, x, y);
+    ellipse(context, ...center, radius * camera.unit * Math.SQRT2,
+      radius * camera.unit * Math.SQRT2 * slope, fill, stroke, width);
+  }
+
+  function contactShadow(context, x, y, unit, palette) {
+    context.save();
+    context.translate(x + unit * 0.20, y + unit * 0.07);
+    context.rotate(0.24);
+    context.scale(unit * 0.66, unit * 0.19);
+    const cast = context.createRadialGradient(-0.13, 0, 0, 0.04, 0, 1);
+    cast.addColorStop(0, palette.materialShade + "9c");
+    cast.addColorStop(0.45, palette.materialShade + "59");
+    cast.addColorStop(1, palette.materialShade + "00");
+    ellipse(context, 0, 0, 1.06, 1, cast);
+    context.restore();
+    context.save();
+    context.translate(x, y + unit * 0.015);
+    context.scale(unit * 0.35, unit * 0.095);
+    const contact = context.createRadialGradient(0, 0, 0, 0, 0, 1);
+    contact.addColorStop(0, "#07090dbb");
+    contact.addColorStop(0.44, "#07090d79");
+    contact.addColorStop(1, "#07090d00");
+    ellipse(context, 0, 0, 1, 1, contact);
+    context.restore();
+  }
+
+  function drawBackdrop(context, camera, palette, theme) {
+    const { width, height, unit } = camera;
+    const fill = context.createLinearGradient(0, 0, 0, height);
+    fill.addColorStop(0, palette.upper);
+    fill.addColorStop(1, palette.lower);
+    context.fillStyle = fill;
+    context.fillRect(0, 0, width, height);
+
+    const glow = context.createRadialGradient(
+      width * 0.5, height * 0.40, 0, width * 0.5, height * 0.50, Math.max(width, height) * 0.6,
+    );
+    glow.addColorStop(0, palette.fog);
+    glow.addColorStop(1, "#04060b00");
+    context.fillStyle = glow;
+    context.fillRect(0, 0, width, height);
+
+    context.save();
+    for (const scale of [1, 0.62]) {
+      context.globalAlpha = scale * 0.25;
+      for (let column = -1; column < 12; column++) {
+        const x = column * width / 10 + (scale < 1 ? width / 20 : 0);
+        const y = height * (0.22 + noise(column, 7) * 0.32);
+        const beam = unit * scale * (0.35 + noise(column, 3) * 0.72);
+        if (theme === "sluice") {
+          context.fillStyle = "#8ecbc729";
+          context.fillRect(x, 0, beam, y);
+          line(context, [[x, 0], [x, y], [x + beam * 2.2, y + beam * 1.1]], palette.conduit, 1.2);
+        } else if (theme === "relay") {
+          line(context, [[x, 0], [x, y * 0.45], [x + beam * 1.5, y * 0.56], [x + beam * 1.5, y]],
+            palette.inlay, beam * 0.34 + 1);
+          ellipse(context, x + beam * 1.5, y, 2, 2, palette.fixture);
+        } else {
+          line(context, [[x, 0], [x, y * 0.69]], palette.conduit, Math.max(1.4, beam * 0.14));
+          const radius = beam * 1.7;
+          poly(context, [[x - radius * 0.4, y * 0.67], [x + radius * 0.4, y * 0.67],
+            [x + radius * 0.59, y * 0.80], [x + radius, y], [x - radius, y],
+            [x - radius * 0.59, y * 0.80]], "#171019", palette.inlay, 0.95);
+        }
+      }
+    }
+    context.restore();
+  }
+
+  function background(context, canvas, camera, palette, theme, seconds, hazard, reduced) {
+    const { width, height, unit } = camera;
+    const key = `${theme}:${width}:${height}:${unit}:${canvas.width}:${canvas.height}`;
+    let backdrop = backdropCache.get(canvas);
+    if (backdrop?.key !== key) {
+      const surface = document.createElement("canvas");
+      surface.width = canvas.width;
+      surface.height = canvas.height;
+      const paint = surface.getContext("2d", { alpha: false });
+      paint.setTransform(surface.width / width, 0, 0, surface.height / height, 0, 0);
+      paint.lineJoin = "round";
+      paint.lineCap = "round";
+      drawBackdrop(paint, camera, palette, theme);
+      backdrop = { key, surface };
+      backdropCache.set(canvas, backdrop);
+    }
+    context.drawImage(backdrop.surface, 0, 0, width, height);
+    if (reduced) return;
+    const speed = theme === "forge" ? 0.038 : theme === "sluice" ? -0.033 : 0.018;
+    context.save();
+    for (let index = 0; index < 42; index++) {
+      const x = width * fraction(noise(index, 6) + seconds * (0.005 + noise(index, 2) * 0.014));
+      const y = height * fraction(noise(index, 5) - seconds * speed);
+      const size = 0.55 + noise(index, 8) * 1.4;
+      context.globalAlpha = (hazard === "mist" ? 0.32 : 0.22) * (0.55 + noise(index, 9) * 0.45);
+      if (theme === "forge") line(context, [[x, y], [x - size, y + size * 4]], palette.glow, size);
+      else if (theme === "sluice") line(context, [[x, y], [x - size * 0.45, y - size * 4]], palette.glow, 1);
+      else ellipse(context, x, y, size, size, palette.fixture);
+    }
+    context.restore();
+  }
+
+  function prism(context, camera, x, y, w, h, height, topColor, xColor, yColor, edge) {
+    const base = rectangle(camera, x, y, w, h);
+    const top = rectangle(camera, x, y, w, h, height);
+    poly(context, [base[1], base[2], top[2], top[1]], xColor, edge, 0.75);
+    poly(context, [base[2], base[3], top[3], top[2]], yColor, edge, 0.75);
+    poly(context, top, topColor, edge, 0.75);
+  }
+
+  function materialShade(context, from, to, color, palette, highlight, shadow) {
+    const shade = context.createLinearGradient(...from, ...to);
+    shade.addColorStop(0, highlight);
+    shade.addColorStop(0.24, color);
+    shade.addColorStop(0.77, color);
+    shade.addColorStop(1, shadow || palette.materialShade);
+    return shade;
+  }
+
+  function matteSlab(context, camera, x, y, width, depth, z, palette, seed) {
+    const sample = noise(x + seed, y - seed);
+    const tint = palette.tiles[Math.floor(sample * palette.tiles.length)];
+    const at = (horizontal, vertical) => point(camera, x + horizontal * width, y + vertical * depth, z);
+    const corners = [at(0, 0), at(1, 0), at(1, 1), at(0, 1)];
+    poly(context, corners, tint, palette.surfaceJoint, 0.65);
+    if (width < 0.3 || depth < 0.3) return;
+    const gloss = context.createLinearGradient(...at(0, 1), ...at(1, 0));
+    gloss.addColorStop(0, palette.materialLight + (sample > 0.67 ? "36" : "24"));
+    gloss.addColorStop(0.38, palette.materialLight + "04");
+    gloss.addColorStop(1, palette.materialShade + "49");
+    poly(context, corners, gloss);
+    const edge = 0.18 + sample * 0.29;
+    line(context, [at(0.055, 0.82), at(0.055, 0.60), at(edge, 0.60)], palette.materialLight + "23", 0.75);
+    for (let i = 0; i < 3; i++) {
+      const xx = 0.12 + 0.65 * noise(sample * 31 + i, x + y);
+      const yy = 0.13 + 0.72 * noise(sample * 41 + i, x - y);
+      const run = 0.035 + 0.105 * noise(i + 9, sample * 17 + x);
+      line(context, [at(xx, yy), at(Math.min(0.96, xx + run), yy + 0.022)],
+        (i ? palette.materialShade : palette.materialLight) + (i ? "27" : "39"), i === 0 ? 0.8 : 0.66);
+    }
+  }
+
+  function materialGrain(palette) {
+    const cached = grainCache.get(palette);
+    if (cached) return cached;
+    const size = 192;
+    const period = 16;
+    const step = size / period;
+    const grain = document.createElement("canvas");
+    grain.width = size;
+    grain.height = size;
+    const paint = grain.getContext("2d");
+    const pixels = paint.createImageData(size, size);
+    const colors = [palette.materialShade, palette.materialLight].map((hex) =>
+      [1, 3, 5].map((start) => Number.parseInt(hex.slice(start, start + 2), 16)));
+    const knots = Array.from({ length: period * period }, (_, i) => noise(i, 91) - 0.5);
+    const at = (x, y) => knots[(y % period) * period + x % period];
+    for (let y = 0; y < size; y++) {
+      const gy = Math.floor(y / step);
+      const fy = eased(y / step - gy);
+      for (let x = 0; x < size; x++) {
+        const gx = Math.floor(x / step);
+        const fx = eased(x / step - gx);
+        const row1 = at(gx, gy) * (1 - fx) + at(gx + 1, gy) * fx;
+        const row2 = at(gx, gy + 1) * (1 - fx) + at(gx + 1, gy + 1) * fx;
+        const tone = (row1 * (1 - fy) + row2 * fy) * 0.69 + (noise(x, y) - 0.5) * 0.42;
+        const offset = (y * size + x) * 4;
+        const color = colors[Number(tone > 0)];
+        pixels.data[offset] = color[0];
+        pixels.data[offset + 1] = color[1];
+        pixels.data[offset + 2] = color[2];
+        pixels.data[offset + 3] = Math.abs(tone) * 53;
+      }
+    }
+    paint.putImageData(pixels, 0, 0);
+    grainCache.set(palette, grain);
+    return grain;
+  }
+
+  function finishSurface(context, camera, map, outline, z, palette) {
+    const center = point(camera, map.width * 0.43, map.height * 0.60, z);
+    const spread = Math.min(map.width, map.height) * camera.unit * 0.67;
+    context.save();
+    const grain = context.createPattern(materialGrain(palette), "repeat");
+    const grainScale = Math.max(0.57, camera.unit / 38);
+    grain.setTransform(new DOMMatrix().translate(camera.x, camera.y - z * camera.unit).scale(grainScale));
+    poly(context, outline, grain);
+    poly(context, outline);
+    context.clip();
+    context.translate(...center);
+    context.rotate(-0.24);
+    context.scale(spread, spread * 0.57);
+    const light = context.createRadialGradient(-0.15, -0.08, 0, 0, 0, 1);
+    light.addColorStop(0, palette.materialLight + "68");
+    light.addColorStop(0.46, palette.materialLight + "36");
+    light.addColorStop(0.79, palette.materialLight + "11");
+    light.addColorStop(1, palette.materialLight + "00");
+    ellipse(context, 0, 0, 1, 1, light);
+    context.restore();
+  }
+
+  function eased(value) {
+    const fraction = clamp(value, 0, 1);
+    return fraction * fraction * (3 - 2 * fraction);
+  }
+
+  const cubeDie = {
+    vertices: [[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+      [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]],
+    faces: [[0, 1, 2, 3], [4, 5, 6, 7], [0, 4, 7, 3], [1, 5, 6, 2], [0, 1, 5, 4], [3, 2, 6, 7]],
+    values: [1, 6, 2, 5, 3, 4],
+  };
+  const pointDie = {
+    vertices: [[0.92, 0.92, 0.92], [-0.92, -0.92, 0.92], [-0.92, 0.92, -0.92], [0.92, -0.92, -0.92]],
+    faces: [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]],
+    values: [1, 2, 3, 4],
+  };
+  const twoValueDie = { ...cubeDie, values: [1, 2, 1, 2, 1, 2] };
+  const threeValueDie = { ...cubeDie, values: [1, 1, 2, 2, 3, 3] };
+  const dicePips = [
+    [],
+    [[0.5, 0.5]],
+    [[0.29, 0.29], [0.71, 0.71]],
+    [[0.29, 0.29], [0.5, 0.5], [0.71, 0.71]],
+    [[0.29, 0.29], [0.71, 0.29], [0.29, 0.71], [0.71, 0.71]],
+    [[0.29, 0.29], [0.71, 0.29], [0.5, 0.5], [0.29, 0.71], [0.71, 0.71]],
+    [[0.29, 0.26], [0.71, 0.26], [0.29, 0.5], [0.71, 0.5], [0.29, 0.74], [0.71, 0.74]],
+  ];
+  const tetraPips = [[], [[0.33, 0.33]], [[0.19, 0.42], [0.46, 0.26]],
+    [[0.20, 0.20], [0.59, 0.20], [0.20, 0.59]],
+    [[0.17, 0.17], [0.61, 0.19], [0.19, 0.61], [0.33, 0.33]]];
+
+  function drawDie(context, x, y, size, rotation, shape, metal) {
+    const [pitch, yaw, roll] = rotation;
+    const cx = Math.cos(pitch);
+    const sx = Math.sin(pitch);
+    const cy = Math.cos(yaw);
+    const sy = Math.sin(yaw);
+    const cz = Math.cos(roll);
+    const sz = Math.sin(roll);
+    const vertices = shape.vertices.map(([px, py, pz]) => {
+      const h = py * cx - pz * sx;
+      const d = py * sx + pz * cx;
+      const w = px * cy + d * sy;
+      return [w * cz - h * sz, w * sz + h * cz, d * cy - px * sy];
+    });
+    const project = ([horizontal, vertical, depth]) => {
+      const lens = size / (1 - depth * 0.102);
+      return [x + horizontal * lens, y + vertical * lens];
+    };
+    const faces = shape.faces.map((indices, index) => {
+      const corners = indices.map((id) => vertices[id]);
+      const middle = [0, 1, 2].map((axis) => corners.reduce((sum, corner) => sum + corner[axis], 0) / corners.length);
+      return { corners, middle, value: shape.values[index] };
+    }).filter(({ middle }) => middle[2] > -0.055).sort((a, b) => a.middle[2] - b.middle[2]);
+    const pigment = metal ? [215, 154, 89] : [247, 230, 194];
+    for (const { corners, middle, value } of faces) {
+      const [nx, ny, nz] = middle;
+      const normal = Math.hypot(nx, ny, nz) || 1;
+      const brightness = 0.57 + 0.45 * clamp((-nx * 0.45 - ny * 0.65 + nz * 0.61) / normal, 0, 1);
+      const color = (shade) => `rgb(${pigment.map((channel) => Math.round(channel * Math.min(1.08, shade))).join(",")})`;
+      poly(context, corners.map(project), color(brightness * 0.82), metal ? "#ebbd83" : "#fff0d4", 0.85);
+      poly(context, corners.map((corner) => project(corner.map((part, axis) => part * 0.91 + middle[axis] * 0.09))),
+        color(brightness));
+
+      const square = corners.length === 4;
+      const [a, b, c, d] = corners;
+      const facePoint = (u, v) => [0, 1, 2].map((axis) => square
+        ? a[axis] * (1 - u) * (1 - v) + b[axis] * u * (1 - v) + c[axis] * u * v + d[axis] * (1 - u) * v
+        : a[axis] * (1 - u - v) + b[axis] * u + c[axis] * v);
+      for (const [u, v] of (square ? dicePips : tetraPips)[value]) {
+        const dot = [];
+        for (let n = 0; n < 8; n++) {
+          const angle = n / 8 * tau;
+          const p = square ? 0.066 : 0.058;
+          dot.push(project(facePoint(u + Math.cos(angle) * p, v + Math.sin(angle) * p)));
+        }
+        poly(context, dot, metal ? "#532c21" : "#523e30");
+      }
+    }
+  }
+
+  function bounceHeight(progress) {
+    if (progress < 0.34) {
+      const fall = progress / 0.34;
+      return (0.23 + 0.82 * fall) * (1 - fall);
+    }
+    for (const [from, to, height] of [[0.34, 0.59, 0.24], [0.59, 0.76, 0.125], [0.76, 0.88, 0.063],
+      [0.88, 1, 0.030]]) {
+      if (progress <= to) {
+        const step = (progress - from) / (to - from);
+        return height * 4 * step * (1 - step);
+      }
+    }
+    return 0;
+  }
+
+  function restRotation(shape, result, index) {
+    const face = shape.faces[shape.values.indexOf(result)];
+    const [x, y, z] = face.reduce((normal, vertex) =>
+      normal.map((value, axis) => value + shape.vertices[vertex][axis]), [0, 0, 0]);
+    return [Math.atan2(y, z) + 0.17, -Math.atan2(x, Math.hypot(y, z)) + 0.14, (index - 1.5) * 0.11];
+  }
+
+  function castingTray(context, centerX, centerY, radius, rolls, time, reduced, opening) {
+    const count = rolls.length;
+    const fade = 1 - eased(opening * 1.7);
+    if (!(fade > 0)) return;
+    const reveal = reduced ? 1 : eased((time - 174) / 88);
+    const center = centerY + radius * (0.29 + (1 - reveal) * 0.20);
+    const plane = (x, y, z = 0) => [centerX + x * radius * (1.27 + 0.22 * y),
+      center + y * radius * 0.43 + z * radius];
+    const face = (x, y, z = 0) => [plane(-x, -y, z), plane(x, -y, z), plane(x, y, z), plane(-x, y, z)];
+    const outline = face(1.02, 0.91);
+    const front = face(1.02, 0.91, 0.145);
+    context.save();
+    context.globalAlpha = fade * reveal;
+    ellipse(context, centerX, center + radius * 0.18, radius * 1.54, radius * 0.49, "#03101bbb");
+    poly(context, [outline[2], outline[3], front[3], front[2]], "#553d32", "#b28152", 1.25);
+    poly(context, outline, "#8a6345", "#e5b97b", 1.7);
+    poly(context, face(0.945, 0.76), "#382d30", "#694935", 1.35);
+    const felt = context.createLinearGradient(0, center - radius * 0.33, 0, center + radius * 0.32);
+    felt.addColorStop(0, "#171c27");
+    felt.addColorStop(1, "#2f2330");
+    poly(context, face(0.881, 0.655), felt, "#bd9057", 1.25);
+    for (const xx of [-0.965, 0.965]) {
+      for (const yy of [-0.82, 0.82]) {
+        const [x, y] = plane(xx, yy);
+        ellipse(context, x, y, 2.5, 1.7, "#ecbf82", "#422c29", 0.7);
+      }
+    }
+
+    const density = Math.min(1, Math.sqrt(5 / count));
+    const dice = [];
+    for (let index = 0; index < count; index++) {
+      const { value, sides } = rolls[index];
+      const shape = sides === 4 ? pointDie : sides === 3 ? threeValueDie : sides === 2 ? twoValueDie : cubeDie;
+      const wait = index * Math.min(59, 260 / count);
+      if (!reduced && time < 182 + wait) continue;
+      const progress = reduced ? 1 : clamp((time - 182 - wait) / (920 - wait * 0.19), 0, 1);
+      const spread = 1 - (1 - progress) ** 2.08;
+      const slot = -0.67 + 1.34 * (index + 0.5) / count;
+      const side = index % 2 === 0 ? -1 : 1;
+      const depth = (index % 2 === 0 ? -0.29 : 0.37) + noise(index, 21) * 0.13;
+      const x = side * (0.49 + noise(index, 67) * 0.24) * (1 - spread) + slot * spread
+        + Math.sin(progress * tau + index) * progress * (1 - progress) * 0.28;
+      const y = -0.55 * (1 - spread) + depth * spread;
+      const hop = reduced ? 0 : bounceHeight(progress) * (index ? 0.76 : 1.02);
+      const rate = 1 - (1 - progress) ** 2.15;
+      const size = radius * (sides === 6 ? 0.181 : 0.143) * density * (0.92 + (y + 1) * 0.07);
+      const starts = [0.41, 0.32, index * 0.73];
+      const travel = [7.9 + noise(index, 86) * 5.4, side * (8.5 + noise(index, 9) * 6), 4.6 + noise(index, 60) * 5.6];
+      const rest = restRotation(shape, value, index);
+      const settling = eased((progress - 0.74) / 0.26);
+      const rotation = starts.map((start, axis) => {
+        const from = start + rate * travel[axis];
+        const to = rest[axis] + Math.round((start + travel[axis] - rest[axis]) / tau) * tau;
+        return from + (to - from) * settling;
+      });
+      dice.push({ ground: plane(x, y), depth: y, hop, size, index, shape, rotation });
+    }
+    for (const { ground, hop, size } of dice) {
+      context.save();
+      context.globalAlpha *= 0.74 - hop * 0.63;
+      ellipse(context, ...ground, size * (1.13 + hop * 0.78), size * (0.37 + hop * 0.27), "#060910b8");
+      context.restore();
+    }
+    dice.sort((a, b) => a.depth - b.depth);
+    for (const { ground, hop, size, index, shape, rotation } of dice) {
+      drawDie(context, ground[0], ground[1] - radius * hop - size * 0.83, size, rotation, shape, index % 2 === 1);
+    }
+    context.restore();
+  }
+
+  function doorMechanism(context, x, y, radius, phase, power) {
+    const notchCount = 12;
+    context.save();
+    context.translate(x, y);
+    context.rotate(phase);
+    for (let index = 0; index < notchCount; index++) {
+      const angle = index / notchCount * tau;
+      const point = (r, theta) => [Math.cos(theta) * r * radius, Math.sin(theta) * r * radius];
+      poly(context, [point(0.96, angle - 0.075), point(1.055, angle - 0.060),
+        point(1.080, angle + 0.052), point(0.96, angle + 0.077)],
+      "#5a4640", "#94704e", 1);
+    }
+    context.restore();
+    ellipse(context, x, y, radius * 0.96, radius * 0.96, null, "#d39762", 2);
+    if (power > 0) {
+      context.save();
+      context.globalAlpha = power;
+      ellipse(context, x, y, radius * 0.98, radius * 0.98, null, "#ffc986", 2.2);
+      context.restore();
+    }
+  }
+
+  function sealedRoom(context, width, height, state, reduced, shelter) {
+    const { entryElapsed, entryDuration, entryOpenAt } = state;
+    const rolls = shelter ? [] : state.entryRolls ?? [];
+    const count = rolls.length;
+    const timing = !shelter && entryDuration > 0;
+    const drawTime = count ? state.entrySettleAt : entryOpenAt;
+    const time = timing && !reduced ? clamp(entryElapsed / Math.max(1, drawTime), 0, 1) * 1360 : 180;
+    const closing = timing && !reduced ? eased(time / 180) : 1;
+    const spinning = count > 0 && time > 180 && time < 1330 && !reduced;
+    const opening = timing ? eased((entryElapsed - entryOpenAt) / (entryDuration - entryOpenAt)) : 0;
+    const drawPhase = count > 0 ? clamp((time - 180) / 1180, 0, 1) : 0;
+    const motor = spinning ? Math.sin(drawPhase * Math.PI) : 0;
+    const rotor = 2.5 * tau * (1 - (1 - drawPhase) ** 2);
+    const centerX = width / 2;
+    const centerY = height * 0.49;
+    const radius = Math.min(width * 0.255, height * 0.257);
+    const glow = context.createRadialGradient(centerX, centerY, 0, centerX, centerY, Math.max(width, height) * 0.64);
+    glow.addColorStop(0, spinning || opening || shelter ? "#493126" : "#2a3039");
+    glow.addColorStop(1, "#080b11");
+    context.fillStyle = glow;
+    context.fillRect(0, 0, width, height);
+    const at = (x, y) => [centerX + x * radius, centerY + y * radius];
+    const arch = [[-1.42, 1.16], [-1.42, -0.69], [-0.94, -1.23], [0.94, -1.23],
+      [1.42, -0.69], [1.42, 1.16]];
+
+    for (const side of [-1, 1]) {
+      for (let rail = 0; rail < 4; rail++) {
+        const edge = side * (1.52 + rail * 0.23);
+        line(context, [at(edge, -2.2), at(edge, 0.72), at(edge + side * 0.08, 0.86),
+          at(edge + side * 0.08, 1.52)], rail % 2 ? "#1a2029" : "#252c36", 2.5);
+      }
+      const rod = 0.12 * (1 - closing) + opening * 0.37;
+      line(context, [at(side * 1.11, 0.18), at(side * (1.67 + rod), 0.18)], "#382c2c", radius * 0.17);
+      line(context, [at(side * 1.18, 0.18), at(side * (1.56 + rod), 0.18)], "#b48661", radius * 0.055);
+      poly(context, [at(side * (1.54 + rod), 0.01), at(side * (1.85 + rod), 0.01),
+        at(side * (1.85 + rod), 0.35), at(side * (1.54 + rod), 0.35)], "#3b3439", "#77717a", 1.2);
+    }
+    poly(context, arch.map(([x, y]) => at(x, y)), "#111620", "#59636e", 1.6);
+    poly(context, arch.map(([x, y]) => at(x * 0.92, y * 0.91)), "#1e252f", "#303b47", 2);
+    ellipse(context, centerX, centerY, radius * 1.03, radius * 1.03, "#10151e", "#77808a", 2);
+    ellipse(context, centerX, centerY, radius * 0.94, radius * 0.94, "#2b3440", "#111721", radius * 0.10);
+    ellipse(context, centerX, centerY, radius * 0.80, radius * 0.80, "#1f2732", "#4c5866", 1.5);
+    doorMechanism(context, centerX, centerY, radius * 0.97, rotor, motor * 0.8 + opening * 0.2);
+    for (let index = 0; index < 8; index++) {
+      const theta = index / 8 * tau + tau / 16;
+      const pull = 0.21 + (1 - closing) * 0.18 + opening * 0.49;
+      const inner = at(Math.cos(theta) * pull, Math.sin(theta) * pull);
+      const outer = at(Math.cos(theta) * 0.75, Math.sin(theta) * 0.75);
+      line(context, [inner, outer, at(Math.cos(theta + 0.10) * 0.86, Math.sin(theta + 0.10) * 0.86)],
+        spinning ? "#796555" : "#57616c", 1.25);
+      const [x, y] = at(Math.cos(theta) * 0.91, Math.sin(theta) * 0.91);
+      ellipse(context, x, y, radius * 0.022, radius * 0.022, "#83909b", "#202631");
+    }
+
+    context.save();
+    context.beginPath();
+    context.arc(centerX, centerY, radius * 0.80, 0, tau);
+    context.clip();
+    if (timing && !reduced && time < 180) {
+      for (const side of [-1, 1]) {
+        const shift = (1 - closing) * 0.43;
+        const half = (x, y) => at(side * (x + shift), y);
+        poly(context, [half(0.016, -0.56), half(0.47, -0.69), half(0.78, -0.41),
+          half(0.80, 0.39), half(0.47, 0.67), half(0.016, 0.55)],
+        "#29313d", "#8ca0a8", 1.45);
+        line(context, [half(0.12, -0.36), half(0.36, -0.36), half(0.48, -0.23)], "#6e756d", 1.5);
+        line(context, [half(0.12, 0.36), half(0.36, 0.36), half(0.48, 0.23)], "#6e756d", 1.5);
+      }
+    } else if (opening > 0) {
+      const beam = context.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius * (0.28 + opening));
+      beam.addColorStop(0, "#fff0cd");
+      beam.addColorStop(0.24, "#e9ba86");
+      beam.addColorStop(1, "#b97c4500");
+      context.globalAlpha = 0.24 + opening * 0.67;
+      ellipse(context, centerX, centerY, radius, radius, beam);
+      line(context, [at(0, -0.31 - opening * 0.53), at(0, 0.31 + opening * 0.53)], "#fff6e0",
+        Math.max(1, radius * (0.015 + opening * 0.055)));
+    } else {
+      poly(context, [at(0, -0.23), at(0.22, -0.11), at(0.22, 0.11), at(0, 0.23),
+        at(-0.22, 0.11), at(-0.22, -0.11)], "#111722", "#9ca4af", 1.4);
+      line(context, [at(0, -0.11), at(0, 0.11)], "#e2ddd3", 2);
+    }
+    context.restore();
+
+    if (spinning || opening > 0) {
+      for (let spark = 0; spark < 20; spark++) {
+        const angle = noise(spark, 37) * tau;
+        const phase = fraction(noise(spark, 10) + drawPhase * (1.5 + noise(spark, 18)) + opening * 0.8);
+        const size = 0.86 + phase * 0.48;
+        context.save();
+        context.globalAlpha = (1 - phase) * Math.max(motor, opening) * (0.34 + noise(spark, 1) * 0.53);
+        line(context, [at(Math.cos(angle) * size, Math.sin(angle) * size),
+          at(Math.cos(angle) * (size + 0.04), Math.sin(angle) * (size + 0.04))], "#ffc887", 1.5);
+        context.restore();
+      }
+    }
+    for (let index = 0; index < 4; index++) {
+      const y = 1.16 + index * 0.105;
+      line(context, [at(-1.42 - index * 0.11, y), at(1.42 + index * 0.11, y)], "#373e49", 1.6);
+    }
+    if (count && (reduced ? state.entryPhase !== "throw" : timing && time >= 180)) {
+      castingTray(context, centerX, centerY, radius, rolls, time, reduced, opening);
+    }
+  }
+
+  function floor(context, camera, state, palette, theme) {
+    const { width, height } = state.map;
+    const { unit } = camera;
+    const top = rectangle(camera, 0, 0, width, height);
+    const foot = rectangle(camera, 0, 0, width, height, theme === "forge" ? -1.12 : -0.87);
+    const rim = rectangle(camera, 0, 0, width, height, -0.19);
+    const center = point(camera, width / 2, height / 2, -1.1);
+
+    ellipse(context, ...center, (width + height) * unit * 0.44,
+      (width + height) * unit * 0.19, "#0006");
+    poly(context, [rim[1], rim[2], foot[2], foot[1]], palette.wallX, palette.seam);
+    poly(context, [rim[2], rim[3], foot[3], foot[2]], palette.wallY, palette.seam);
+    poly(context, [top[1], top[2], rim[2], rim[1]], palette.edge, palette.seam);
+    poly(context, [top[2], top[3], rim[3], rim[2]], palette.capSide, palette.seam);
+    poly(context, top, palette.tiles[0]);
+    for (let x = 0; x < width; x++) {
+      for (let y = 0; y < height; y++) {
+        const blockX = x - x % 2;
+        const blockY = y - y % 2;
+        const wide = noise(blockX - state.floor, blockY + 2) > 0.52
+          && blockX + 2 <= width && blockY + 2 <= height;
+        if (wide && (x !== blockX || y !== blockY)) continue;
+        matteSlab(context, camera, x, y, Math.min(wide ? 2 : 1, width - x),
+          Math.min(wide ? 2 : 1, height - y), 0, palette, state.floor * 3);
+      }
+    }
+    finishSurface(context, camera, state.map, top, 0, palette);
+    for (let x = 0; x < width; x++) {
+      for (let y = 0; y < height; y++) {
+        if (theme === "relay" && x % 4 === 1 && y % 4 === 1) {
+          poly(context, rectangle(camera, x + 0.24, y + 0.24, 0.52, 0.52), "#222b3da6", palette.inlay + "77", 0.74);
+          ellipse(context, ...point(camera, x + 0.5, y + 0.5), 1.15, 1.15, palette.fixture + "a8");
+        } else if (theme === "forge" && x % 4 === 3 && y % 4 === 3) {
+          line(context, [point(camera, x + 0.18, y + 0.60), point(camera, x + 0.65, y + 0.60),
+            point(camera, x + 0.65, y + 0.25)], "#d8a87b36", 0.9);
+        }
+      }
+    }
+
+    const rail = (x1, y1, x2, y2) => line(context, [point(camera, x1, y1), point(camera, x2, y2)],
+      palette.conduit, Math.max(1, unit * 0.028));
+    context.save();
+    context.globalAlpha = theme === "sluice" ? 0.56 : 0.33;
+    for (const offset of [0.42, 0.61]) {
+      rail(offset, 1, offset, height - 1);
+      rail(1, height - offset, width - 1, height - offset);
+      rail(width - offset, 1, width - offset, height - 1);
+      rail(1, offset, width - 1, offset);
+    }
+    context.restore();
+    poly(context, rectangle(camera, 0.18, 0.18, width - 0.36, height - 0.36), null, palette.edge + "99", 1.3);
+    poly(context, top, null, palette.inlay + "c4", 1.7);
+
+    for (let x = 0.4; x < width; x += 1) {
+      const start = point(camera, x, height, -0.28);
+      const end = point(camera, x + 0.22, height, -0.28);
+      line(context, [start, end], palette.inlay, 1.1);
+    }
+    for (let y = 0.6; y < height; y += 1) {
+      const start = point(camera, width, y, -0.28);
+      const end = point(camera, width, y + 0.24, -0.28);
+      line(context, [start, end], palette.inlay, 1.1);
+    }
+
+    context.save();
+    context.globalAlpha = 0.68;
+    for (let x = 2.3; x < width - 0.9; x += 3) {
+      poly(context, rectangle(camera, x, 0.07, 0.48, 0.10), palette.accent);
+      poly(context, rectangle(camera, x, height - 0.17, 0.48, 0.10), palette.accent);
+    }
+    for (let y = 2.3; y < height - 0.9; y += 3) {
+      poly(context, rectangle(camera, 0.07, y, 0.10, 0.48), palette.accent);
+      poly(context, rectangle(camera, width - 0.17, y, 0.10, 0.48), palette.accent);
+    }
+    for (const [x, y] of [[0.37, 0.37], [width - 0.37, 0.37], [0.37, height - 0.37], [width - 0.37, height - 0.37]]) {
+      poly(context, rectangle(camera, x - 0.13, y - 0.13, 0.26, 0.26), palette.accent);
+    }
+    context.restore();
+  }
+
+  function paintTerrain(context, canvas, camera, state, palette, theme, ratio) {
+    const { width, height } = state.map;
+    const unit = camera.unit;
+    const feature = state.facility?.feature;
+    const key = `${theme}:${state.floor}:${width}:${height}:${unit}:${ratio}:${feature}:${Boolean(state.landing || state.shelter)}`;
+    let layer = terrainCache.get(canvas);
+    if (layer?.key !== key || layer.elevation !== state.elevation || layer.obstacles !== state.obstacles) {
+      const surface = document.createElement("canvas");
+      const pad = Math.ceil(unit * 2.1);
+      const drawWidth = Math.ceil((width + height) * unit + pad * 2);
+      const drawHeight = Math.ceil((width + height) * unit * slope + pad * 2);
+      const cacheRatio = Math.min(ratio, 4096 / Math.max(drawWidth, drawHeight),
+        Math.sqrt(7600000 / (drawWidth * drawHeight)));
+      surface.width = Math.ceil(drawWidth * cacheRatio);
+      surface.height = Math.ceil(drawHeight * cacheRatio);
+      const paint = surface.getContext("2d");
+      paint.setTransform(surface.width / drawWidth, 0, 0, surface.height / drawHeight, 0, 0);
+      paint.lineJoin = "round";
+      paint.lineCap = "round";
+      const originX = height * unit + pad;
+      const originY = pad;
+      const local = { ...camera, x: originX, y: originY };
+      const layerIndex = state.elevation ? 0 : undefined;
+      floor(paint, local, state, palette, theme);
+      paintEarlyBrasswork(paint, local, state, state.elevation, layerIndex);
+      paintFacilityDressing(paint, local, state, palette, state.elevation, layerIndex);
+      layer = { key, surface, drawWidth, drawHeight, originX, originY,
+        elevation: state.elevation, obstacles: state.obstacles };
+      terrainCache.set(canvas, layer);
+    }
+    context.drawImage(layer.surface, camera.x - layer.originX, camera.y - layer.originY,
+      layer.drawWidth, layer.drawHeight);
+  }
+
+  function deckPerimeter(deck, elevation) {
+    const { left, back, right, front } = centeredBounds(deck);
+    const sides = [
+      { alongX: true, position: back, facing: -1, start: left, end: right },
+      { alongX: false, position: right, facing: 1, start: back, end: front },
+      { alongX: true, position: front, facing: 1, start: left, end: right },
+      { alongX: false, position: left, facing: -1, start: back, end: front },
+    ];
+    const otherDecks = elevation.decks.filter((entry) => entry !== deck).map(centeredBounds);
+    for (const side of sides) {
+      const holes = [];
+      const overlap = (bounds) => {
+        const first = side.alongX ? bounds.left : bounds.back;
+        const last = side.alongX ? bounds.right : bounds.front;
+        if (last > side.start + 0.0001 && first < side.end - 0.0001) {
+          holes.push([Math.max(side.start, first), Math.min(side.end, last)]);
+        }
+      };
+      for (const bounds of otherDecks) {
+        const joint = side.alongX
+          ? (side.facing > 0 ? bounds.back : bounds.front)
+          : (side.facing > 0 ? bounds.left : bounds.right);
+        if (Math.abs(joint - side.position) < 0.0001) overlap(bounds);
+      }
+      for (const stair of elevation.stairs) {
+        if ((side.alongX ? "y" : "x") !== stair.axis || stair.rise !== -side.facing) continue;
+        const bounds = centeredBounds(stair);
+        const highEnd = side.alongX
+          ? (stair.rise > 0 ? bounds.front : bounds.back)
+          : (stair.rise > 0 ? bounds.right : bounds.left);
+        if (Math.abs(highEnd - side.position) < 0.0001) overlap(bounds);
+      }
+      const segments = [];
+      let cursor = side.start;
+      for (const [first, last] of holes.sort((a, b) => a[0] - b[0])) {
+        if (first > cursor + 0.0001) segments.push([cursor, first]);
+        cursor = Math.max(cursor, last);
+      }
+      if (cursor < side.end - 0.0001) segments.push([cursor, side.end]);
+      side.segments = segments;
+    }
+    return sides;
+  }
+
+  function terraceFace(context, camera, side, elevation, palette) {
+    const height = elevation.height;
+    const { alongX, position } = side;
+    const foot = (along, z) => point(camera, alongX ? along : position, alongX ? position : along, z);
+    for (const [start, finish] of side.segments) {
+      const count = Math.max(1, Math.ceil((finish - start) / 0.65));
+      for (let section = 0; section < count; section++) {
+        const at = start + section / count * (finish - start);
+        const end = start + (section + 1) / count * (finish - start);
+        const along = (at + end) / 2;
+        const bottom = surfaceHeight(elevation, alongX ? along : position + 0.033,
+          alongX ? position + 0.033 : along);
+        if (bottom >= height - 0.043) continue;
+        const grade = height - bottom;
+        const litFace = alongX ? palette.wallY : palette.wallX;
+        const surfaceFinish = materialShade(context, foot(at, height), foot(at, bottom),
+          litFace, palette, palette.capSide, palette.materialShade);
+        poly(context, [foot(at, bottom), foot(end, bottom), foot(end, height), foot(at, height)],
+          surfaceFinish, palette.surfaceJoint, 0.65);
+        const relief = Math.min(0.16, (end - at) * 0.22);
+        if (grade > 0.52) {
+          poly(context, [foot(at + relief, bottom + grade * 0.19), foot(end - relief, bottom + grade * 0.19),
+            foot(end - relief, bottom + grade * 0.71), foot(at + relief, bottom + grade * 0.71)],
+          palette.materialShade + "72", palette.surfaceJoint, 0.8);
+          line(context, [foot(at + relief, bottom + grade * 0.69), foot(end - relief, bottom + grade * 0.69)],
+            palette.materialLight + "50", 0.65);
+        }
+        line(context, [foot(at, height - 0.07), foot(end, height - 0.07)], palette.materialLight + "8b", 1.25);
+        if (noise(section + 2, start - 4) > 0.52) line(context, [foot(at + relief, height - 0.16),
+          foot(end - relief, height - 0.19)], palette.materialShade + "b0", 0.85);
+      }
+    }
+  }
+
+  function terraceCoping(context, camera, perimeter, height, palette, covered) {
+    context.save();
+    if (covered) {
+      context.globalAlpha *= 0.83;
+      context.setLineDash([5, 4]);
+    }
+    for (const side of perimeter) {
+      const edge = (along, inset) => point(camera,
+        side.alongX ? along : side.position - inset * side.facing,
+        side.alongX ? side.position - inset * side.facing : along, height);
+      for (const [start, end] of side.segments) {
+        line(context, [edge(start, 0), edge(end, 0)], palette.accent + "c9", covered ? 1.55 : 1.35);
+        if (!covered && end - start > 0.22) {
+          line(context, [edge(start + 0.08, 0.11), edge(end - 0.08, 0.11)], palette.inlay + "a3", 1);
+        }
+      }
+    }
+    context.restore();
+  }
+
+  function raisedDeck(context, camera, deck, elevation, palette, covered, map) {
+    const { left, back, right, front } = centeredBounds(deck);
+    const perimeter = deckPerimeter(deck, elevation);
+    const height = elevation.height;
+    context.save();
+    if (covered) context.globalAlpha *= 0.43;
+    for (const side of perimeter) {
+      if (side.facing > 0) terraceFace(context, camera, side, elevation, palette);
+    }
+    const cap = rectangle(camera, left, back, deck.w, deck.h, height);
+    poly(context, cap, covered ? palette.capSide : palette.tiles[0]);
+    if (!covered) {
+      for (let x = left; x < right - 0.02; x += 1.45) {
+        for (let y = back; y < front - 0.02; y += 1.45) {
+          matteSlab(context, camera, x, y, Math.min(1.45, right - x), Math.min(1.45, front - y), height, palette, 15.8);
+        }
+      }
+      finishSurface(context, camera, map, cap, height, palette);
+    }
+    context.restore();
+    terraceCoping(context, camera, perimeter, height, palette, covered);
+  }
+
+  function terraceStairs(context, camera, stairs, elevation, palette, covered) {
+    const { left, back } = centeredBounds(stairs);
+    const horizontal = stairs.axis === "x";
+    const length = horizontal ? stairs.w : stairs.h;
+    const count = Math.round(clamp(length * 3.3, 7, 18));
+    const step = length / count;
+    const height = elevation.height;
+    const rise = stairs.rise < 0 ? -1 : 1;
+    const at = (t, side, z) => point(camera,
+      left + (horizontal ? t * stairs.w : side * stairs.w),
+      back + (horizontal ? side * stairs.h : t * stairs.h), z);
+    const riseAt = (t) => height * (rise === 1 ? t : 1 - t);
+    context.save();
+    if (covered) context.globalAlpha *= 0.43;
+    for (let index = 0; index < count; index++) {
+      const from = index / count;
+      const to = (index + 1) / count;
+      const treadHeight = riseAt((from + to) / 2);
+      const x = left + (horizontal ? step * index : 0);
+      const y = back + (horizontal ? 0 : step * index);
+      prism(context, camera, x, y, horizontal ? step : stairs.w, horizontal ? stairs.h : step,
+        treadHeight, index % 2 ? palette.capSide : palette.capDark, palette.wallX, palette.wallY, palette.seam);
+      const nose = rise === 1 ? from : to;
+      const accent = index === 0 || index === count - 1 ? palette.fixture : palette.inlay;
+      line(context, [at(nose, 0.045, treadHeight), at(nose, 0.955, treadHeight)], accent, 1.2);
+    }
+    for (const side of [0.035, 0.965]) {
+      const rail = 0.23;
+      for (const t of [0.03, 0.33, 0.66, 0.97]) {
+        line(context, [at(t, side, riseAt(t)), at(t, side, riseAt(t) + rail)], palette.cap, 1.45);
+      }
+      line(context, [at(0.02, side, riseAt(0.02) + rail), at(0.98, side, riseAt(0.98) + rail)],
+        palette.accent, 1.65);
+    }
+    context.restore();
+  }
+
+  function terraceCover(camera, elevation, actor) {
+    if (!elevation || !(actor.height < elevation.height - 0.14)) return undefined;
+    const center = actor.height + (actor.type === "item" ? 0.41 : actor.type === "obstacle" ? 0.63 : 0.76);
+    const projected = point(camera, actor.x, actor.y, center);
+    const hit = surfaceHit(elevation, basePlanePoint(camera, ...projected), true);
+    return hit.z > center + 0.09 ? hit.owner : undefined;
+  }
+
+  const wallCutawayThreshold = 0.75;
+
+  function polygonArea(vertices) {
+    let area = 0;
+    for (let i = 0; i < vertices.length; i++) {
+      const [x, y] = vertices[i];
+      const [nextX, nextY] = vertices[(i + 1) % vertices.length];
+      area += x * nextY - y * nextX;
+    }
+    return Math.abs(area) / 2;
+  }
+
+  function clipPolygon(vertices, distance) {
+    const visible = [];
+    for (let i = 0; i < vertices.length; i++) {
+      const start = vertices[i];
+      const end = vertices[(i + 1) % vertices.length];
+      const from = distance(start);
+      const to = distance(end);
+      if (from >= 0) visible.push(start);
+      if ((from < 0) !== (to < 0)) {
+        const t = from / (from - to);
+        visible.push([start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t]);
+      }
+    }
+    return visible;
+  }
+
+  function cross(a, b, c) {
+    return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  }
+
+  function convexHull(vertices) {
+    const sorted = vertices.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const chain = (points) => {
+      const edge = [];
+      for (const next of points) {
+        while (edge.length > 1 && cross(edge.at(-2), edge.at(-1), next) <= 0) edge.pop();
+        edge.push(next);
+      }
+      edge.pop();
+      return edge;
+    };
+    return [...chain(sorted), ...chain(sorted.reverse())];
+  }
+
+  function playerSilhouette(camera, player, height) {
+    const [x, y] = point(camera, player.x, player.y, height);
+    const unit = camera.unit * (camera.width < 500 ? 1.12 : 1);
+    return [[-0.13, -heroVisualHeight], [0.19, -heroVisualHeight], [0.28, -1.12], [0.30, -0.85], [0.30, -0.38],
+      [0.23, -0.01], [-0.24, -0.01], [-0.31, -0.37], [-0.30, -0.82], [-0.25, -1.15]]
+      .map(([u, v]) => [x + u * unit, y + v * unit]);
+  }
+
+  function withinWallSpan(camera, entry, player) {
+    const offset = Math.abs((entry.x - entry.y) - (player.x - player.y));
+    const heroHalfWidth = camera.width < 500 ? 0.31 * 1.12 : 0.31;
+    return offset < (entry.w + entry.h) * 0.5 + heroHalfWidth;
+  }
+
+  function wallCoverage(camera, entry, player, silhouette, topAt, baseHeight = 0) {
+    if (!withinWallSpan(camera, entry, player)) return 0;
+    const { left, right, back, front } = centeredBounds(entry);
+    const depth = player.x + player.y;
+    if (right + front <= depth) return 0;
+    // Intersect with the part of the wall in front of the player's projected body.
+    const footprint = clipPolygon([[left, back], [right, back], [right, front], [left, front]],
+      ([x, y]) => x + y - depth);
+    const hull = convexHull(footprint.flatMap(([x, y]) => [
+      point(camera, x, y, baseHeight), point(camera, x, y, topAt(x, y)),
+    ]));
+    if (hull.length < 3) return 0;
+    let covered = silhouette;
+    for (let i = 0; i < hull.length && covered.length; i++) {
+      const a = hull[i];
+      const b = hull[(i + 1) % hull.length];
+      covered = clipPolygon(covered, (p) => cross(a, b, p));
+    }
+    return polygonArea(covered) / polygonArea(silhouette);
+  }
+
+  function playerTerraceCoverage(camera, elevation, player) {
+    if (player.height >= elevation.height - 0.035) return { behind: false };
+    const silhouette = playerSilhouette(camera, player, player.height);
+    let widestCoverage = 0;
+    let nearest;
+    for (const deck of elevation.decks) {
+      const ratio = wallCoverage(camera, deck, player, silhouette, () => elevation.height);
+      if (ratio > widestCoverage) {
+        widestCoverage = ratio;
+        nearest = deck;
+      }
+    }
+    for (const stair of elevation.stairs) {
+      const ratio = wallCoverage(camera, stair, player, silhouette, (x, y) => {
+        const offset = stair.axis === "x" ? (x - stair.x) / stair.w : (y - stair.y) / stair.h;
+        return elevation.height * clamp(0.5 + offset * stair.rise, 0, 1);
+      });
+      if (ratio > widestCoverage) {
+        widestCoverage = ratio;
+        nearest = stair;
+      }
+    }
+    return { behind: widestCoverage > 0.005, cutaway: widestCoverage >= wallCutawayThreshold ? nearest : undefined };
+  }
+
+  function terraceShadows(context, camera, elevation) {
+    for (const entry of [...elevation.decks, ...elevation.stairs]) {
+      const { left, back } = centeredBounds(entry);
+      poly(context, rectangle(camera, left + 0.16, back + 0.23, entry.w + 0.16, entry.h + 0.15), "#07112163");
+    }
+  }
+
+  function drawTerraces(context, camera, elevation, palette, playerCover, map) {
+    const structures = [
+      ...elevation.decks.map((entry) => ({ entry, stair: false })),
+      ...elevation.stairs.map((entry) => ({ entry, stair: true })),
+    ];
+    structures.sort((a, b) => a.entry.x + a.entry.y - b.entry.x - b.entry.y);
+    for (const { entry, stair } of structures) {
+      if (stair) terraceStairs(context, camera, entry, elevation, palette, playerCover === entry);
+      else raisedDeck(context, camera, entry, elevation, palette, playerCover === entry, map);
+    }
+  }
+
+  function paintTerraces(context, canvas, camera, state, palette, theme, ratio, playerCover) {
+    const { elevation, map } = state;
+    const key = `${theme}:${state.floor}:${map.width}:${map.height}:${camera.unit}:${ratio}:${state.facility?.feature}`;
+    let layers = terraceCache.get(canvas);
+    if (layers?.elevation !== elevation || layers.key !== key || layers.obstacles !== state.obstacles) {
+      layers = { elevation, key, obstacles: state.obstacles, solid: null, cutaway: null };
+      terraceCache.set(canvas, layers);
+    }
+    const variant = playerCover ? "cutaway" : "solid";
+    let layer = layers[variant];
+    if (!layer || layer.playerCover !== playerCover) {
+      const zero = { ...camera, x: 0, y: 0 };
+      const corners = [...elevation.decks, ...elevation.stairs].flatMap((entry) => {
+        const { left, back } = centeredBounds(entry);
+        return [
+          ...rectangle(zero, left, back, entry.w, entry.h),
+          ...rectangle(zero, left, back, entry.w, entry.h, elevation.height + 0.23),
+        ];
+      });
+      if (!corners.length) return;
+      const left = Math.floor(Math.min(...corners.map(([x]) => x))) - 3;
+      const top = Math.floor(Math.min(...corners.map(([, y]) => y))) - 3;
+      const width = Math.ceil(Math.max(...corners.map(([x]) => x))) - left + 3;
+      const height = Math.ceil(Math.max(...corners.map(([, y]) => y))) - top + 3;
+      const scale = Math.min(ratio, 4096 / Math.max(width, height), Math.sqrt(4600000 / (width * height)));
+      const surface = document.createElement("canvas");
+      surface.width = Math.ceil(width * scale);
+      surface.height = Math.ceil(height * scale);
+      const paint = surface.getContext("2d");
+      paint.setTransform(surface.width / width, 0, 0, surface.height / height, 0, 0);
+      paint.lineCap = "round";
+      paint.lineJoin = "round";
+      const local = { ...camera, x: -left, y: -top };
+      drawTerraces(paint, local, elevation, palette, playerCover, map);
+      paintEarlyBrasswork(paint, local, state, elevation, 1);
+      paintFacilityDressing(paint, local, state, palette, elevation, 1);
+      layer = { surface, left, top, width, height, playerCover };
+      layers[variant] = layer;
+    }
+    context.drawImage(layer.surface, camera.x + layer.left, camera.y + layer.top, layer.width, layer.height);
+  }
+
+  function perimeterHardware(context, camera, state, palette, theme, seconds, reduced) {
+    if (state.landing) return;
+    const { width, height } = state.map;
+    const { unit } = camera;
+    for (const [alongX, span, boundary, outward] of [
+      [true, width, 0, -1], [false, height, 0, -1], [true, width, height, 1], [false, height, width, 1],
+    ]) {
+      const fixtureCount = Math.floor(span / 6.2);
+      for (let index = 0; index < fixtureCount; index++) {
+        const seed = index + boundary + state.floor * 4.1;
+        const along = (index + 0.45 + noise(seed, span) * 0.16) * span / fixtureCount;
+        const at = (forward, offset, z) => point(camera,
+          alongX ? along + forward : boundary + outward * offset,
+          alongX ? boundary + outward * offset : along + forward, z);
+        const [x, y] = at(0, 0.18, 0);
+        if (x < -unit * 2.5 || x > camera.width + unit * 2.5 || y < -unit || y > camera.height + unit) continue;
+        const route = (heightOffset = 0) => [at(-1.02, 0.22, -0.35 + heightOffset),
+          at(-0.53, 0.22, -0.35 + heightOffset), at(-0.34, 0.18, 0.10 + heightOffset),
+          at(0.57, 0.18, 0.10 + heightOffset), at(0.80, 0.24, -0.25 + heightOffset)];
+        if (theme !== "forge") {
+          for (const mount of [-0.68, 0.51]) {
+            const bracket = [at(mount, -0.12, -0.085), at(mount, 0.07, -0.085), at(mount, 0.23, 0.09)];
+            line(context, bracket, "#18252f", unit * 0.12);
+            line(context, bracket, palette.wallX, unit * 0.065);
+          }
+        }
+        if (theme === "sluice") {
+          line(context, route(), "#142226", unit * 0.17);
+          line(context, route(), "#547970", unit * 0.107);
+          line(context, route(0.025), "#a97658", unit * 0.052);
+          for (const forward of [-0.20, 0.31, 0.55]) {
+            line(context, [at(forward, 0.17, 0.017), at(forward, 0.17, 0.168)], "#bb987a", unit * 0.065);
+            line(context, [at(forward + 0.052, 0.17, 0.01), at(forward + 0.052, 0.17, 0.16)], "#24332f", 1);
+          }
+          const drip = fraction(seconds * 0.29 + noise(seed, 63));
+          if (!reduced && drip > 0.77) {
+            const fall = (drip - 0.77) * 4.35;
+            const drop = at(0.31, 0.18, 0.030 - fall ** 2 * 0.46);
+            ellipse(context, ...drop, Math.max(0.85, unit * 0.027), Math.max(1.1, unit * 0.043), "#bce7e3c0");
+          }
+        } else if (theme === "relay") {
+          const wire = [at(-1.12, 0.11, -0.04), at(-0.45, 0.11, -0.04),
+            at(-0.18, 0.22, 0.21), at(0.81, 0.22, 0.21)];
+          line(context, wire, "#162030", unit * 0.205);
+          for (const [offset, color] of [[-0.048, "#49608e"], [0.0, "#7f9ab4"], [0.05, "#aa845e"]]) {
+            line(context, wire.map(([px, py]) => [px, py + unit * offset]), color, unit * 0.039);
+          }
+          for (const forward of [-0.65, 0.20, 0.60]) {
+            const z = forward < 0 ? -0.04 : 0.21;
+            const mount = at(forward, 0.15, z);
+            ellipse(context, ...mount, unit * 0.078, unit * 0.12, "#2a3450", "#a5a6ab", 0.9);
+            line(context, [[mount[0] - unit * 0.056, mount[1]], [mount[0] + unit * 0.056, mount[1]]],
+              "#b7a68a", 1.25);
+          }
+        } else {
+          const lip = [at(-0.91, -0.11, -0.012), at(0.91, -0.11, -0.012),
+            at(0.91, 0.42, -0.012), at(-0.91, 0.42, -0.012)];
+          poly(context, lip, "#332831", "#947260", 0.95);
+          poly(context, [lip[2], lip[3], at(-0.91, 0.42, -0.22), at(0.91, 0.42, -0.22)], "#281e25", "#14141d", 0.8);
+          line(context, [at(-0.76, 0.11, 0.015), at(0.76, 0.11, 0.015)], "#c37451bb", unit * 0.09);
+          for (let slat = 0; slat < 7; slat++) {
+            const forward = (slat - 3) * 0.215;
+            line(context, [at(forward, -0.05, 0.022), at(forward, 0.35, 0.022)], "#211c26", unit * 0.10);
+            line(context, [at(forward + 0.043, -0.05, 0.029), at(forward + 0.043, 0.35, 0.029)], "#845e55",
+              Math.max(0.6, unit * 0.027));
+          }
+        }
+      }
+    }
+  }
+
+  function perimeterMotion(context, camera, state, palette, theme, seconds, reduced) {
+    const { width, height } = state.map;
+    const unit = camera.unit;
+    perimeterHardware(context, camera, state, palette, theme, seconds, reduced);
+    context.save();
+    for (let index = 0; index < 21; index++) {
+      const phase = fraction(noise(index, 61) + (reduced ? 0 : seconds * (0.10 + noise(index, 85) * 0.09)));
+      const along = fraction(noise(index, 13) + (reduced ? 0 : seconds * 0.035));
+      const x = index % 2 ? along * width : width - 0.52;
+      const y = index % 2 ? height - 0.52 : along * height;
+      const [xx, yy] = point(camera, x, y);
+      context.globalAlpha = 0.11 + Math.sin(phase * Math.PI) * 0.35;
+      if (theme === "sluice") {
+        ellipse(context, xx, yy, unit * (0.12 + phase * 0.66),
+          unit * (0.05 + phase * 0.17), null, palette.glow, 1);
+      } else if (theme === "relay") {
+        const trail = index % 2
+          ? point(camera, Math.max(0, x - 0.4), y)
+          : point(camera, x, Math.max(0, y - 0.4));
+        line(context, [[xx, yy], trail], palette.glow, 2);
+      } else {
+        line(context, [[xx, yy - unit * phase * 1.3],
+          [xx + unit * 0.08, yy - unit * phase * 1.18]], palette.glow, 1.6);
+      }
+    }
+    context.restore();
+  }
+
+  function stageArrival(context, camera, state, palette, theme, reduced) {
+    const secondsLeft = state.revealTimer;
+    if (!(secondsLeft > 0)) return;
+    const fade = clamp(secondsLeft / 1.05, 0, 1);
+    const progress = reduced ? 0.55 : 1 - fade;
+    const { width, height } = state.map;
+    const { unit } = camera;
+    const focusX = state.player?.x ?? width / 2;
+    const focusY = state.player?.y ?? height / 2;
+    const [x, y] = point(camera, focusX, focusY);
+    const reach = unit * (1.8 + progress * 5.8);
+    const glow = context.createRadialGradient(x, y, 0, x, y, reach);
+    glow.addColorStop(0, palette.glow);
+    glow.addColorStop(1, "#11142100");
+    context.save();
+    context.globalAlpha = reduced ? 0.085 : 0.20 * fade;
+    ellipse(context, x, y, reach, reach * 0.56, glow);
+    const rim = (edge, alpha) => {
+      context.globalAlpha = alpha;
+      poly(context, rectangle(camera, edge, edge, width - 2 * edge, height - 2 * edge), null, palette.glow, 2.8);
+    };
+    rim(0.24, reduced ? 0.26 : 0.63 * fade);
+    if (!reduced) {
+      context.globalAlpha = 0.46 * fade;
+      if (theme === "sluice") {
+        rim(0.36 + progress * 0.85, 0.46 * fade);
+        for (const side of [0.52, width - 0.52]) {
+          for (let index = 0; index < 12; index++) {
+            const yy = fraction(noise(index, 1) + progress * 0.36) * height;
+            const [cx, cy] = point(camera, side, yy);
+            ellipse(context, cx, cy, unit * (0.21 + progress * 0.52), unit * 0.10, null, palette.glow, 1.35);
+          }
+        }
+      } else if (theme === "relay") {
+        const xEnd = Math.min(width - 0.52, 0.52 + width * progress);
+        const yEnd = Math.min(height - 0.52, 0.52 + height * progress);
+        line(context, [point(camera, 0.52, yEnd), point(camera, 0.52, 0.52), point(camera, xEnd, 0.52)],
+          palette.glow, 3);
+        line(context, [point(camera, width - 0.52, height - yEnd),
+          point(camera, width - 0.52, height - 0.52), point(camera, width - xEnd, height - 0.52)], palette.glow, 3);
+      } else {
+        for (let spark = 0; spark < 26; spark++) {
+          const xx = spark % 2 ? noise(spark, 1) * width : width - 0.68;
+          const yy = spark % 2 ? height - 0.68 : noise(spark, 5) * height;
+          const lift = progress * (0.45 + noise(spark, 26));
+          const [cx, cy] = point(camera, xx, yy, lift);
+          line(context, [[cx, cy], [cx - unit * 0.09, cy + unit * 0.19]], palette.glow, 1.8);
+        }
+      }
+    }
+    context.restore();
+  }
+
+  function storyLighting(context, camera, state) {
+    const { width, height } = camera;
+    const radius = Math.max(width, height);
+    const color = state.scene === "heart" ? "#261923c7" : state.scene === "memory" ? "#17142ac7" : "#09171ec9";
+    const shade = context.createRadialGradient(width * 0.51, height * 0.40, radius * 0.14,
+      width * 0.50, height * 0.43, radius * 0.70);
+    shade.addColorStop(0, "#08111b00");
+    shade.addColorStop(0.55, "#08111b2a");
+    shade.addColorStop(1, color);
+    context.fillStyle = shade;
+    context.fillRect(0, 0, width, height);
+  }
+
+  function surfaceAxes(camera, entry) {
+    const horizontal = entry.w >= entry.h;
+    const length = horizontal ? entry.w : entry.h;
+    const breadth = horizontal ? entry.h : entry.w;
+    const at = (along, across, height = 0) => point(camera,
+      entry.x + (horizontal ? along * length : across * breadth),
+      entry.y + (horizontal ? across * breadth : along * length), height);
+    const face = (span, depth, height = 0) => [
+      at(-span, -depth, height), at(span, -depth, height), at(span, depth, height), at(-span, depth, height),
+    ];
+    return { at, face, length, breadth };
+  }
+
+  function waterSurface(context, camera, entry, seconds, reduced) {
+    const { at, face, length } = surfaceAxes(camera, entry);
+    const rim = face(0.5, 0.5);
+    const interior = face(0.494, 0.445);
+    const from = at(0, -0.45);
+    const to = at(0, 0.45);
+    const water = context.createLinearGradient(...from, ...to);
+    water.addColorStop(0, "#10333e");
+    water.addColorStop(0.44, "#1b697a");
+    water.addColorStop(1, "#124454");
+    poly(context, rim, "#1d3a3c", "#76a5a2", 1.25);
+    poly(context, interior, water, "#246b74", 0.9);
+    context.save();
+    poly(context, interior);
+    context.clip();
+    for (let index = 0; index < Math.ceil(Math.min(27, length * 1.6)); index++) {
+      const phase = fraction(noise(index, 73) + (reduced ? 0 : seconds * (0.10 + noise(index, 4) * 0.08)));
+      const x = phase - 0.5;
+      const y = (noise(index, 43) - 0.5) * 0.82;
+      const width = 0.026 + noise(index, 56) * 0.15;
+      context.globalAlpha = 0.22 + noise(index, 35) * 0.39;
+      line(context, [at(x, y), at(x + width * 0.36, y - 0.032), at(x + width, y - 0.012)],
+        index % 4 === 0 ? "#a3f4ee" : "#55afbd", index % 4 === 0 ? 1.6 : 1.1);
+    }
+    context.restore();
+    for (const side of [-1, 1]) {
+      line(context, [at(-0.50, side * 0.466), at(0.50, side * 0.466)], "#8ecec160", 1.25);
+    }
+  }
+
+  function bridgeSurface(context, camera, entry) {
+    const { at, face, length } = surfaceAxes(camera, entry);
+    const lower = face(0.50, 0.50);
+    const upper = face(0.50, 0.50, 0.12);
+    const rim = "#a2b3a0";
+    poly(context, [lower[1], lower[2], upper[2], upper[1]], "#294a50", "#1b3038", 1);
+    poly(context, [lower[2], lower[3], upper[3], upper[2]], "#294a50", "#1b3038", 1);
+    poly(context, upper, "#1a383ee0", rim, 1.1);
+    const slats = Math.round(clamp(length * 4, 4, 30));
+    for (let slot = 1; slot < slats; slot++) {
+      const along = slot / slats - 0.5;
+      line(context, [at(along, -0.49, 0.13), at(along, 0.49, 0.13)], "#7d9e95", 1.15);
+    }
+    for (const side of [-1, 1]) {
+      const across = side * 0.45;
+      line(context, [at(-0.5, across, 0.27), at(0.5, across, 0.27)], "#ccd6ad", 1.4);
+      for (const along of [-0.49, 0, 0.49]) {
+        line(context, [at(along, across, 0.12), at(along, across, 0.27)], rim, 1.3);
+      }
+    }
+  }
+
+  function conduitSurface(context, camera, entry, seconds, reduced) {
+    const { at, face, length } = surfaceAxes(camera, entry);
+    const live = entry.status === "active";
+    const warning = entry.status === "warning";
+    const accent = live ? "#ffe0a1" : warning ? "#ffc579" : "#839bba";
+    poly(context, face(0.5, 0.5, 0.04), "#2d354a", "#697997", 1.15);
+    poly(context, face(0.48, 0.39, 0.05), live ? "#964f36" : warning ? "#5c3f37" : "#1b2336", "#4f5367", 0.85);
+    context.save();
+    if (warning) context.setLineDash([6, 3]);
+    for (const side of [-1, 1]) {
+      line(context, [at(-0.48, side * 0.36, 0.07), at(0.48, side * 0.36, 0.07)], accent, live ? 2.15 : 1.3);
+    }
+    context.restore();
+    const cells = Math.round(clamp(length * 2, 4, 23));
+    for (let slot = 0; slot < cells; slot++) {
+      const along = (slot + 0.5) / cells - 0.5;
+      const polarity = slot % 2 ? -1 : 1;
+      const modulation = Number.isFinite(entry.phase) ? entry.phase * tau : seconds * 16;
+      const energy = reduced ? 0.72 : 0.47 + noise(slot, 19) * 0.17 + Math.sin(modulation + slot) * 0.24;
+      context.save();
+      if (live) context.globalAlpha = energy;
+      line(context, [at(along - 0.013, -0.24, 0.065), at(along + 0.013, 0.24, 0.065)],
+        live ? "#ffd696" : warning ? "#c58a62" : "#526584", live ? 1.3 : 0.9);
+      if (live && !reduced && slot % 2 === 0) {
+        line(context, [at(along - 0.016, -0.34 * polarity, 0.09),
+          at(along + 0.017, -0.05 * polarity, 0.17), at(along - 0.010, 0.13 * polarity, 0.15),
+          at(along + 0.018, 0.34 * polarity, 0.09)], "#fff1c4", 1.45);
+      }
+      context.restore();
+    }
+  }
+
+  function steamPlume(context, x, y, unit, time, seed, reduced, strength) {
+    const jet = context.createLinearGradient(x, y, x + unit * 0.07, y - unit * 0.55);
+    jet.addColorStop(0, "#d9e6e6b7");
+    jet.addColorStop(0.39, "#e5ece96e");
+    jet.addColorStop(1, "#aebbca00");
+    context.save();
+    context.globalAlpha = strength * (reduced ? 0.55 : 1);
+    poly(context, [[x - unit * 0.025, y], [x - unit * 0.071, y - unit * 0.53],
+      [x + unit * 0.15, y - unit * 0.69], [x + unit * 0.043, y - unit * 0.05]], jet);
+    for (let index = 0; index < 10; index++) {
+      const phase = reduced ? (index + 1) / 11 : fraction(index * 0.10 + time * 0.44 + seed);
+      const lift = unit * (0.15 + phase * 1.40 + phase ** 2 * 0.61);
+      const flow = Math.sin(seed * 21 + index * 1.82 + (reduced ? 0 : time * 2.9));
+      const wx = x + unit * (phase * 0.11 + phase * phase * (0.28 + flow * 0.46));
+      const wy = y - lift;
+      const radius = unit * (0.076 + phase * 0.20 + phase * phase * 0.15);
+      context.save();
+      context.translate(wx, wy);
+      context.rotate(flow * phase * 0.29);
+      context.scale(0.63 + phase * 1.19, 1.38 + phase * 0.16);
+      const wisps = context.createRadialGradient(0, 0, 0, 0, 0, radius);
+      wisps.addColorStop(0, phase < 0.34 ? "#e6efedcc" : "#b9c5cb8f");
+      wisps.addColorStop(0.56, phase < 0.34 ? "#d8e2e3a3" : "#afbec35c");
+      wisps.addColorStop(1, "#8f9aa800");
+      context.globalAlpha = strength * (reduced ? 0.42 : 1) * Math.sin(phase * Math.PI) * 0.49;
+      ellipse(context, 0, 0, radius, radius, wisps);
+      context.restore();
+    }
+    context.restore();
+  }
+
+  function ventSurface(context, camera, entry, seconds, reduced) {
+    const { at, face } = surfaceAxes(camera, entry);
+    const live = entry.status === "active";
+    const warning = entry.status === "warning";
+    const rim = live ? "#ffc89b" : warning ? "#edaf78" : "#9d7d62";
+    poly(context, face(0.50, 0.50, 0.06), "#4d3539", rim, 1.25);
+    poly(context, face(0.43, 0.42, 0.08), live ? "#995b43" : "#251b24", "#674c45", 1);
+    for (let index = 1; index <= 5; index++) {
+      const across = (index / 6 - 0.5) * 0.82;
+      line(context, [at(-0.40, across, 0.15), at(0.40, across, 0.15)], rim, 1.65);
+    }
+    if (live || warning) {
+      context.save();
+      if (warning) context.setLineDash([4, 3]);
+      poly(context, face(0.48, 0.46, 0.16), null, live ? "#ffb978" : "#f2a571", 2);
+      context.restore();
+    }
+    for (const position of [-0.32, 0.27]) {
+      const mouth = at(position, -0.07, 0.40);
+      line(context, [at(position - 0.13, -0.07, 0.14), at(position, -0.07, 0.14), mouth],
+        "#261c31", camera.unit * 0.17);
+      line(context, [at(position - 0.13, -0.07, 0.14), at(position, -0.07, 0.14), mouth],
+        live ? "#da946c" : "#a37b65", camera.unit * 0.107);
+      ellipse(context, ...mouth, camera.unit * 0.068, camera.unit * 0.035, "#28313a", "#d6ad91", 1.0);
+      if (live) steamPlume(context, ...mouth, camera.unit, seconds, position + entry.x * 0.16, reduced, 0.96);
+    }
+  }
+
+  function drawTerrain(context, camera, surfaces, seconds, reduced, elevation, layer) {
+    if (!Array.isArray(surfaces)) return;
+    const layers = { water: waterSurface, bridge: bridgeSurface, conduit: conduitSurface, vent: ventSurface };
+    for (const [kind, render] of Object.entries(layers)) {
+      for (const entry of surfaces) {
+        if (entry.kind !== kind || entry.w <= 0 || entry.h <= 0) continue;
+        const height = surfaceHeight(elevation, entry.x, entry.y);
+        if (layer !== undefined && (height > 0.04 ? 1 : 0) !== layer) continue;
+        render(context, raisedCamera(camera, height), entry, seconds, reduced);
+      }
+    }
+  }
+
+  function floorStencil(context, camera, at, label, color) {
+    const size = clamp(camera.unit * 0.32, 10, 17);
+    context.save();
+    context.translate(...at);
+    context.scale(1, 0.84);
+    context.font = `800 ${size}px system-ui, sans-serif`;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.strokeStyle = "#132329";
+    context.lineWidth = 2.5;
+    context.strokeText(label, 0, 0);
+    context.fillStyle = color;
+    context.fillText(label, 0, 0);
+    context.restore();
+  }
+
+  function gatePlate(context, camera, gate, palette, label) {
+    const open = Boolean(gate.active ?? gate.open);
+    const color = open ? "#b8eccd" : "#efd09b";
+    const rx = gate.facingX ?? 1;
+    const ry = gate.facingY ?? 0;
+    const length = Math.hypot(rx, ry);
+    const dx = length ? rx / length : 1;
+    const dy = length ? ry / length : 0;
+    const at = (ahead, across, z = 0.02) => point(camera,
+      gate.x + dx * ahead - dy * across, gate.y + dy * ahead + dx * across, z);
+    const frame = [at(-1.52, -0.73), at(0.38, -0.73), at(0.38, 0.73), at(-1.52, 0.73)];
+    poly(context, frame, palette.materialShade + "ae", color + "ba", 1.45);
+    poly(context, [at(-1.44, -0.63), at(0.23, -0.63), at(0.23, 0.63), at(-1.44, 0.63)],
+      null, color + "6a", 0.9);
+    for (const side of [-1, 1]) {
+      const lamp = at(0.19, side * 0.5, 0.06);
+      ellipse(context, ...lamp, camera.unit * 0.104, camera.unit * 0.053, color + "7d");
+      ellipse(context, ...lamp, Math.max(1.5, camera.unit * 0.05), Math.max(1, camera.unit * 0.024), color);
+      line(context, [at(-1.52, side * 0.73), at(-1.19, side * 0.73)], color, 1.45);
+    }
+    for (const ahead of [-2.16, -1.78]) {
+      line(context, [at(ahead - 0.10, -0.35), at(ahead + 0.12, 0), at(ahead - 0.10, 0.35)],
+        color + "d0", Math.max(1.45, camera.unit * 0.062));
+    }
+    floorStencil(context, camera, at(-1.03, 0, 0.05), label, color);
+  }
+
+  function paintGateMarkings(context, camera, state, palette, elevation, layer) {
+    if (!state.revealed) return;
+    const accepts = (entry) => layer === undefined
+      || (surfaceHeight(elevation, entry.x, entry.y) > 0.04 ? 1 : 0) === layer;
+    const marker = state.gateMarker;
+    const exit = state.items?.find((entry) => entry.kind === "exit" && !entry.collected);
+    if (marker && Number.isFinite(marker.x) && Number.isFinite(marker.y) && accepts(marker)) {
+      gatePlate(context, onSurface(camera, elevation, marker), marker, palette, marker.type === "sluice" ? "수문" : "출구");
+    }
+    if (exit && accepts(exit) && (!marker || Math.hypot(exit.x - marker.x, exit.y - marker.y) > 0.6)) {
+      gatePlate(context, onSurface(camera, elevation, exit), exit, palette, state.theme === "sluice" ? "수문 출구" : "출구");
+    }
+    const zone = state.holdZone;
+    if (!zone || !accepts(zone)) return;
+    const local = onSurface(camera, elevation, zone);
+    const radius = zone.radius ?? 1.7;
+    const color = zone.active ? "#c4f6dd" : "#90d7be";
+    groundRing(context, local, zone.x, zone.y, radius * 0.88, "#193c412f", color + "b0", 1.25);
+    context.save();
+    context.setLineDash([3.5, 3.5]);
+    groundRing(context, local, zone.x, zone.y, radius * 0.70, null, color + "82", 1);
+    context.restore();
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      line(context, [point(local, zone.x + dx * radius * 0.68, zone.y + dy * radius * 0.68, 0.02),
+        point(local, zone.x + dx * radius * 0.87, zone.y + dy * radius * 0.87, 0.02)], color, 1.3);
+    }
+    floorStencil(context, local, point(local, zone.x + radius * 0.25, zone.y + radius * 0.47, 0.04), "동기화", color);
+  }
+
+  function housingTop(context, camera, entry, palette, theme, deck, seconds, reduced) {
+    const { x, y, w, h } = entry;
+    const unit = camera.unit;
+    const span = Math.min(0.76, w * 0.61, h * 0.76);
+    const top = palette.obstacleHeight;
+    if (theme === "sluice") {
+      const size = Math.min(w * 0.78, 1.8);
+      poly(context, rectangle(camera, x - size / 2, y - span / 2, size, span, deck),
+        "#203b45", palette.inlay, 1);
+      for (let index = 1; index < 6; index++) {
+        const xx = x - size / 2 + size * index / 6;
+        line(context, [point(camera, xx, y - span * 0.41, deck),
+          point(camera, xx, y + span * 0.41, deck)], palette.cap, 1.3);
+      }
+      const [cx, cy] = point(camera, x, y, top);
+      ellipse(context, cx, cy, unit * 0.23, unit * 0.12, "#284854", palette.fixture, 1.3);
+      line(context, [[cx - unit * 0.16, cy], [cx + unit * 0.16, cy]], palette.fixture, 1);
+      line(context, [[cx, cy - unit * 0.075], [cx, cy + unit * 0.075]], palette.fixture, 1);
+      return;
+    }
+    if (theme === "relay") {
+      const distance = Math.min(0.44, w * 0.30);
+      const offset = span * 0.16;
+      for (const side of [-1, 1]) {
+        const xx = x + distance * side;
+        const [ax, ay] = point(camera, xx, y, deck - 0.01);
+        const [bx, by] = point(camera, xx, y, top);
+        line(context, [[ax, ay], [bx, by]], "#223046", unit * 0.21);
+        for (let rung = 1; rung <= 3; rung++) {
+          const [cx, cy] = point(camera, xx, y, deck + (top - deck) * rung / 3);
+          ellipse(context, cx, cy, unit * 0.105, unit * 0.050, palette.conduit, palette.fixture, 0.65);
+        }
+      }
+      const pulse = reduced ? 0.62 : 0.30 + Math.abs(Math.sin(seconds * 7 + x)) * 0.62;
+      context.save();
+      context.globalAlpha *= pulse;
+      line(context, [point(camera, x - distance, y, top), point(camera, x - offset, y, top - 0.09),
+        point(camera, x, y - offset, top + 0.05), point(camera, x + distance, y, top)], palette.glow, 1.5);
+      context.restore();
+      return;
+    }
+
+    const [cx, seat] = point(camera, x, y, deck + 0.015);
+    const topY = point(camera, x, y, top)[1];
+    const half = span * unit * 0.56;
+    poly(context, [[cx - half, seat], [cx - half * 0.67, seat - unit * 0.14],
+      [cx - half * 0.38, topY], [cx + half * 0.34, topY], [cx + half * 0.71, seat - unit * 0.14],
+      [cx + half, seat]], "#392327", palette.cap, 1.2);
+    ellipse(context, cx, seat, half, unit * 0.105, "#301a23", palette.glow, 1.15);
+    line(context, [[cx + half * 0.23, topY + unit * 0.07], [cx + half * 0.55, seat - unit * 0.06]],
+      palette.fixture, 1.0);
+  }
+
+  const facilityMetal = {
+    copper: ["#674f43", "#a47758", "#d2a477"],
+    iron: ["#34373d", "#59626a", "#8c9895"],
+    ceramic: ["#3c5060", "#71969b", "#bdd7cc"],
+    stone: ["#3b3435", "#736154", "#aa9077"],
+  };
+
+  function facilityFootprint(entry, from, to, left, right) {
+    const horizontal = entry.w >= entry.h;
+    const along = (from + to) / 2;
+    const across = (left + right) / 2;
+    return {
+      x: entry.x + (horizontal ? along : across) * entry.w,
+      y: entry.y + (horizontal ? across : along) * entry.h,
+      w: (horizontal ? to - from : right - left) * entry.w,
+      h: (horizontal ? right - left : to - from) * entry.h,
+    };
+  }
+
+  function facilityAxes(context, camera, entry, palette) {
+    const frame = surfaceAxes(camera, entry);
+    const box = (from, to, left, right, base, top, metal = facilityMetal.iron) => {
+      const { x, y, w, h } = facilityFootprint(entry, from, to, left, right);
+      prism(context, raisedCamera(camera, base), x - w / 2, y - h / 2, w, h, top - base,
+        metal[2], metal[1], metal[0], palette.surfaceJoint);
+    };
+    return { ...frame, box };
+  }
+
+  function facilityPipe(context, points, unit, radius, metal = facilityMetal.copper) {
+    line(context, points, metal[0], unit * radius);
+    line(context, points.map(([x, y]) => [x, y - unit * radius * 0.10]), metal[1], unit * radius * 0.72);
+    line(context, points.map(([x, y]) => [x, y - unit * radius * 0.23]), metal[2],
+      Math.max(0.62, unit * radius * 0.18));
+  }
+
+  function facilityDrum(context, at, along, across, base, top, radius, unit, metal, contents) {
+    const [x, y] = at(along, across, base);
+    const capY = at(along, across, top)[1];
+    const rx = Math.max(2, unit * radius * 1.18);
+    const ry = rx * 0.4;
+    const fill = context.createLinearGradient(x - rx, y, x + rx, y);
+    fill.addColorStop(0, metal[0]);
+    fill.addColorStop(0.33, metal[2]);
+    fill.addColorStop(0.65, metal[1]);
+    fill.addColorStop(1, metal[0]);
+    context.beginPath();
+    context.moveTo(x - rx, capY);
+    context.lineTo(x - rx, y);
+    context.ellipse(x, y, rx, ry, 0, Math.PI, 0, true);
+    context.lineTo(x + rx, capY);
+    context.closePath();
+    context.fillStyle = fill;
+    context.fill();
+    context.strokeStyle = "#20242b";
+    context.lineWidth = 0.9;
+    context.stroke();
+    ellipse(context, x, capY, rx, ry, metal[2], metal[0], 1);
+    ellipse(context, x, capY + ry * 0.08, rx * 0.76, ry * 0.74, contents ?? metal[1], metal[0], 0.9);
+    for (const z of [base + (top - base) * 0.13, base + (top - base) * 0.76]) {
+      const bandY = at(along, across, z)[1];
+      context.beginPath();
+      context.ellipse(x, bandY, rx, ry * 0.87, 0, Math.PI * 0.02, Math.PI * 0.98);
+      context.strokeStyle = metal[0];
+      context.lineWidth = Math.max(0.8, unit * 0.048);
+      context.stroke();
+    }
+  }
+
+  function facilityWheel(context, center, radius, angle, metal = facilityMetal.copper) {
+    const [x, y] = center;
+    const ry = radius * 0.74;
+    ellipse(context, x, y, radius, ry, "#292b2c", metal[0], Math.max(1, radius * 0.22));
+    ellipse(context, x, y, radius * 0.88, ry * 0.88, null, metal[2], Math.max(1, radius * 0.14));
+    for (let arm = 0; arm < 3; arm++) {
+      const phase = angle + arm * tau / 3;
+      line(context, [[x, y], [x + Math.cos(phase) * radius * 0.84, y + Math.sin(phase) * ry * 0.84]],
+        metal[1], Math.max(0.85, radius * 0.14));
+    }
+    ellipse(context, x, y, Math.max(1, radius * 0.22), Math.max(1, ry * 0.22), metal[2]);
+  }
+
+  function fixtureIntake(context, camera, axis, entry, phase) {
+    const { at, box, face } = axis;
+    const unit = camera.unit;
+    poly(context, face(0.46, 0.39, 0.14), "#14292e", "#80a398", 1.3);
+    poly(context, face(0.41, 0.30, 0.16), "#265964", "#517977", 0.82);
+    for (const across of [-0.22, -0.07, 0.09, 0.22]) {
+      const head = -0.38 + (across + 0.25 + phase) % 0.69;
+      line(context, [at(head, across, 0.17), at(head + 0.10, across + 0.02, 0.17)],
+        "#9edbd6aa", Math.max(1, unit * 0.033));
+    }
+    box(-0.43, 0.43, -0.45, -0.31, 0.08, 0.90, facilityMetal.iron);
+    facilityPipe(context, [at(-0.43, -0.26, 0.84), at(0.43, -0.26, 0.84)], unit, 0.15);
+    for (let slat = -3; slat <= 3; slat++) {
+      const x = slat * 0.113;
+      line(context, [at(x, -0.24, 0.78), at(x, 0.29, 0.23)], "#1b3036", unit * 0.11);
+      line(context, [at(x + 0.01, -0.24, 0.79), at(x + 0.01, 0.29, 0.24)], "#7b9e99", Math.max(1, unit * 0.045));
+    }
+    facilityPipe(context, [at(-0.43, 0.29, 0.22), at(0.43, 0.29, 0.22)], unit, 0.13, facilityMetal.iron);
+  }
+
+  function fixturePumps(context, camera, axis, entry, phase, reduced) {
+    const { at, box, breadth } = axis;
+    const unit = camera.unit;
+    box(-0.46, 0.46, -0.30, 0.30, 0.12, 0.38);
+    const radius = Math.min(0.32, breadth * 0.24, axis.length * 0.15);
+    for (const [along, motion] of [[-0.25, phase], [0.22, phase + 0.33]]) {
+      facilityDrum(context, at, along, 0, 0.28, 0.87, radius, unit, facilityMetal.copper);
+      const arm = (reduced ? 0 : Math.sin(motion * tau) * 0.055);
+      facilityPipe(context, [at(along, -0.26, 0.64), at(along, 0.20, 0.64),
+        at(along + 0.105 + arm, 0.37, 0.44)], unit, 0.16, facilityMetal.iron);
+      facilityWheel(context, at(along + 0.035, 0.25, 0.69), Math.max(3.5, unit * radius * 0.71), motion * tau);
+    }
+    facilityPipe(context, [at(-0.43, 0.36, 0.38), at(0.43, 0.36, 0.38)], unit, 0.18);
+  }
+
+  function fixtureCondenser(context, camera, axis, entry, phase, reduced) {
+    const { at, box, face, length } = axis;
+    const unit = camera.unit;
+    poly(context, face(0.44, 0.40, 0.16), "#1e333b", "#8db5af", 1.0);
+    box(-0.45, 0.45, -0.39, -0.29, 0.13, 0.34); // Back collecting trough.
+    const count = Math.max(3, Math.min(6, Math.round(length * 1.4)));
+    for (let i = 0; i < count; i++) {
+      const along = -0.38 + i * (0.76 / (count - 1));
+      facilityPipe(context, [at(along, -0.30, 0.25), at(along, -0.30, 0.97),
+        at(along, -0.17, 1.19), at(along, 0.11, 1.19), at(along, 0.28, 0.97), at(along, 0.28, 0.24)],
+      unit, 0.13, i % 2 ? facilityMetal.copper : facilityMetal.iron);
+      const fall = fraction(phase * 2 + i * 0.37);
+      if (!reduced && fall > 0.50) {
+        ellipse(context, ...at(along + 0.01, 0.29, 0.74 - (fall - 0.50) ** 2 * 2.4),
+          Math.max(0.9, unit * 0.031), Math.max(1, unit * 0.041), "#b3e8e0b0");
+      }
+    }
+    facilityPipe(context, [at(-0.43, 0.30, 0.28), at(0.43, 0.30, 0.28)], unit, 0.18, facilityMetal.ceramic);
+  }
+
+  function fixtureBoilers(context, camera, axis, entry, phase) {
+    const { at, length, breadth } = axis;
+    const unit = camera.unit;
+    const radius = Math.min(0.46, breadth * 0.31, length * 0.205);
+    for (const [along, crown] of [[-0.22, 1.23], [0.22, 1.06]]) {
+      facilityDrum(context, at, along, -0.025, 0.17, crown, radius, unit, facilityMetal.copper);
+      facilityPipe(context, [at(along, -0.10, crown), at(along, -0.10, crown + 0.28),
+        at(along + 0.08, -0.10, crown + 0.39)], unit, 0.19, facilityMetal.iron);
+      const gauge = at(along - 0.04, 0.32, crown * 0.67);
+      ellipse(context, ...gauge, unit * 0.106, unit * 0.12, "#392f2e", "#d4af87", 1);
+      line(context, [gauge, [gauge[0] + Math.cos(phase * 1.3) * unit * 0.07, gauge[1] - unit * 0.061]],
+        "#f5cea0", 1);
+    }
+  }
+
+  function fixtureSmelter(context, camera, axis, entry, phase) {
+    const { at, box } = axis;
+    const unit = camera.unit;
+    box(-0.46, 0.46, -0.36, -0.21, 0.15, 1.12, facilityMetal.stone);
+    for (const [start, end] of [[-0.44, -0.31], [0.31, 0.44]]) {
+      box(start, end, -0.21, 0.32, 0.15, 1.14, facilityMetal.stone);
+    }
+    const opening = [at(-0.31, 0.31, 0.23), at(0.31, 0.31, 0.23), at(0.31, 0.31, 0.93),
+      at(-0.31, 0.31, 0.93)];
+    const ember = context.createLinearGradient(...opening[0], ...opening[3]);
+    ember.addColorStop(0, "#f3a662");
+    ember.addColorStop(0.35, "#924d39");
+    ember.addColorStop(1, "#201b25");
+    poly(context, opening, ember, "#2c2225", 1.1);
+    for (let i = -2; i <= 2; i++) {
+      const along = i * 0.117;
+      line(context, [at(along, 0.325, 0.21), at(along, 0.325, 1.0)], "#352b2c", unit * 0.088);
+      line(context, [at(along - 0.01, 0.337, 0.24), at(along - 0.01, 0.337, 0.76)], "#b97b56", 0.8);
+      const lip = at(along, 0.38, 0.23 + Math.sin(phase * tau + i * 2.2) * 0.035);
+      ellipse(context, ...lip, Math.max(0.8, unit * 0.025), Math.max(0.8, unit * 0.025), "#ffc77c99");
+    }
+    poly(context, [at(-0.44, 0.35, 1.01), at(0.44, 0.35, 1.01), at(0.27, 0.03, 1.52),
+      at(-0.27, 0.03, 1.52)], "#626160", "#2b2a2b", 1.15);
+    line(context, [at(-0.41, 0.34, 1.09), at(0.41, 0.34, 1.09)], "#b17b61", Math.max(1, unit * 0.032));
+    box(-0.17, 0.17, -0.18, 0.10, 1.45, 1.80, facilityMetal.iron);
+  }
+
+  function fixtureCrucible(context, camera, axis, entry, phase) {
+    const { at, box, length, breadth } = axis;
+    const radius = Math.min(0.67, breadth * 0.36, length * 0.31);
+    const unit = camera.unit;
+    for (const p of [-0.34, 0.34]) box(p - 0.09, p + 0.09, -0.35, 0.35, 0.13, 0.78, facilityMetal.iron);
+    facilityDrum(context, at, 0, 0, 0.35, 1.04, radius, unit, facilityMetal.stone, "#d77242");
+    const [x, y] = at(0, 0, 1.055);
+    const hot = unit * radius;
+    const swirl = 0.76 + Math.sin(phase * tau) * 0.12;
+    ellipse(context, x, y, hot * 0.73, hot * 0.25, "#ffb05f");
+    ellipse(context, x - hot * 0.18, y, hot * swirl * 0.53, hot * 0.17, "#ffe3979e");
+    for (const [u, v] of [[-0.29, 0.09], [0.24, -0.08], [0.06, 0.10]]) {
+      ellipse(context, x + u * hot, y + v * hot, Math.max(1.2, hot * 0.13), Math.max(1, hot * 0.043), "#d87546");
+    }
+    facilityPipe(context, [at(0.18, 0.23, 0.78), at(0.33, 0.31, 0.78), at(0.46, 0.38, 0.39)],
+      unit, 0.15, facilityMetal.iron);
+  }
+
+  function fixtureTransformers(context, camera, axis, entry, phase) {
+    const { at, box, length } = axis;
+    const unit = camera.unit;
+    box(-0.43, 0.43, -0.32, 0.32, 0.13, 0.56, facilityMetal.iron);
+    const count = Math.max(2, Math.min(4, Math.floor(length * 0.85)));
+    const terminals = [];
+    for (let i = 0; i < count; i++) {
+      const along = -0.33 + i * (0.66 / (count - 1));
+      const crown = 1.45 - (i % 2) * 0.15;
+      const across = i % 2 ? 0.18 : -0.10;
+      facilityPipe(context, [at(along, across, 0.56), at(along, across, crown)],
+        unit, 0.17, facilityMetal.ceramic);
+      for (const z of [0.70, 0.84, 0.98, 1.12, 1.26]) {
+        if (z < crown) ellipse(context, ...at(along, across, z), unit * 0.134, unit * 0.060,
+          "#7ca0a5", "#b6ddd2", 0.8);
+      }
+      terminals.push(at(along, across, crown));
+    }
+    facilityPipe(context, terminals, unit, 0.072);
+    const blip = terminals[Math.floor(phase * terminals.length) % terminals.length];
+    ellipse(context, ...blip, Math.max(1.6, unit * 0.049), Math.max(1.3, unit * 0.040), "#c9f7e9");
+    for (const y of [-0.17, 0.05, 0.20]) line(context, [at(-0.41, y, 0.58), at(0.41, y, 0.58)], "#bfb5976d", 1.0);
+  }
+
+  function fixtureRelayRack(context, camera, axis, entry, phase) {
+    const { at, box } = axis;
+    const unit = camera.unit;
+    box(-0.43, 0.43, -0.34, 0.07, 0.12, 1.31, ["#333647", "#566577", "#9babae"]);
+    for (const u of [-0.27, 0, 0.27]) {
+      poly(context, [at(u - 0.112, 0.081, 0.25), at(u + 0.112, 0.081, 0.25),
+        at(u + 0.112, 0.081, 1.19), at(u - 0.112, 0.081, 1.19)], "#25313c", "#687f8e", 0.86);
+      for (let slot = 0; slot < 4; slot++) {
+        const z = 0.38 + slot * 0.12;
+        line(context, [at(u - 0.087, 0.089, z), at(u + 0.086, 0.089, z)], "#8698a4", Math.max(0.7, unit * 0.02));
+      }
+      const color = phase > 0.38 + u * 0.78 ? "#b2ead4" : "#e5bb7b";
+      ellipse(context, ...at(u + 0.022, 0.089, 1.044), unit * 0.041, unit * 0.045, color);
+    }
+    for (const [i, shade] of ["#7189af", "#9d785f", "#78ad9e"].entries()) {
+      const across = 0.19 + 0.075 * i;
+      line(context, [at(-0.37, across, 0.24), at(0.31, across, 0.24), at(0.39, 0.1, 0.71)],
+        shade, Math.max(1.0, unit * 0.054));
+    }
+  }
+
+  function fixtureDrydock(context, camera, axis, entry, phase) {
+    const { at, box, face } = axis;
+    const unit = camera.unit;
+    poly(context, face(0.46, 0.37, 0.14), "#172a31", "#829c9b", 1.05);
+    for (const side of [-1, 1]) {
+      const outside = side * 0.42;
+      const inside = side * 0.24;
+      box(-0.44, 0.44, Math.min(outside, inside), Math.max(outside, inside), 0.12, 0.39, facilityMetal.iron);
+      for (const t of [-0.34, -0.05, 0.25]) {
+        line(context, [at(t, side * 0.35, 0.43), at(t + 0.08, side * 0.21, 0.22)], "#bfc3a1", unit * 0.075);
+      }
+      facilityPipe(context, [at(-0.44, side * 0.17, 0.27), at(0.44, side * 0.17, 0.27)],
+        unit, 0.082, facilityMetal.iron);
+    }
+    box(-0.39, -0.28, -0.37, 0.37, 0.14, 0.91, facilityMetal.iron);
+    for (const y of [-0.24, 0.24]) ellipse(context, ...at(-0.28, y, 0.68), unit * 0.066, unit * 0.050,
+      phase > 0.85 ? "#e9bd7a" : "#a6c9c0");
+    line(context, [at(0.40, -0.31, 0.25), at(0.40, 0.31, 0.25)], "#a8b4a1", 1.5);
+  }
+
+  function fixtureManifold(context, camera, axis, entry, phase) {
+    const { at, box } = axis;
+    const unit = camera.unit;
+    box(-0.45, 0.45, -0.38, -0.21, 0.14, 0.36);
+    facilityPipe(context, [at(-0.44, -0.33, 0.70), at(0.44, -0.33, 0.70)], unit, 0.23);
+    for (const [along, metal] of [[-0.30, facilityMetal.copper], [0.0, facilityMetal.iron], [0.29, facilityMetal.ceramic]]) {
+      facilityPipe(context, [at(along, -0.33, 0.71), at(along, 0.19, 0.71),
+        at(along + 0.04, 0.35, 0.36), at(along + 0.12, 0.35, 0.29)], unit, 0.18, metal);
+      facilityWheel(context, at(along, 0.11, 0.88), Math.max(3.1, unit * 0.14), phase * 1.4 + along, metal);
+    }
+  }
+
+  function fixtureValveBank(context, camera, axis, entry, phase) {
+    const { at, box } = axis;
+    const unit = camera.unit;
+    box(-0.44, 0.44, -0.35, 0.02, 0.13, 1.30, facilityMetal.stone);
+    facilityPipe(context, [at(-0.44, 0.22, 0.40), at(0.44, 0.22, 0.40)], unit, 0.20, facilityMetal.iron);
+    for (const forward of [-0.28, 0, 0.28]) {
+      facilityPipe(context, [at(forward, 0.22, 0.43),
+        at(forward, 0.22, 0.95), at(forward, 0.03, 0.95)], unit, 0.154);
+      facilityWheel(context, at(forward, 0.27, 0.92), Math.min(unit * 0.28, axis.length * unit * 0.128), phase * 1.7 + forward);
+    }
+    line(context, [at(-0.43, 0.027, 1.17), at(0.43, 0.027, 1.17)], "#bca681", 1.3);
+  }
+
+  function fixtureScrubber(context, camera, axis, entry, phase, reduced, seconds) {
+    const { at, box, length, breadth } = axis;
+    const unit = camera.unit;
+    const radius = Math.min(0.46, breadth * 0.30, length * 0.26);
+    facilityDrum(context, at, -0.04, -0.06, 0.14, 1.14, radius, unit, facilityMetal.iron);
+    box(-0.16, 0.16, -0.23, 0.12, 1.11, 1.34, facilityMetal.ceramic);
+    facilityPipe(context, [at(-0.39, 0.28, 0.31), at(-0.31, 0.28, 0.64), at(0.17, 0.28, 0.64),
+      at(0.29, 0.12, 0.91), at(0.13, 0.12, 1.20)], unit, 0.23, facilityMetal.iron);
+    const mouth = at(0, -0.03, 1.35);
+    ellipse(context, ...mouth, Math.max(2, unit * 0.19), Math.max(1.5, unit * 0.061),
+      "#253a3c", "#b6cabe", 1);
+    if (!reduced && phase > 0.40 && phase < 0.82) {
+      steamPlume(context, ...mouth, unit, seconds, entry.x + 3, false, 0.72);
+    }
+  }
+
+  const facilityFixtures = {
+    intake: fixtureIntake, pumps: fixturePumps, condenser: fixtureCondenser, boilers: fixtureBoilers,
+    smelter: fixtureSmelter, crucible: fixtureCrucible, transformers: fixtureTransformers, "relay-rack": fixtureRelayRack,
+    drydock: fixtureDrydock, manifold: fixtureManifold, "valve-bank": fixtureValveBank, scrubber: fixtureScrubber,
+  };
+
+  // Only solid casings can request cutaway. Open coils, pipes, and rack detailing stay opaque.
+  const facilityCasing = {
+    intake: [[-0.43, 0.43, -0.45, -0.31, 0.08, 0.90]],
+    smelter: [[-0.46, 0.46, -0.36, -0.21, 0.15, 1.12],
+      [-0.44, -0.31, -0.21, 0.32, 0.15, 1.14], [0.31, 0.44, -0.21, 0.32, 0.15, 1.14]],
+    "relay-rack": [[-0.43, 0.43, -0.34, 0.07, 0.12, 1.31]],
+    drydock: [[-0.39, -0.28, -0.37, 0.37, 0.14, 0.91]],
+    "valve-bank": [[-0.44, 0.44, -0.35, 0.02, 0.13, 1.30]],
+  };
+
+  function paintFacilityDressing(context, camera, state, palette, elevation, layer) {
+    const feature = state.facility?.feature;
+    if (!feature || !Object.hasOwn(facilityFixtures, feature)) return;
+    for (const entry of state.obstacles ?? []) {
+      if (entry.fixture !== feature) continue;
+      const height = surfaceHeight(elevation, entry.x, entry.y);
+      if (layer !== undefined && (height > 0.04 ? 1 : 0) !== layer) continue;
+      const horizontal = entry.w >= entry.h;
+      const along = horizontal ? entry.w : entry.h;
+      const across = horizontal ? entry.h : entry.w;
+      const project = ([u, v]) => [
+        entry.x + (horizontal ? u : v) * entry.w,
+        entry.y + (horizontal ? v : u) * entry.h,
+      ];
+      const sameSurface = ([x, y]) => x > 0.15 && y > 0.15 && x < state.map.width - 0.15
+        && y < state.map.height - 0.15 && Math.abs(surfaceHeight(elevation, x, y) - height) < 0.04;
+      const stroke = (marks, color, weight) => {
+        const world = marks.map(project);
+        if (world.every(sameSurface)) line(context, world.map(([x, y]) => point(camera, x, y, height + 0.016)), color, weight);
+      };
+      const apron = Math.min(0.37, 0.65 / across);
+      const tail = Math.min(0.44, 1.15 / along);
+      const bridge = feature === "drydock" || feature === "intake";
+      const service = feature === "transformers" || feature === "relay-rack";
+      const hot = feature === "boilers" || feature === "smelter" || feature === "crucible";
+      const steel = palette.materialLight + "74";
+      const signal = hot ? "#d0915b9a" : service ? "#94a8c88f" : "#9fc1ae91";
+      const unit = camera.unit;
+      for (const sign of [-1, 1]) {
+        const lane = sign * (0.5 + apron);
+        stroke([[-0.44, lane], [0.44, lane]], palette.materialShade + "8f", Math.max(1.3, unit * 0.075));
+        stroke([[-0.44, lane], [0.44, lane]], steel, Math.max(0.78, unit * 0.024));
+        for (const end of [-1, 1]) stroke([[end * 0.44, lane], [end * 0.54, lane],
+          [end * 0.54, sign * (0.29 + apron)]], signal, Math.max(1, unit * 0.032));
+      }
+      if (bridge || service) {
+        for (const v of [-0.22, 0.22]) {
+          stroke([[-0.48, v], [-0.62 - tail, v], [-0.65 - tail, v + 0.13]],
+            palette.materialShade + "a4", Math.max(1.4, unit * 0.065));
+          stroke([[-0.48, v], [-0.62 - tail, v], [-0.65 - tail, v + 0.13]],
+            signal, Math.max(0.7, unit * 0.025));
+        }
+      } else {
+        stroke([[0.46, 0.22], [0.60, 0.22], [0.72, 0.28 + apron * 0.52], [0.60 + tail, 0.28 + apron * 0.52]],
+          palette.materialShade + "91", Math.max(1.55, unit * 0.067));
+        stroke([[0.46, 0.22], [0.60, 0.22], [0.72, 0.28 + apron * 0.52], [0.60 + tail, 0.28 + apron * 0.52]],
+          signal, Math.max(0.76, unit * 0.026));
+      }
+    }
+  }
+
+  function paintEarlyBrasswork(context, camera, state, elevation, layer) {
+    if (state.floor > 8 || state.landing || state.shelter) return;
+    const { width, height } = state.map;
+    const unit = camera.unit;
+    const brass = "#a37955";
+    const worn = "#d4b178";
+    const patina = "#426e68";
+    const seam = "#19252a";
+    const track = (world, z) => {
+      if (!world.every(([x, y]) => Math.abs(surfaceHeight(elevation, x, y) - z) < .045)) return;
+      const marks = world.map(([x, y]) => point(camera, x, y, z + .023));
+      line(context, marks, seam + "cd", Math.max(2, unit * .104));
+      line(context, marks, brass + "d4", Math.max(1.15, unit * .064));
+      line(context, marks.map(([x, y]) => [x, y - .5]), worn + "b8", Math.max(.65, unit * .021));
+    };
+    if (layer === 1) {
+      for (const deck of elevation.decks) {
+        for (const side of deckPerimeter(deck, elevation)) {
+          for (const [from, to] of side.segments) {
+            if (to - from < 1.92) continue;
+            const normal = side.position - side.facing * .31;
+            const along = (x) => side.alongX ? [x, normal] : [normal, x];
+            track([along(from + .34), along(to - .34)], elevation.height);
+          }
+        }
+      }
+      return;
+    }
+
+    const turn = Math.min(1.62, height * .12);
+    const passage = height * .58;
+    const reach = Math.min(width * .42, 10.2);
+    for (const d of [0, .26]) {
+      track([[.52 + d, .82], [.52 + d, passage - turn], [1.17 + d, passage - .45],
+        [1.82 + d, passage - .21], [reach, passage - .21 + d]], 0);
+      track([[width * .32, .59 + d], [width * .58, .59 + d],
+        [width * .67, .93 + d], [width - .76, .93 + d]], 0);
+    }
+    for (let along = 2.3; along < reach - .26; along += 1.42) {
+      if (surfaceHeight(elevation, along, passage) > .045) continue;
+      const corners = rectangle(camera, along - .058, passage - .32, .116, .46, .031);
+      poly(context, corners, patina + "d8", seam + "c2", .68);
+      line(context, [point(camera, along, passage - .24, .036), point(camera, along, passage + .07, .036)],
+        worn + "b2", .76);
+    }
+  }
+
+  function facilityObstacle(context, camera, entry, palette, seconds, reduced, cutaway) {
+    const fixture = facilityFixtures[entry.fixture];
+    if (!fixture) return false;
+    const [x, y] = point(camera, entry.x, entry.y);
+    const reach = camera.unit * ((entry.w + entry.h) * 0.53 + 2.3);
+    if (x + reach < 0 || x - reach > camera.width || y + reach < 0 || y - reach > camera.height) return true;
+    const axis = facilityAxes(context, camera, entry, palette);
+    const phase = reduced ? 0.45 : fraction(seconds * 0.56 + noise(entry.x, entry.y));
+    const ground = axis.face(0.49, 0.49, 0.012);
+    const plinth = [palette.wallY, palette.capDark, palette.capSide];
+    context.save();
+    if (cutaway) context.globalAlpha *= 0.34;
+    poly(context, ground, palette.materialShade + "51");
+    axis.box(-0.48, 0.48, -0.47, 0.47, 0.01, 0.15, plinth);
+    poly(context, axis.face(0.447, 0.423, 0.155), null, palette.inlay + "ad", 0.93);
+    fixture(context, camera, axis, entry, phase, reduced, seconds);
+    context.restore();
+    if (cutaway) {
+      context.save();
+      context.setLineDash([3, 3]);
+      poly(context, ground, null, palette.accent + "b5", 1.1);
+      context.restore();
+    }
+    return true;
+  }
+
+  function obscuresPlayer(camera, entry, player, palette, heightDifference) {
+    if (!player || entry.x + entry.y < player.x + player.y || !withinWallSpan(camera, entry, player)) return false;
+    const silhouette = playerSilhouette(camera, player, heightDifference);
+    if (entry.fixture && Object.hasOwn(facilityFixtures, entry.fixture)) {
+      return (facilityCasing[entry.fixture] ?? []).some(([from, to, left, right, base, top]) =>
+        wallCoverage(camera, facilityFootprint(entry, from, to, left, right), player, silhouette,
+          () => top, base) >= wallCutawayThreshold);
+    }
+    const top = obstacleHeight(entry, palette);
+    return wallCoverage(camera, entry, player, silhouette, () => top) >= wallCutawayThreshold;
+  }
+
+  function obstacleHeight(entry, palette) {
+    if (entry.structural) return 1.48;
+    const dressed = entry.w > 0.90 && entry.h > 0.74;
+    return palette.obstacleHeight * (dressed ? 0.69 : 1);
+  }
+
+  function obstacle(context, camera, entry, palette, seconds, theme, cutaway, reduced) {
+    if (entry.fixture && facilityObstacle(context, camera, entry, palette, seconds, reduced, cutaway)) return;
+    const { x, y, w, h } = entry;
+    const dressed = w > 0.90 && h > 0.74;
+    const height = obstacleHeight(entry, palette);
+    const left = x - w / 2;
+    const top = y - h / 2;
+    const trim = Math.min(0.18, w * 0.13, h * 0.13);
+    const outer = rectangle(camera, left, top, w, h, height);
+    const inner = rectangle(camera, left + trim, top + trim, w - trim * 2, h - trim * 2, height);
+    const topFinish = materialShade(context, outer[3], outer[1], palette.capSide, palette,
+      palette.cap, palette.capDark);
+    const rightFinish = materialShade(context, outer[1], point(camera, left + w, top),
+      palette.wallX, palette, palette.capSide);
+    const frontFinish = materialShade(context, outer[3], point(camera, left, top + h),
+      palette.capDark, palette, palette.capSide);
+
+    poly(context, rectangle(camera, left + height * 0.22, top - height * 0.09, w + height * 0.23, h + height * 0.22),
+      palette.materialShade + "45");
+    poly(context, rectangle(camera, left + 0.03, top - 0.01, w + 0.12, h + 0.09), palette.materialShade + "64");
+    context.save();
+    if (cutaway) context.globalAlpha *= 0.34;
+    prism(context, camera, left, top, w, h, height, topFinish, rightFinish, frontFinish, palette.surfaceJoint);
+    poly(context, inner, topFinish, palette.materialLight + "35", 0.82);
+    line(context, [outer[0], outer[3], outer[2]], palette.materialLight + "b8", 1.3);
+    for (const position of [0.27, 0.71]) {
+      line(context, [point(camera, left + w * position, top + h * 0.80, height),
+        point(camera, left + w * Math.min(0.98, position + 0.12), top + h * 0.84, height)],
+      palette.materialLight + "52", 0.88);
+    }
+
+    const panels = Math.ceil(w * 1.6);
+    for (let index = 0; index < panels; index++) {
+      const start = left + (index + 0.27) * w / panels;
+      const end = left + (index + 0.73) * w / panels;
+      const lower = point(camera, start, top + h, height * 0.28);
+      poly(context, [lower, point(camera, end, top + h, height * 0.28),
+        point(camera, end, top + h, height * 0.67), point(camera, start, top + h, height * 0.67)],
+      palette.materialShade + "72", palette.surfaceJoint, 0.73);
+      context.save();
+      context.globalAlpha *= 0.39 + Math.sin(seconds * 2.1 + x + index) * 0.15;
+      line(context, [point(camera, start, top + h, height * 0.76),
+        point(camera, end, top + h, height * 0.76)], palette.accent, 1);
+      context.restore();
+    }
+    if (entry.structural) {
+      const alongX = w >= h;
+      const span = alongX ? w : h;
+      const cap = (offset, inset) => point(camera,
+        alongX ? left + offset : x + inset,
+        alongX ? y + inset : top + offset, height + 0.006);
+      const edge = Math.min(w, h) * 0.27;
+      for (const inset of [-edge, edge]) {
+        line(context, [cap(trim, inset), cap(span - trim, inset)], palette.inlay + "a5", 1.3);
+      }
+      for (let offset = trim + 0.4; offset < span - trim; offset += 0.95) {
+        line(context, [cap(offset, -edge), cap(offset, edge)], palette.materialShade + "85", 1.0);
+      }
+    } else if (dressed) {
+      housingTop(context, camera, entry, palette, theme, height, seconds, reduced);
+    } else if (w > 0.65 && h > 0.65) {
+      poly(context, rectangle(camera, x - 0.18, y - 0.14, 0.36, 0.28, height + 0.01),
+        palette.capDark, palette.fixture, 1);
+      if (!cutaway) {
+        for (const offset of [-0.28, 0.28]) {
+          if (theme === "sluice") {
+            line(context, [point(camera, left + 0.13, y + h * offset, height),
+              point(camera, left + w - 0.13, y + h * offset, height)], palette.sheen, 1.4);
+          } else {
+            const [xx, yy] = point(camera, x + w * offset, y, height);
+            ellipse(context, xx, yy, 1.45, 1.45, palette.fixture);
+          }
+        }
+      }
+    }
+    context.restore();
+    if (cutaway) {
+      context.save();
+      context.globalAlpha *= 0.72;
+      context.setLineDash([3, 3]);
+      poly(context, outer, null, palette.accent, 1.2);
+      context.restore();
+    }
+  }
+
+  function dangerRing(context, camera, x, y, radius, fill, stroke, width, dashed) {
+    context.save();
+    if (dashed) context.setLineDash([Math.max(3, camera.unit * 0.12), 3]);
+    groundRing(context, camera, x, y, radius, fill, stroke, width);
+    context.restore();
+  }
+
+  function hazardTiles(context, baseCamera, tiles, seconds, elevation) {
+    for (const { x, y, active } of tiles ?? []) {
+      const camera = raisedCamera(baseCamera, surfaceHeight(elevation, x, y));
+      context.save();
+      context.globalAlpha = active ? 0.95 : 0.54 + 0.15 * Math.sin(seconds * 12);
+      dangerRing(context, camera, x, y, 0.75, active ? "#eda24a44" : "#ffb56816", "#ffd07f", 1.65, !active);
+      if (active) {
+        line(context, [point(camera, x, y, 0.08), point(camera, x - 0.14, y, 0.44),
+          point(camera, x + 0.16, y, 0.37), point(camera, x + 0.03, y, 0.73)], "#ffdb9a", 1.65);
+      }
+      context.restore();
+    }
+  }
+
+  function enemyTelegraph(context, baseCamera, enemy, elevation) {
+    if (!(enemy.windup > 0)) return;
+    const camera = onSurface(baseCamera, elevation, enemy);
+    if (enemy.kind === "sentry" && Number.isFinite(enemy.aimX) && Number.isFinite(enemy.aimY)) {
+      const origin = point(camera, enemy.x, enemy.y, 0.64);
+      const targetCamera = raisedCamera(baseCamera, surfaceHeight(elevation, enemy.aimX, enemy.aimY));
+      const target = point(targetCamera, enemy.aimX, enemy.aimY, 0.10);
+      line(context, [origin, target], "#ff664c58", Math.max(3, camera.unit * 0.13));
+      context.save();
+      context.setLineDash([6, 4]);
+      line(context, [origin, target], "#ffb284", 1.6);
+      context.restore();
+      poly(context, rectangle(targetCamera, enemy.aimX - 0.19, enemy.aimY - 0.19, 0.38, 0.38, 0.10),
+        "#f15a382e", "#ffb284", 1.3);
+      return;
+    }
+    if (enemy.kind === "lancer" && Number.isFinite(enemy.aimX) && Number.isFinite(enemy.aimY)) {
+      const dx = enemy.aimX - enemy.x;
+      const dy = enemy.aimY - enemy.y;
+      const length = Math.hypot(dx, dy) || 1;
+      const px = -dy / length * 0.33;
+      const py = dx / length * 0.33;
+      const at = (x, y) => point(baseCamera, x, y, surfaceHeight(elevation, x, y));
+      context.save();
+      context.setLineDash([6, 4]);
+      poly(context, [at(enemy.x + px, enemy.y + py), at(enemy.aimX + px, enemy.aimY + py),
+        at(enemy.aimX + dx / length * 0.30, enemy.aimY + dy / length * 0.30),
+        at(enemy.aimX - px, enemy.aimY - py), at(enemy.x - px, enemy.y - py)],
+      "#ff704a36", "#ffae82", 1.8);
+      context.restore();
+      return;
+    }
+    const boss = enemy.kind === "boss";
+    const radius = enemy.attackRange || (boss ? 2.2 : 1.05);
+    dangerRing(context, camera, enemy.x, enemy.y, radius, boss ? "#ff58374b" : "#f65d313b",
+      boss ? "#ffac81" : "#ff8e6d", boss ? 2.6 : 1.9, true);
+    groundRing(context, camera, enemy.x, enemy.y,
+      radius * (0.3 + (1 - clamp(enemy.windup / 0.85, 0, 1)) * 0.69), null, "#ffad825e", 1);
+  }
+
+  function bossTargets(context, baseCamera, targets, seconds, elevation) {
+    for (const { x, y, radius, active } of targets ?? []) {
+      const camera = raisedCamera(baseCamera, surfaceHeight(elevation, x, y));
+      const charge = (Math.sin(seconds * 17) + 1) * 0.5;
+      const size = Math.max(0.15, radius || 0.9);
+      const ringColor = active ? "#ffdfae" : "#ff9d66";
+      context.save();
+      context.globalAlpha = active ? 0.98 : 0.72 + charge * 0.26;
+      dangerRing(context, camera, x, y, size, active ? "#ff50245c" : "#e9432844", ringColor, 2.4, !active);
+      groundRing(context, camera, x, y, size * (0.52 + charge * 0.32), null, "#ff806d", 1.5);
+      for (const sign of [-1, 1]) {
+        const reach = size * 0.27;
+        line(context, [point(camera, x - reach, y - reach * sign),
+          point(camera, x + reach, y + reach * sign)], ringColor, 1.6);
+      }
+      if (active) {
+        const [targetX, targetY] = point(camera, x, y);
+        const height = camera.unit * 1.5;
+        line(context, [[targetX + 5, targetY - height], [targetX - 4, targetY - height * 0.55],
+          [targetX + 4, targetY - height * 0.51], [targetX, targetY]], "#fff0c0", 2.4);
+      }
+      context.restore();
+    }
+  }
+
+  function holdArea(context, camera, zone) {
+    if (!zone || zone.active === false || !Number.isFinite(zone.x) || !Number.isFinite(zone.y)) return;
+    const radius = Math.max(0.1, Number.isFinite(zone.radius) ? zone.radius : 1.7);
+    const progress = zone.progress > 1 ? zone.progress / 100 : zone.progress || 0;
+    const [x, y] = point(camera, zone.x, zone.y);
+    const sx = radius * camera.unit * Math.SQRT2;
+    const sy = sx * slope;
+    context.save();
+    context.setLineDash([8, 5]);
+    ellipse(context, x, y, sx, sy, "#66e2bd20", "#8bddc4", 2);
+    context.restore();
+    if (progress > 0) {
+      context.beginPath();
+      context.ellipse(x, y, sx, sy, 0, -Math.PI / 2, -Math.PI / 2 + clamp(progress, 0, 1) * tau);
+      context.strokeStyle = "#d8ffe9";
+      context.lineWidth = 3;
+      context.stroke();
+    }
+  }
+
+  function bulkheadDoor(context, camera, entry, palette) {
+    const x = entry.x + 0.64;
+    const y = entry.y;
+    const unit = camera.unit;
+    const progress = clamp(entry.openProgress ?? Number(Boolean(entry.active)), 0, 1);
+    const width = 0.59;
+    const at = (across, height, depth = 0.149) => point(camera, x + depth, y + across, height);
+    const aperture = [at(-width, 0.02), at(width, 0.02), at(width, 1.37),
+      at(0.43, 1.62), at(-0.43, 1.62), at(-width, 1.37)];
+    const apertureLight = context.createLinearGradient(...at(0, 1.60), ...at(0, 0.01));
+    apertureLight.addColorStop(0, "#090f18");
+    apertureLight.addColorStop(0.64, "#111a22");
+    apertureLight.addColorStop(1, progress > 0.34 ? "#3c6a66" : "#151d25");
+    poly(context, rectangle(camera, x - 0.69, y - 1.21, 1.09, 2.42), palette.materialShade + "70");
+    poly(context, rectangle(camera, x - 0.52, y - 0.67, 0.88, 1.34, 0.02),
+      palette.capDark, palette.inlay + "85", 0.94);
+    for (const depth of [-0.42, -0.27, 0.14, 0.25]) {
+      line(context, [at(-0.63, 0.03, depth), at(0.63, 0.03, depth)], palette.materialLight + "77", 1.0);
+    }
+    poly(context, aperture, apertureLight, palette.materialShade, 1.0);
+    if (progress > 0.05) {
+      context.save();
+      context.globalAlpha *= progress * 0.7;
+      poly(context, [at(-0.55, 0.10), at(-0.38, 0.08, -0.30), at(0.38, 0.08, -0.30),
+        at(0.55, 0.10)], "#78a4a17a");
+      line(context, [at(-0.47, 0.15, -0.12), at(0.47, 0.15, -0.12)], "#b0d0bd", Math.max(1.1, unit * 0.032));
+      context.restore();
+    }
+
+    if (progress < 1) {
+      context.save();
+      poly(context, aperture);
+      context.clip();
+      const shift = width * eased(progress);
+      for (const side of [-1, 1]) {
+        const leaf = (u, z) => at(side * (u + shift), z, 0.197);
+        const shaded = materialShade(context, leaf(0.56, 1.53), leaf(0.04, 0.03),
+          palette.capSide, palette, palette.cap, palette.wallY);
+        poly(context, [leaf(0, 0.035), leaf(0.64, 0.035), leaf(0.64, 1.52), leaf(0.46, 1.67), leaf(0, 1.67)],
+          shaded, "#25242b", 1.2);
+        for (const z of [0.36, 0.75, 1.15]) {
+          line(context, [leaf(0.065, z), leaf(0.57, z)], "#2a282f", Math.max(0.9, unit * 0.040));
+          line(context, [leaf(0.065, z + 0.025), leaf(0.56, z + 0.025)], "#caa17d", 0.9);
+        }
+        line(context, [leaf(0.045, 0.075), leaf(0.045, 1.58)], "#ceaa83", Math.max(1.0, unit * 0.034));
+        ellipse(context, ...leaf(0.19, 0.81), Math.max(1.3, unit * 0.046), Math.max(1.15, unit * 0.057),
+          "#4a3840", "#d0a178", 0.85);
+      }
+      context.restore();
+    }
+
+    for (const start of [-1.15, width]) {
+      prism(context, camera, x - 0.145, y + start, 0.29, 0.56, 1.70,
+        palette.capSide, palette.wallX, palette.wallY, palette.surfaceJoint);
+      const outer = start < 0 ? start + 0.08 : start + 0.48;
+      const pierInside = start < 0 ? start + 0.42 : start + 0.14;
+      poly(context, [at(outer, 0.20), at(pierInside, 0.20), at(pierInside, 1.49), at(outer, 1.49)],
+        palette.materialShade + "55", palette.materialLight + "64", 0.8);
+      for (const z of [0.31, 1.38]) ellipse(context, ...at((outer + pierInside) / 2, z),
+        Math.max(1.15, unit * 0.033), Math.max(0.9, unit * 0.028), "#9a7759", "#322b30", 0.7);
+    }
+    const lintel = raisedCamera(camera, 1.61);
+    prism(context, lintel, x - 0.18, y - 1.19, 0.37, 2.38, 0.29,
+      palette.cap, palette.capSide, palette.wallY, palette.seam);
+    poly(context, [at(-width, 0.035), at(-width, 1.40), at(-0.43, 1.66),
+      at(0.43, 1.66), at(width, 1.40), at(width, 0.035)],
+    null, "#bf9470", Math.max(1.35, unit * 0.053));
+    line(context, [at(-1.14, 1.82, 0.197), at(1.14, 1.82, 0.197)], "#d3a882", Math.max(1, unit * 0.035));
+    for (const across of [-0.87, 0.87]) {
+      const light = at(across, 0.99, 0.20);
+      ellipse(context, ...light, unit * 0.064, unit * 0.096, "#222a33", "#84674f", 0.9);
+      ellipse(context, ...light, Math.max(1.4, unit * 0.030), Math.max(1.5, unit * 0.047),
+        entry.active ? "#a8dbc2" : "#f0b36f");
+    }
+  }
+
+  function item(context, camera, entry, seconds, palette) {
+    if (entry.collected) return;
+    const unit = camera.unit;
+    const [x, y] = point(camera, entry.x, entry.y);
+    if (entry.kind === "beacon") {
+      poly(context, rectangle(camera, entry.x - 0.34, entry.y - 0.34, 0.68, 0.68),
+        "#284547", "#91d5cc", 1.2);
+      poly(context, [[x - unit * 0.18, y - unit * 0.20], [x - unit * 0.21, y - unit * 0.78],
+        [x, y - unit * 1.02], [x + unit * 0.21, y - unit * 0.78], [x + unit * 0.18, y - unit * 0.20]],
+      "#1a3038", "#a6e9da", 1.35);
+      for (const side of [-1, 1]) {
+        line(context, [[x + side * unit * 0.10, y - unit * 0.29], [x + side * unit * 0.10, y - unit * 0.70]],
+          "#b8fff0", 1.35);
+      }
+      return;
+    }
+    if (entry.kind === "exit") {
+      bulkheadDoor(context, camera, entry, palette);
+      return;
+    }
+
+    const bob = 0.56 + 0.09 * Math.sin(seconds * 3.5 + entry.x);
+    const [upperX, upperY] = point(camera, entry.x, entry.y, bob);
+    poly(context, rectangle(camera, entry.x - 0.27, entry.y - 0.27, 0.54, 0.54),
+      "#5dedff20", "#93f3fbb6", 1.15);
+    const halo = context.createRadialGradient(upperX, upperY, 0, upperX, upperY, unit * 0.78);
+    halo.addColorStop(0, "#56edfa6f");
+    halo.addColorStop(1, "#48e7fb00");
+    ellipse(context, upperX, upperY, unit * 0.78, unit * 0.78, halo);
+    poly(context, [[upperX, upperY - unit * 0.33], [upperX + unit * 0.19, upperY],
+      [upperX, upperY + unit * 0.30], [upperX - unit * 0.19, upperY]], "#68dae1", "#c8ffff", 1.05);
+    poly(context, [[upperX, upperY - unit * 0.33], [upperX, upperY + unit * 0.30],
+      [upperX - unit * 0.19, upperY]], "#c4ffff");
+    line(context, [[x, y], [upperX, upperY + unit * 0.30]], "#78f1ff67");
+  }
+
+  function clinicPipes(context, camera, state, palette) {
+    if (state.landing !== "cold-pipe") return;
+    const at = (x, y, z) => point(camera, x, y, z);
+    const pipe = [at(0.15, 2.1, 0.36), at(5.65, 2.1, 0.36), at(6.35, 2.8, 0.35), at(6.35, 4.67, 0.15)];
+    const gauge = at(5.1, 2.1, 0.71);
+    line(context, pipe, "#101b20", camera.unit * 0.30);
+    line(context, pipe, "#666d59", camera.unit * 0.18);
+    line(context, [at(0.1, 2.1, 0.42), at(5.65, 2.1, 0.42), at(6.35, 2.8, 0.41)], palette.cap, camera.unit * 0.035);
+    for (const x of [0.8, 2.9, 4.2, 5.4]) {
+      line(context, [at(x, 2.1, 0.23), at(x, 2.1, 0.50)], "#ae956b", camera.unit * 0.15);
+    }
+    ellipse(context, ...gauge, camera.unit * 0.16, camera.unit * 0.16, "#1b2323", "#bd9b65", 1.2);
+    line(context, [gauge, [gauge[0] - camera.unit * 0.10, gauge[1] + camera.unit * 0.055]], "#bcdae0", 1.4);
+  }
+
+  function storyApparatus(context, camera, entry, palette, seconds, reduced) {
+    const { unit } = camera;
+    const { x, y } = entry;
+    const at = (u, v, z = 0) => point(camera, x + u, y + v, z);
+    const device = entry.device ?? entry.scene.device;
+    const lamp = entry.setting ? "#a8f3be" : entry.active ? "#efc486" : "#917a58";
+    const motion = entry.triggeredAt === undefined ? 0 : reduced ? 1 : eased((seconds - entry.triggeredAt) / 0.8);
+    const base = rectangle(camera, x - 0.53, y - 0.43, 1.06, 0.86);
+    const top = rectangle(camera, x - 0.48, y - 0.36, 0.96, 0.72, 0.65);
+    contactShadow(context, ...at(0, 0), unit * 1.35, palette);
+    if (device === "valve") {
+      const poweredSide = entry.setting === "reserve" ? 1 : -1;
+      for (const side of [-1, 1]) {
+        const branch = [at(0, side * 0.30, 0.12), at(0, side * 0.89, 0.12), at(-1.04, side * 0.89, 0.12)];
+        line(context, branch, "#201d1b", unit * 0.24);
+        line(context, branch, "#7d6851", unit * 0.12);
+        if (entry.setting && side === poweredSide) {
+          const color = entry.setting === "reserve" ? "#debd7f" : "#f7a664";
+          context.save();
+          context.globalAlpha = 0.42 + 0.49 * motion;
+          line(context, branch, color, unit * 0.065);
+          if (!reduced) {
+            const progress = fraction((seconds - entry.triggeredAt) * 0.9);
+            const location = progress < 0.38 ? at(0, side * (0.30 + (0.59 * progress) / 0.38), 0.16)
+              : at((-1.04 * (progress - 0.38)) / 0.62, side * 0.89, 0.16);
+            ellipse(context, ...location, unit * 0.11, unit * 0.078, "#ffe7b9d0");
+          }
+          context.restore();
+        }
+      }
+    }
+    poly(context, [top[1], top[2], base[2], base[1]], palette.wallY, "#18252a", 1.0);
+    poly(context, [top[2], top[3], base[3], base[2]], palette.wallX, "#18252a", 1.15);
+    poly(context, top, palette.capSide, palette.cap, 1.45);
+    line(context, [at(0.48, -0.31, 0.28), at(0.48, 0.34, 0.28), at(-0.42, 0.34, 0.28)], "#b88d596b", 1.15);
+    if (device === "valve") {
+      const pivot = at(0, 0, 0.87);
+      line(context, [at(-0.24, 0.17, 0.63), pivot], "#9c7550", unit * 0.16);
+      ellipse(context, ...pivot, unit * 0.28, unit * 0.20, "#1a2928", "#c7955b", Math.max(2, unit * 0.055));
+      for (let index = 0; index < 3; index++) {
+        const theta = index * tau / 3 + 0.42 + (entry.setting ? motion * Math.PI * (entry.setting === "reserve" ? -0.74 : 0.74) : 0);
+        line(context, [pivot, [pivot[0] + Math.cos(theta) * unit * 0.26, pivot[1] + Math.sin(theta) * unit * 0.19]], "#c7955b", 1.6);
+      }
+      ellipse(context, ...at(0.20, -0.13, 0.72), unit * 0.053, unit * 0.053, lamp);
+      return;
+    }
+    const instrument = [[-0.33, 0.19, 0.67], [0.29, 0.19, 0.67], [0.29, -0.20, 1.03], [-0.33, -0.2, 1.03]]
+      .map((entry) => at(...entry));
+    poly(context, instrument, "#263538", "#b39060", 1.2);
+    if (device === "radio" || device === "relay") {
+      line(context, [at(-0.22, -0.16, 1.0), at(-0.22, -0.16, 1.45)], "#aa916d", 1.7);
+      for (const offset of [-0.15, -0.064, 0.022]) {
+        line(context, [at(offset, 0.05, 0.81), at(offset + 0.24, 0.05, 0.81)], "#698384", 1.25);
+      }
+    } else if (device === "ledger") {
+      poly(context, [[-0.26, 0.14, 0.74], [0.2, 0.14, 0.74], [0.2, -0.13, 0.97], [-0.26, -0.13, 0.97]]
+        .map((entry) => at(...entry)), "#c3a878", "#e6c896", 0.85);
+      line(context, [at(-0.16, -0.051, 0.91), at(0.07, -0.051, 0.91)], "#6d553d", 1.25);
+    } else {
+      for (const row of [0, 1, 2]) {
+        line(context, [at(-0.22, -0.11 + row * 0.066, 0.97 - row * 0.06),
+          at(0.20 - row * 0.08, -0.11 + row * 0.066, 0.97 - row * 0.06)], "#84a09a", 1.45);
+      }
+    }
+    const bulb = at(0.23, 0.04, 0.85);
+    if (entry.active) {
+      const response = entry.setting ? 0.23 * motion : 0.08 * motion;
+      ellipse(context, ...bulb, unit * (0.13 + response), unit * (0.13 + response), lamp + "40");
+    }
+    const pulse = 0.039 + (device === "radio" ? 0.008 * Math.sin(seconds * 4.2) : 0);
+    ellipse(context, ...bulb, Math.max(1.8, unit * pulse), Math.max(1.8, unit * pulse), lamp);
+  }
+
+  function objectiveLabel(context, camera, entry, placed) {
+    const exit = entry.kind === "exit";
+    const beacon = entry.kind === "beacon";
+    const object = entry.type === "station" || entry.type === "story";
+    const color = object ? "#f6d29a" : exit ? "#b9fdd2" : beacon ? "#aaf2de" : "#b2efff";
+    const label = object ? entry.caption : beacon ? "방어 구역" : "";
+    const [targetX, targetY] = point(camera, entry.x, entry.y, object ? 1.58 : 1.27);
+    const fontSize = clamp(camera.unit * 0.4, 11, 14);
+    context.save();
+    context.font = `700 ${fontSize}px system-ui, sans-serif`;
+    context.textBaseline = "middle";
+    context.textAlign = "center";
+    const labelWidth = label ? context.measureText(label).width + 24 : 25;
+    const labelHeight = fontSize * 1.46;
+    const x = clamp(targetX, labelWidth / 2 + 4, camera.width - labelWidth / 2 - 4);
+    const nearY = clamp(targetY, fontSize + 5, camera.height - fontSize - 5);
+    const offscreen = Math.abs(x - targetX) > 2 || Math.abs(nearY - targetY) > 2;
+    const fits = (candidate) => candidate >= fontSize + 5 && candidate <= camera.height - fontSize - 5
+      && placed.every((prior) => Math.abs(x - prior.x) >= (labelWidth + prior.width) / 2 + 3
+        || Math.abs(candidate - prior.y) >= labelHeight + 3);
+    let y = nearY;
+    if (offscreen && !fits(y)) {
+      const step = labelHeight + 4;
+      const candidates = placed.flatMap((_, index) => [nearY + (index + 1) * step, nearY - (index + 1) * step]);
+      y = candidates.find(fits) ?? y;
+    }
+    placed.push({ x, y, width: labelWidth });
+    context.beginPath();
+    context.roundRect(x - labelWidth / 2, y - labelHeight / 2, labelWidth, labelHeight, 5);
+    context.fillStyle = "#0c1724ef";
+    context.fill();
+    context.lineWidth = 1;
+    context.strokeStyle = color;
+    context.stroke();
+    context.fillStyle = color;
+    if (label) context.fillText(label, x + (offscreen ? 3 : 0), y);
+    else {
+      const glyph = x + (offscreen ? 4 : 0);
+      poly(context, [[glyph, y - 4], [glyph + 3, y], [glyph, y + 4], [glyph - 3, y]], color);
+    }
+    if (offscreen) {
+      context.translate(x - labelWidth / 2 + 7, y);
+      context.rotate(Math.atan2(targetY - y, targetX - x));
+      line(context, [[-2, -3], [2, 0], [-2, 3]], color, 1.5);
+    }
+    context.restore();
+  }
+
+  function objectiveLabels(context, camera, state) {
+    let offscreenCell;
+    let minimumDistance = Infinity;
+    const placed = [];
+    const stations = (state.stations ?? []).map((station) => ({ ...station, type: "station" }));
+    const story = state.storyPoint;
+    if (story?.active) stations.push({ ...story, type: "story", caption: story.prompt ?? story.scene.prompt });
+    for (const entry of [...(state.items ?? []), ...stations]) {
+      if (entry.collected || entry.kind === "exit") continue;
+      const itemCamera = onSurface(camera, state.elevation, entry);
+      const [x, y] = point(itemCamera, entry.x, entry.y, 0.9);
+      const offscreen = x < 35 || x > camera.width - 35 || y < 20 || y > camera.height - 20;
+      if (entry.kind !== "cell") {
+        objectiveLabel(context, itemCamera, entry, placed);
+        continue;
+      }
+      if (!offscreen) continue;
+      const distance = state.player
+        ? Math.hypot(entry.x - state.player.x, entry.y - state.player.y)
+        : Math.hypot(x - camera.width / 2, y - camera.height / 2);
+      if (distance < minimumDistance) {
+        minimumDistance = distance;
+        offscreenCell = entry;
+      }
+    }
+    if (offscreenCell) objectiveLabel(context, onSurface(camera, state.elevation, offscreenCell), offscreenCell, placed);
+  }
+
+  function direction(entity) {
+    const x = (entity.facingX ?? 1) - (entity.facingY ?? 0);
+    const y = ((entity.facingX ?? 1) + (entity.facingY ?? 0)) * slope;
+    const length = Math.hypot(x, y) || 1;
+    return [x / length, y / length];
+  }
+
+  const walkProfiles = {
+    player: [15.5, 0.28, 0.34],
+    guard: [12.6, 0.25, 0.32],
+    runner: [23.2, 0.34, 0.55],
+    sentry: [10.5, 0.16, 0.50],
+    lancer: [16.0, 0.27, 0.37],
+    mortar: [8.8, 0.17, 0.24],
+    warden: [9.8, 0.20, 0.27],
+    boss: [10.7, 0.22, 0.19],
+  };
+  const swingProfiles = [
+    { duration: 0.24, coil: -1.18, pass: 1.05, reach: 0.14, cutY: -0.03 },
+    { duration: 0.27, coil: 1.32, pass: -1.08, reach: 0.20, cutY: 0.08 },
+    { duration: 0.32, coil: -1.64, pass: 0.62, reach: 0.29, cutY: 0.20 },
+  ];
+
+  function beginMotionFrame(canvas, state, now, reduced) {
+    const previous = motionFrames.get(canvas);
+    const sameArena = previous?.map === state.map && previous.floor === state.floor;
+    const previousPoses = sameArena ? previous.poses : new Map();
+    const elapsed = sameArena ? clamp((now - previous.now) / 1000, 0, 0.07) : 0;
+    const running = (!state.mode || state.mode === "playing") && !(state.hitStop > 0);
+    const frame = { previousPoses, poses: new Map(), step: running ? elapsed : 0,
+      map: state.map, floor: state.floor, now, reduced };
+    motionFrames.set(canvas, frame);
+    return frame;
+  }
+
+  function approach(previous, target, step, response) {
+    return previous + (target - previous) * (1 - Math.exp(-step * response));
+  }
+
+  function turnAngle(previous, target, step, response) {
+    const offset = Math.atan2(Math.sin(target - previous), Math.cos(target - previous));
+    return approach(previous, previous + offset, step, response);
+  }
+
+  function unitVector(angle) {
+    return [Math.cos(angle), Math.sin(angle)];
+  }
+
+  function actorPose(frame, actor, key) {
+    const profile = walkProfiles[key === "player" ? "player" : actor.kind] ?? walkProfiles.guard;
+    const prior = frame.previousPoses.get(key);
+    const { step, reduced } = frame;
+    const enemyWindup = actor.windup || 0;
+    const charge = reduced ? Number(actor.chargeTime > 0) : clamp((actor.chargeTime || 0) / 0.13, 0, 1);
+    const aimed = (enemyWindup > 0 || charge > 0) && Number.isFinite(actor.aimX) && Number.isFinite(actor.aimY);
+    const intended = aimed ? { facingX: actor.aimX - actor.x, facingY: actor.aimY - actor.y } : actor;
+    const [targetX, targetY] = direction(intended);
+    const targetAngle = Math.atan2(targetY, targetX);
+    const look = prior && !reduced ? turnAngle(prior.look, targetAngle, step, aimed ? 34 : 23) : targetAngle;
+    const horizontalLook = Math.cos(look);
+    const facingRight = Math.abs(horizontalLook) < 0.13 && prior ? prior.facingRight : horizontalLook >= 0;
+    const [moveX, moveY] = direction(prior && Math.hypot(actor.x - prior.x, actor.y - prior.y) > 0.002
+      ? { facingX: actor.x - prior.x, facingY: actor.y - prior.y } : actor);
+    const moveAngle = Math.atan2(moveY, moveX);
+    const travel = prior && !reduced ? turnAngle(prior.travel, moveAngle, step, 18) : moveAngle;
+    const moving = Boolean(actor.moving) && enemyWindup <= 0 && charge <= 0;
+    const gait = reduced ? 0 : prior
+      ? approach(prior.gait, moving ? 1 : 0, step, moving ? 13 : 18)
+      : moving ? 0.64 : 0;
+    const cadence = (prior?.cadence ?? (0.5 + noise(actor.x, actor.y)) * tau) + step * profile[0] * (0.46 + gait * 0.54);
+    const peak = enemyWindup > 0 ? Math.max(enemyWindup, prior?.peak || 0) : 0;
+    const pitch = enemyWindup > 0 ? (0.21 + 0.79 * eased(1 - enemyWindup / Math.max(peak, 0.001))) : 0;
+    const anticipation = reduced ? (enemyWindup > 0 ? 0.63 : 0)
+      : !prior ? pitch : approach(prior.anticipation, pitch, step, 27);
+    const releaseAge = (prior?.windup || 0) > 0 && enemyWindup <= 0 && !(actor.flash > 0.13) ? 0
+      : Math.min(1, (prior?.releaseAge ?? 1) + step);
+    const recoil = Math.max(1 - eased(releaseAge / 0.20), clamp((actor.recover || 0) / 0.20, 0, 1));
+    const hurtAge = key === "player" && prior && actor.hp < prior.hp ? 0
+      : Math.min(1, (prior?.hurtAge ?? 1) + step);
+    const impact = Math.max(clamp((actor.flash || 0) / 0.16, 0, 1), 1 - eased(hurtAge / 0.18));
+    const guarded = reduced || !prior ? Number(Boolean(actor.guarded))
+      : approach(prior.guarded, Number(Boolean(actor.guarded)), step, 24);
+    const dashing = reduced ? 0 : prior
+      ? approach(prior.dashing, Number(actor.dashRemaining > 0), step, 23)
+      : Number(actor.dashRemaining > 0);
+    const swingRemaining = actor.swingLife ?? actor.attackFlash ?? 0;
+    const swingAngle = prior && swingRemaining > 0 && swingRemaining <= prior.swingRemaining + 0.006
+      ? prior.swingAngle : targetAngle;
+    const pose = { x: actor.x, y: actor.y, hp: actor.hp, look, facingRight, travel, gait, cadence, peak, anticipation, windup: enemyWindup,
+      guarded, charge, dashing, releaseAge, recoil: reduced ? 0 : recoil, impact, swingAngle, swingRemaining,
+      hurtAge, stepLength: profile[1] * gait * 0.72, stride: Math.sin(cadence) * profile[1] * gait * 0.70, lift: profile[2],
+      breath: reduced ? 0 : Math.sin(cadence * 0.38 + actor.x * 0.18) * (1 - gait) * 0.027 };
+    frame.poses.set(key, pose);
+    return pose;
+  }
+
+  function articulatedLimb(context, joints, widths, fill, edge, light) {
+    const segments = [[0, 1], [1, 2]];
+    for (const [grow, color] of [[0.66, edge], [0, fill]]) {
+      for (const [start, end] of segments) {
+        const [ax, ay] = joints[start];
+        const [bx, by] = joints[end];
+        const length = Math.hypot(bx - ax, by - ay) || 1;
+        const nx = (ay - by) / length;
+        const ny = (bx - ax) / length;
+        const near = widths[start] * 0.5 + grow;
+        const far = widths[end] * 0.5 + grow;
+        poly(context, [[ax + nx * near, ay + ny * near], [bx + nx * far, by + ny * far],
+          [bx - nx * far, by - ny * far], [ax - nx * near, ay - ny * near]], color);
+      }
+      for (const [index, [x, y]] of joints.entries()) {
+        const radius = widths[index] * 0.5 + grow;
+        ellipse(context, x, y, radius, radius, color);
+      }
+    }
+    const [ax, ay] = joints[0];
+    const [bx, by] = joints[1];
+    line(context, [[ax, ay], [ax * 0.52 + bx * 0.48, ay * 0.52 + by * 0.48]], light, 0.85);
+  }
+
+  function legStride(context, ground, body, facing, pose, scale, shade, boot, lunge = 0, chunky = false) {
+    const [fx, fy] = facing;
+    for (const side of [-1, 1]) {
+      const step = fraction(pose.cadence / tau + (side > 0 ? 0.5 : 0));
+      const recovery = clamp((step - 0.59) / 0.41, 0, 1);
+      const forward = step <= 0.59 ? 1 - 2 * step / 0.59 : -1 + eased(recovery) * 2;
+      const leg = forward * pose.stepLength + lunge * side;
+      const lift = Math.sin(recovery * Math.PI) * pose.stepLength * pose.lift;
+      const footX = side * 0.138 + fx * leg;
+      const footY = -0.055 + fy * leg - lift;
+      const pieces = [body(side * 0.109, -0.48), ground(side * 0.134 + fx * leg * 0.54, footY - 0.205),
+        ground(footX, footY - 0.025)];
+      const bootSize = chunky ? 1.28 : 1;
+      articulatedLimb(context, pieces, [scale * 0.19, scale * 0.164 * bootSize, scale * 0.125 * bootSize], shade, "#111a25", boot);
+      poly(context, [ground(footX - 0.078 * bootSize, footY - 0.061),
+        ground(footX + (fx * 0.096 + 0.055) * bootSize, footY - 0.047),
+        ground(footX + (fx * 0.12 + 0.055) * bootSize, footY + 0.032),
+        ground(footX - 0.063 * bootSize, footY + 0.041)], boot, "#15202a", 0.75);
+      if (chunky) line(context, [ground(footX - 0.062, footY + 0.013),
+        ground(footX + (fx * 0.10 + .047) * bootSize, footY + 0.010)], "#c09567", Math.max(.6, scale * .022));
+    }
+  }
+
+  function swordPose(at, angle, profile, progress, reduced) {
+    const active = progress !== null;
+    let sweep = 0;
+    let extension = 0;
+    let dip = 0;
+    if (active && reduced) {
+      sweep = profile.pass * 0.15;
+      extension = profile.reach * 0.6;
+    } else if (active && progress < 0.18) {
+      const coil = eased(progress / 0.18);
+      sweep = profile.coil * coil;
+      dip = -0.08 * coil;
+    } else if (active && progress < 0.37) {
+      const cut = (progress - 0.18) / 0.19;
+      sweep = profile.coil * (1 - cut ** 1.6);
+      extension = profile.reach * cut ** 1.45;
+      dip = -0.08 + (profile.cutY + 0.08) * cut;
+    } else if (active && progress < 0.62) {
+      const pass = (progress - 0.37) / 0.25;
+      sweep = profile.pass * (1 - (1 - pass) ** 1.8);
+      extension = profile.reach * (1 - 0.31 * pass);
+      dip = profile.cutY;
+    } else if (active) {
+      const settle = 1 - eased((progress - 0.62) / 0.38);
+      sweep = profile.pass * settle;
+      extension = profile.reach * 0.7 * settle;
+      dip = profile.cutY * settle;
+    }
+    const [forwardX, forwardY] = unitVector(angle);
+    const [edgeX, edgeY] = unitVector(angle + sweep);
+    const hand = at(forwardX * 0.10 + edgeX * 0.26, -0.60 + forwardY * 0.09 + edgeY * 0.19 + dip);
+    return {
+      hand,
+      tip: at(forwardX * 0.10 + edgeX * (0.92 + extension),
+        -0.60 + forwardY * 0.09 + edgeY * (0.68 + extension * 0.52) + dip),
+    };
+  }
+
+  function swordTrail(context, at, angle, profile, progress) {
+    const end = Math.min(progress, 0.62);
+    const start = Math.max(0.18, progress - 0.23);
+    if (end <= start) return;
+    const inner = [];
+    const outer = [];
+    for (let index = 0; index <= 7; index++) {
+      const { hand, tip } = swordPose(at, angle, profile, start + (end - start) * index / 7, false);
+      outer.push(tip);
+      inner.push([hand[0] * 0.36 + tip[0] * 0.64, hand[1] * 0.36 + tip[1] * 0.64]);
+    }
+    context.save();
+    context.globalAlpha *= 0.76 * (1 - eased((progress - 0.53) / 0.27));
+    poly(context, [...outer, ...inner.reverse()], "#80f3c441", "#dcfff5ad", 0.85);
+    context.restore();
+  }
+
+  function miniatureFace(context, at, size, palette, { skin, crown, hood, mask, hero }) {
+    forgedPlate(context, [at(-0.202, -0.12), at(-0.114, -0.24), at(0.091, -0.228),
+      at(0.185, -0.136), at(0.186, -0.024), at(0.234, 0.019), at(0.169, 0.066), at(0.111, 0.161),
+      at(-0.074, 0.171), at(-0.184, 0.081)], skin, palette, size, 0.25);
+    poly(context, [at(-0.126, -0.116), at(0.096, -0.157), at(0.146, -0.034), at(0.109, 0.038),
+      at(-0.064, 0.063), at(-0.126, 0.024)], skin[2]);
+    if (hero) {
+      forgedPlate(context, [at(-0.249, -0.08), at(-0.215, -0.219), at(-0.143, -0.298), at(0.015, -0.304),
+        at(0.154, -0.284), at(0.224, -0.205), at(0.207, -0.124), at(0.104, -0.149), at(-0.031, -0.117),
+        at(-0.098, -0.012), at(-0.127, 0.091), at(-0.224, 0.038)], crown, palette, size, 0.22);
+      line(context, [at(-0.158, -0.237), at(-0.019, -0.272), at(0.108, -0.250)], crown[2] + "be", size * 0.027);
+      line(context, [at(-0.194, -0.166), at(-0.151, -0.208), at(-0.093, -0.219)], crown[1], size * 0.027);
+    } else {
+      forgedPlate(context, [at(-0.245, -0.04), at(-0.203, -0.200), at(-0.107, -0.276), at(0.082, -0.270),
+        at(0.187, -0.191), at(0.25, -0.076), at(0.16, -0.059), at(-0.11, -0.038), at(-0.18, 0.045)],
+      crown, palette, size, 0.23);
+      line(context, [at(-0.168, -0.179), at(-0.077, -0.23), at(0.053, -0.23)], crown[2], Math.max(.7, size * 0.025));
+      if (!hood) line(context, [at(-0.217, -0.043), at(0.226, -0.086)], crown[0], Math.max(.8, size * 0.037));
+    }
+    if (mask) {
+      poly(context, [at(-0.064, 0.007), at(0.162, -0.011), at(0.17, 0.10), at(0.057, 0.153),
+        at(-0.103, 0.115)], "#453937", "#312829", Math.max(.7, size * 0.017));
+      line(context, [at(0.012, 0.066), at(0.13, 0.045)], crown[2] + "8b", Math.max(.55, size * .024));
+    } else {
+      line(context, [at(0.064, 0.117), at(0.13, 0.102)], "#805449", Math.max(.65, size * .017));
+    }
+    ellipse(context, ...at(0.055, -0.055), Math.max(0.75, size * 0.025), Math.max(0.65, size * 0.032), "#302828");
+    ellipse(context, ...at(0.142, -0.065), Math.max(0.67, size * 0.017), Math.max(0.60, size * 0.027), "#39292a");
+    if (hero) ellipse(context, ...at(-0.076, 0.04), size * 0.043, size * 0.050, skin[1], skin[0], Math.max(.55, size * .012));
+  }
+
+  function heroBlade(context, hand, tip, unit) {
+    const dx = tip[0] - hand[0];
+    const dy = tip[1] - hand[1];
+    const length = Math.hypot(dx, dy) || 1;
+    const blade = (t, offset) => [hand[0] + dx * t - dy / length * unit * offset,
+      hand[1] + dy * t + dx / length * unit * offset];
+    line(context, [blade(-0.09, 0), blade(0.17, 0)], "#352929", unit * 0.093);
+    line(context, [blade(0.14, -0.102), blade(0.14, 0.102)], "#d2a76f", unit * 0.053);
+    poly(context, [blade(0.205, -0.050), blade(0.76, -0.046), blade(1.04, 0), blade(0.76, 0.055),
+      blade(0.205, 0.052)], "#c5dbd4", "#26363a", Math.max(.8, unit * 0.028));
+    poly(context, [blade(0.25, 0), blade(1.01, 0), blade(0.775, -0.032), blade(0.25, -0.038)], "#f1f1ce");
+    line(context, [blade(0.33, 0.024), blade(0.76, 0.028)], "#7eaca3", Math.max(.58, unit * 0.019));
+  }
+
+  function player(context, camera, actor, seconds, reduced, pose, palette) {
+    const [x, y] = point(camera, actor.x, actor.y);
+    const unit = camera.unit * (camera.width < 500 ? 1.12 : 1);
+    const [fx, fy] = unitVector(pose.look);
+    const side = pose.facingRight ? 1 : -1;
+    const stride = pose.stride;
+    const variant = Number.isInteger(actor.attackVariant) && swingProfiles[actor.attackVariant] ? actor.attackVariant : 0;
+    const profile = swingProfiles[variant];
+    const length = actor.swingDuration > 0 ? actor.swingDuration : actor.swingLife !== undefined ? profile.duration : 0.20;
+    const progress = pose.swingRemaining > 0 ? clamp(1 - pose.swingRemaining / length, 0, 1) : null;
+    const thrust = progress === null || reduced ? 0 : Math.sin(progress * Math.PI) * 0.089;
+    const tuck = pose.dashing * 0.082;
+    const flinch = reduced ? 0 : pose.impact;
+    const bob = pose.breath - Math.abs(stride) * 0.21 + tuck + flinch * 0.10;
+    const base = (horizontal, vertical) => [x + horizontal * unit, y + vertical * unit];
+    const at = (horizontal, vertical) => base(horizontal + fx * (thrust + tuck * 0.70 - flinch * 0.14), vertical + bob);
+    const cloth = ["#25413f", "#45867b", "#8bc1ab"];
+    const scarf = ["#265654", "#50a998", "#a7e7c7"];
+    const brass = ["#664b3e", "#b98a57", "#e3ba7b"];
+    const boot = ["#373233", "#6c5444", "#a78360"];
+    const skin = ["#7d564f", "#c8906d", "#e5b18b"];
+    const hair = ["#2e3032", "#56403a", "#8e634a"];
+
+    contactShadow(context, x, y, unit, palette);
+    context.save();
+    if (actor.invulnerable > 0) context.globalAlpha = reduced ? 0.78 : 0.59 + Math.abs(Math.sin(seconds * 27)) * 0.41;
+    groundRing(context, camera, actor.x, actor.y, 0.39, "#99e9c428", "#9be5cd", 1.9);
+    if (actor.wet > 0 && pose.gait > 0.30 && !reduced) {
+      groundRing(context, camera, actor.x, actor.y, 0.48 + Math.abs(stride) * 0.62, null, "#a7f4eb92", 1.15);
+    }
+    legStride(context, base, at, unitVector(pose.travel), pose, unit, "#3d454b", boot[1], 0, true);
+
+    const lamp = -side * (0.35 + stride * 0.13);
+    const grip = at(lamp, -0.46 + Math.abs(stride) * 0.08);
+    articulatedLimb(context, [at(-side * 0.19, -0.81), at(-side * 0.35, -0.65), grip],
+      [unit * 0.24, unit * 0.216, unit * 0.17], cloth[0], "#182b2f", cloth[2]);
+    forgedPlate(context, [at(-0.29, -0.80), at(-0.16, -0.92), at(0.17, -0.92), at(0.28, -0.76),
+      at(0.22, -0.51), at(0.33, -0.24), at(0.15, -0.165), at(-0.01, -0.252), at(-0.22, -0.18), at(-0.30, -0.35)],
+    cloth, palette, unit, 0.28);
+    poly(context, [at(-side * 0.22, -0.79), at(side * 0.085, -0.85), at(side * 0.063, -0.44),
+      at(side * 0.17, -0.256), at(-side * 0.15, -0.32), at(-side * 0.22, -0.55)], "#9cccab5e");
+    line(context, [at(-0.21, -0.43), at(0.09, -0.45), at(0.21, -0.42)], "#3e3434", Math.max(1, unit * 0.060));
+    ellipse(context, ...at(side * .045, -.438), unit * .053, unit * .037, "#d7ae75", "#473732", .72);
+
+    const wind = reduced ? 0 : Math.sin(seconds * 4.3 + x * 0.025) * 0.024 + stride * 0.35;
+    forgedPlate(context, [at(-side * 0.08, -0.89), at(-side * 0.34, -0.87),
+      at(-side * (0.50 + Math.abs(stride) * 0.32), -0.75 + wind),
+      at(-side * 0.39, -0.69 + wind), at(-side * 0.19, -0.78), at(side * .15, -.866)],
+    scarf, palette, unit, 0.22);
+    miniatureFace(context, (horizontal, vertical) => at(side * (horizontal + .05), -1.08 + vertical + fy * .026),
+      unit, palette, { skin, crown: hair, hero: true });
+    forgedPlate(context, [at(-0.20, -0.926), at(-0.10, -0.94), at(0.05, -0.904), at(0.21, -0.933),
+      at(0.20, -0.846), at(0.064, -0.792), at(-0.13, -0.817)], scarf, palette, unit, 0.25);
+
+    const swordAngle = progress === null ? pose.look + stride * 0.53 : pose.swingAngle;
+    const { hand, tip } = swordPose(at, swordAngle, profile, progress, reduced);
+    if (!reduced && progress !== null) swordTrail(context, at, swordAngle, profile, progress);
+    const shoulder = at(side * 0.217, -0.762);
+    const elbow = at(fx * (0.31 + thrust * 0.23), -0.62 + Math.abs(stride) * 0.09);
+    articulatedLimb(context, [shoulder, elbow, hand], [unit * 0.235, unit * 0.20, unit * 0.183],
+      brass[1], "#312b2e", brass[2]);
+    forgedPlate(context, [at(side * 0.115, -.84), at(side * 0.28, -.87), at(side * 0.35, -.78),
+      at(side * 0.28, -.68), at(side * 0.125, -.68)], brass, palette, unit, .24);
+    heroBlade(context, hand, tip, unit);
+    ellipse(context, ...hand, unit * 0.08, unit * 0.083, boot[1], "#30282b", Math.max(.75, unit * .017));
+
+    const [lampX, lampY] = grip;
+    ellipse(context, lampX, lampY, unit * 0.083, unit * 0.076, boot[1], "#332928", .85);
+    line(context, [[lampX, lampY + unit * .033], [lampX, lampY + unit * .139]], "#e2b779", Math.max(.75, unit * .03));
+    const globe = (u,v) => [lampX + unit * u, lampY + unit * v];
+    poly(context, [globe(-.073,.119), globe(.070,.119), globe(.105,.188), globe(.073,.274), globe(-.073,.274),
+      globe(-.105,.188)], "#6dcdb7", "#2e3236", Math.max(.85, unit*.028));
+    poly(context, [globe(-.039,.146), globe(.035,.146), globe(.054,.197), globe(.026,.239), globe(-.035,.239)],
+      "#c6f3bf");
+    line(context, [globe(-.078,.267), globe(.078,.267)], "#c59769", Math.max(.75, unit * .030));
+    context.restore();
+  }
+
+  const guardianMetals = {
+    guard: ["#392b2c", "#955c45", "#d4a77e"],
+    runner: ["#3f2a29", "#aa603c", "#e4a574"],
+    sentry: ["#29333e", "#677b83", "#aabdc0"],
+    lancer: ["#3d3027", "#9a7949", "#dac08a"],
+    mortar: ["#392c35", "#83676a", "#b7a39b"],
+    warden: ["#322c46", "#726886", "#b3a9c3"],
+    boss: ["#392b43", "#8a568e", "#c998ca"],
+  };
+
+  function forgedPlate(context, points, metal, palette, size, radius = 0.18, inked = false) {
+    const left = Math.min(...points.map(([x]) => x));
+    const right = Math.max(...points.map(([x]) => x));
+    const top = Math.min(...points.map(([, y]) => y));
+    const bottom = Math.max(...points.map(([, y]) => y));
+    const span = bottom - top;
+    const lerp = (a, b, amount) => [a[0] + (b[0] - a[0]) * amount, a[1] + (b[1] - a[1]) * amount];
+    const contour = new Path2D();
+    contour.moveTo(...lerp(points[0], points[1], radius));
+    for (let i = 1; i <= points.length; i++) {
+      const previous = points[i - 1];
+      const corner = points[i % points.length];
+      const next = points[(i + 1) % points.length];
+      contour.lineTo(...lerp(corner, previous, radius));
+      contour.quadraticCurveTo(...corner, ...lerp(corner, next, radius));
+    }
+    contour.closePath();
+    if (inked) {
+      context.save();
+      context.clip(contour);
+      context.fillStyle = metal[1];
+      context.fillRect(left, top, right - left, span);
+      poly(context, [[left, top], [right, top], [right, top + span * 0.26],
+        [left + (right - left) * 0.44, top + span * 0.44], [left, top + span * 0.51]], metal[2] + "8f");
+      poly(context, [[left, bottom - span * 0.15], [right, bottom - span * 0.35], [right, bottom], [left, bottom]], metal[0] + "9d");
+      context.restore();
+    } else {
+      const forming = context.createLinearGradient(left, top, left + span * 0.65, bottom);
+      forming.addColorStop(0, metal[2]);
+      forming.addColorStop(0.26, metal[1]);
+      forming.addColorStop(0.58, metal[1]);
+      forming.addColorStop(1, metal[0]);
+      context.fillStyle = forming;
+      context.fill(contour);
+    }
+    context.strokeStyle = palette.materialShade;
+    context.lineWidth = Math.max(0.67, size * (inked ? 0.039 : 0.026));
+    context.stroke(contour);
+  }
+
+  function guardianRivet(context, at, x, y, size, metal) {
+    const [px, py] = at(x, y);
+    ellipse(context, px, py, size * 0.030, size * 0.026, metal[0]);
+    ellipse(context, px - size * 0.006, py - size * 0.006, size * 0.012, size * 0.010, metal[2]);
+  }
+
+  function guardianArm(context, from, elbow, hand, size, metal, reach = 1) {
+    articulatedLimb(context, [from, elbow, hand], [size * 0.22, size * 0.19, size * 0.13],
+      metal[0], "#1b1820", metal[1]);
+    const forearm = [elbow[0] * 0.37 + hand[0] * 0.63, elbow[1] * 0.37 + hand[1] * 0.63];
+    line(context, [elbow, forearm], metal[1], size * 0.142 * reach);
+    line(context, [[elbow[0], elbow[1] - size * 0.019], [forearm[0], forearm[1] - size * 0.02]],
+      metal[2], Math.max(0.55, size * 0.029));
+  }
+
+  function pressureGunner(context, at, facing, actor, pose, size, metal, palette) {
+    const mortar = actor.kind === "mortar";
+    const [fx, fy] = facing;
+    const wind = pose.anticipation;
+    const live = actor.windup > 0;
+    const width = mortar ? 1.12 : 1;
+    const shell = (x, y) => at(x * width, y + (mortar ? 0.065 : 0));
+    forgedPlate(context, [shell(-0.46, -0.55), shell(-0.51, -0.75), shell(-0.37, -0.97),
+      shell(-0.15, -1.045), shell(0.19, -1.045), shell(0.43, -0.92), shell(0.51, -0.70),
+      shell(0.36, -0.49), shell(0.09, -0.40), shell(-0.30, -0.44)], metal, palette, size, .22, true);
+    line(context, [shell(-0.40, -0.80), shell(-0.30, -0.94), shell(-0.14, -0.993), shell(0.09, -0.995)],
+      metal[2] + "ae", Math.max(0.8, size * 0.025));
+    for (const side of [-1, 1]) {
+      guardianRivet(context, shell, side * 0.36, -0.76, size, metal);
+      line(context, [shell(side * 0.40, -0.59), shell(side * 0.27, -0.52)], metal[0] + "a8", size * 0.031);
+    }
+    const pivot = at(fx * 0.17, -0.72);
+    const muzzle = mortar
+      ? at(fx * (0.31 - pose.recoil * 0.20), -1.12 + fy * 0.11 - wind * 0.14 + pose.recoil * 0.10)
+      : at(fx * (0.91 - pose.recoil * 0.21), -0.75 + fy * 0.26 - wind * 0.058);
+    const barrel = size * (mortar ? 0.28 : 0.15);
+    const barrelMid = [pivot[0] * 0.32 + muzzle[0] * 0.68, pivot[1] * 0.32 + muzzle[1] * 0.68];
+    ellipse(context, ...pivot, size * 0.19, size * 0.177, metal[0], palette.materialShade, 1.05);
+    line(context, [pivot, muzzle], palette.materialShade, barrel * 1.37);
+    line(context, [pivot, muzzle], metal[1], barrel);
+    line(context, [[pivot[0], pivot[1] - barrel * 0.16], [muzzle[0], muzzle[1] - barrel * 0.17]],
+      metal[2], Math.max(0.8, barrel * 0.24));
+    line(context, [barrelMid, muzzle], metal[0], barrel * 0.83);
+    ellipse(context, ...muzzle, barrel * (mortar ? 0.56 : 0.33), barrel * (mortar ? 0.48 : 0.38),
+      live ? "#ffe3a8" : "#211f28", metal[2], Math.max(0.6, size * 0.022));
+    const lens = shell(-fx * 0.15, -0.76);
+    ellipse(context, ...lens, size * 0.132, size * 0.086, "#252936", metal[2], Math.max(1, size * 0.029));
+    ellipse(context, ...lens, size * 0.081, size * 0.043, live ? "#fff1b3" : "#ed9b5c");
+    ellipse(context, lens[0] - size * 0.032, lens[1] - size * 0.011, size * 0.026, size * 0.012, "#ffe7b0");
+  }
+
+  function compressionGuard(context, at, actor, pose, size, metal, palette, facing) {
+    const [fx, fy] = facing;
+    const boss = actor.kind === "boss";
+    const runner = actor.kind === "runner";
+    const lancer = actor.kind === "lancer";
+    const warden = actor.kind === "warden";
+    const human = actor.faction === "human";
+    const ranged = human && (actor.kind === "sentry" || actor.kind === "mortar");
+    const side = pose.facingRight ? 1 : -1;
+    const breadth = boss ? 1.19 : runner ? 0.82 : warden ? 1.08 : 1;
+    const chest = (x, y) => at(x * breadth + fx * (0.077 * Math.max(0, -y - 0.48)), y);
+    const wind = pose.anticipation;
+    const follow = Math.max(pose.charge * 0.74, pose.recoil * 0.86);
+    const folding = warden ? pose.guarded * 0.21 : 0;
+    const wristX = side * (0.43 + follow * 0.25 - wind * 0.12) + pose.stride * 0.31;
+    const wristY = -0.49 + fy * 0.14 - wind * 0.33 + follow * 0.11 - folding;
+    const hand = at(wristX, wristY);
+
+    const farHand = at(-side * (0.40 - follow * 0.13) - pose.stride * 0.23, -0.47 - wind * 0.15);
+    const coat = human ? ["#3c3036", runner ? "#886749" : warden ? "#665675" : "#805644", "#bb936d"]
+      : [metal[0], metal[0], metal[1]];
+    guardianArm(context, chest(-side * 0.235, -0.74), at(-side * 0.36, -0.58), farHand, size, coat, 0.89);
+    forgedPlate(context, [chest(-0.24, -0.60), chest(0.24, -0.60), chest(0.27, -0.39),
+      chest(0.13, human ? -0.24 + pose.stride * 0.26 : -0.29),
+      chest(-0.19, human ? -0.26 - pose.stride * 0.16 : -0.31), chest(-0.28, -0.43)], coat, palette, size, .24, !human);
+    guardianArm(context, chest(side * 0.26, -0.74),
+      at(side * (0.39 - wind * 0.08), -0.60 - wind * 0.15 - folding * 0.42), hand, size, human ? coat : metal);
+
+    forgedPlate(context, [chest(-0.35, -0.70), chest(-0.31, boss ? -0.96 : -0.87), chest(-0.12, -0.865),
+      chest(0.12, -0.87), chest(0.31, boss ? -0.96 : -0.88), chest(0.365, -0.68),
+      chest(0.25, -0.53), chest(0.13, -0.43), chest(-0.18, -0.46), chest(-0.29, -0.55)], metal, palette, size, .24, !human);
+    line(context, [chest(-0.30, -0.73), chest(-0.15, -0.81), chest(0.12, -0.805), chest(0.27, -0.75)],
+      metal[2] + "ba", Math.max(0.65, size * 0.025));
+    line(context, [chest(-0.16, -0.55), chest(-0.08, -0.50), chest(0.16, -0.53)], metal[0], size * 0.032);
+    for (const edge of [-1, 1]) guardianRivet(context, chest, edge * 0.245, -0.715, size, metal);
+    if (human) {
+      poly(context, [chest(-side * 0.25, -0.78), chest(-side * 0.07, -0.80), chest(side * 0.13, -0.60),
+        chest(side * 0.08, -0.50), chest(-side * 0.13, -0.59)], metal[2] + "76");
+      line(context, [chest(-side * 0.155, -0.78), chest(side * 0.07, -0.61), chest(side * 0.17, -0.51)],
+        "#453332", Math.max(1, size * 0.06));
+      line(context, [chest(-side * 0.14, -0.79), chest(side * 0.07, -0.61)], coat[2], Math.max(0.56, size * 0.019));
+      line(context, [chest(-0.15, -0.395), chest(0.16, -0.39)], "#362a2c", size * 0.056);
+      guardianRivet(context, chest, -side * 0.055, -0.389, size * 1.24, metal);
+      forgedPlate(context, [chest(-side * 0.22, -0.883), chest(-side * 0.055, -0.91), chest(side * 0.07, -0.873),
+        chest(side * 0.18, -0.90), chest(side * 0.13, -0.79), chest(-side * 0.066, -0.795)],
+      coat, palette, size, 0.24);
+    } else if (boss || actor.elite) {
+      const core = chest(0.028, -0.645);
+      ellipse(context, ...core, size * 0.096, size * 0.118, metal[0], metal[2], Math.max(0.75, size * 0.022));
+      ellipse(context, ...core, size * 0.049, size * 0.063, actor.phase > 1 ? "#ff895d" : "#ffd089");
+    }
+
+    const brow = (x, y) => chest(x + fx * (0.044 + follow * 0.04),
+      y + (runner ? 0.075 : 0) + fy * 0.031);
+    if (human) {
+      const skin = actor.id % 3 === 1 ? ["#6b4844", "#ba8d69", "#dfb886"] : ["#784c44", "#bc855f", "#e3b48b"];
+      const face = (x, y) => brow(x * side, -1.076 + y);
+      miniatureFace(context, face, size, palette, { skin, crown: runner ? coat : metal, hood: runner, mask: ranged || runner });
+    } else {
+      forgedPlate(context, [brow(-0.205, -0.99), brow(-0.128, -1.16), brow(0.092, -1.186),
+        brow(0.194, -1.08), brow(0.225, -0.941), brow(0.124, -0.833), brow(-0.137, -0.86)],
+      metal, palette, size, 0.24, true);
+      line(context, [brow(-0.155, -0.997), brow(0.165, -0.977)], "#291d24", size * 0.093);
+      const signal = actor.windup > 0 ? "#fff3bc" : "#fbd191";
+      for (const offset of [-0.062, 0.058]) {
+        const eye = fx * 0.043 + offset;
+        line(context, [brow(eye - 0.021, -1.005), brow(eye + 0.023, -0.973)],
+          signal, Math.max(1.1, size * 0.033));
+      }
+    }
+
+    if (lancer) {
+      const roll = 0.22 + fy * side * 0.40 - wind * 0.39 + pose.charge * 0.16;
+      const blade = (distance, width = 0) =>
+        [hand[0] + side * distance * size, hand[1] + (distance * roll + width) * size];
+      line(context, [blade(-0.67), blade(0.60 + pose.charge * 0.23)], "#2c2024", size * 0.091);
+      line(context, [blade(-0.67, -0.018), blade(0.60 + pose.charge * 0.23, -0.018)], metal[2], size * 0.035);
+      const reach = 0.59 + pose.charge * 0.23;
+      forgedPlate(context, [blade(reach - 0.12, -0.075), blade(reach + 0.23), blade(reach - 0.04, 0.086)],
+        ["#55423a", "#ae9869", "#f4d9a7"], palette, size);
+      ellipse(context, ...hand, size * 0.075, size * 0.068, metal[1], metal[0], 0.72);
+    } else if (ranged) {
+      const launcher = actor.kind === "mortar";
+      const stock = chest(-side * 0.20, -0.64);
+      const muzzle = at(wristX + side * (launcher ? 0.31 : 0.47), wristY - (launcher ? 0.20 : 0.07) + fy * 0.11);
+      line(context, [stock, muzzle], palette.materialShade, size * (launcher ? 0.22 : 0.14));
+      line(context, [[stock[0], stock[1] - size * 0.022], [muzzle[0], muzzle[1] - size * 0.025]],
+        metal[2], size * (launcher ? 0.095 : 0.055));
+      ellipse(context, ...muzzle, size * 0.044, size * (launcher ? 0.066 : 0.039),
+        actor.windup > 0 ? "#ffcc8a" : metal[0], metal[2], 0.7);
+      ellipse(context, ...hand, size * 0.071, size * 0.057, coat[1], metal[0], 0.74);
+    } else if (warden) {
+      const shield = (x, y) =>
+        [hand[0] + side * x * size, hand[1] + (y + fy * x * 0.18) * size];
+      const emboss = actor.guarded ? "#9fe6ee" : "#b2a1c6";
+      forgedPlate(context, [shield(0.02, -0.29), shield(0.26, -0.22), shield(0.29, 0.08),
+        shield(0.16, 0.26), shield(-0.13, 0.23), shield(-0.20, -0.04), shield(-0.16, -0.21)],
+      ["#342838", "#534563", emboss], palette, size, .20, !human);
+      line(context, [shield(-0.08, -0.185), shield(0.05, -0.232), shield(0.18, -0.17)], emboss, 1.0);
+      line(context, [shield(0.019, -0.13), shield(0.026, 0.16)], emboss + "ab", Math.max(0.72, size * 0.024));
+    } else {
+      const gauntlet = (x, y) => [hand[0] + side * x * size, hand[1] + y * size];
+      const knuckle = human ? 0.035 : 0;
+      forgedPlate(context, [gauntlet(-0.08, -0.08 - knuckle), gauntlet(0.12 + (boss ? 0.075 : 0), -0.075 - knuckle),
+        gauntlet(0.15 + knuckle + (boss ? 0.075 : 0), 0.04), gauntlet(0.052, 0.115 + knuckle), gauntlet(-0.065, 0.065)],
+      metal, palette, size, .21, !human);
+      line(context, [gauntlet(0.015, 0.01), gauntlet(0.085, -0.045)], metal[2], Math.max(0.55, size * 0.023));
+    }
+  }
+
+  const creatureSkins = {
+    guard: ["#402b35", "#95574b", "#d68a6c"],
+    runner: ["#442a2d", "#ad5d43", "#e4a075"],
+    sentry: ["#293540", "#637982", "#a4a9a0"],
+    lancer: ["#45352a", "#947745", "#d2ad79"],
+    mortar: ["#422f3c", "#8a626b", "#b88490"],
+    warden: ["#352d47", "#756387", "#b2a0bc"],
+    boss: ["#352438", "#895986", "#d69abd"],
+  };
+
+  function burrowCreature(context, base, at, actor, pose, size, skin, palette, facing) {
+    const [fx, fy] = facing;
+    const side = pose.facingRight ? 1 : -1;
+    const boss = actor.kind === "boss";
+    const runner = actor.kind === "runner";
+    const lancer = actor.kind === "lancer";
+    const warden = actor.kind === "warden";
+    const mortar = actor.kind === "mortar";
+    const sentry = actor.kind === "sentry";
+    const low = runner || mortar || warden || sentry;
+    const bodyWide = boss ? 1.11 : low ? 1.19 : 0.98;
+    const bodyDip = low ? (runner ? 0.17 : 0.09) : 0;
+    const body = (x, y) => at(side * x * bodyWide, y + bodyDip);
+    const fore = pose.anticipation;
+    const thrust = pose.recoil * 0.15 + pose.charge * 0.27;
+    if (!sentry) {
+      const tailRoot = body(-0.30, -0.59);
+      const tailBend = body(-0.65, -0.51 - pose.stride * 0.26);
+      const tailTip = body(runner ? -1.07 : -0.90, -0.63 + pose.stride * 0.40 + fore * 0.12);
+      line(context, [tailRoot, tailBend, tailTip], skin[0], size * 0.136);
+      line(context, [tailRoot, tailBend, tailTip], skin[1], size * 0.078);
+      line(context, [tailBend, tailTip], skin[2] + "a9", size * 0.033);
+    }
+    const paw = (leg, depth) => {
+      const legPhase = fraction(pose.cadence / tau + (leg < 0 ? 0.5 : 0) + depth * 0.24);
+      const kneeUp = Math.sin(Math.PI * clamp((legPhase - 0.61) / 0.39, 0, 1)) * pose.stepLength * 0.47;
+      const swing = Math.cos(legPhase * tau) * pose.stepLength * (runner ? 1.5 : 0.8);
+      const hipX = side * (leg * (low ? 0.23 : 0.13) + depth * 0.08);
+      const spread = sentry ? leg * (0.23 - depth * 0.045) : 0;
+      const foot = base(hipX + fx * swing + side * (spread + (leg > 0 ? thrust * 0.53 : -0.02)),
+        -0.043 + depth * 0.08 + fy * swing * 0.38 - kneeUp);
+      const from = at(hipX, low ? -0.45 + bodyDip : -0.57);
+      const elbow = [from[0] * 0.39 + foot[0] * 0.61 - side * size * 0.07,
+        from[1] * (sentry ? 0.68 : 0.40) + foot[1] * (sentry ? 0.32 : 0.60)];
+      articulatedLimb(context, [from, elbow, foot], [size * 0.20, size * 0.133, size * 0.115],
+        depth < 0 ? skin[0] : skin[1], "#281e29", depth < 0 ? skin[1] : skin[2]);
+      line(context, [foot, [foot[0] + side * size * 0.12, foot[1] + size * 0.023]], "#cdb390", size * 0.032);
+    };
+    if (low || boss) {
+      paw(-1, -1);
+      paw(1, -1);
+    }
+    if (sentry) {
+      paw(-1, -.48);
+      paw(1, -.48);
+    }
+    paw(-1, 0);
+    paw(1, 0);
+
+    const shoulderRise = boss ? 0.085 : 0;
+    forgedPlate(context, [body(-0.44, -0.61), body(-0.36, -0.78), body(-0.15, -0.87 - shoulderRise),
+      body(0.13, -0.87 - shoulderRise), body(0.34, -0.72), body(0.41, -0.55),
+      body(0.26, -0.44), body(0.07, -0.36), body(-0.24, -0.39), body(-0.40, -0.46)],
+    skin, palette, size, 0.37, true);
+    if (warden || boss) {
+      const ridge = warden ? (actor.guarded ? "#99cad4" : "#aa90bc") : skin[2];
+      forgedPlate(context, [body(-0.43, -0.65), body(-0.33, -0.86), body(-0.15, -0.96),
+        body(0.08, -0.93), body(0.25, -0.75), body(0.09, -0.64), body(-0.21, -0.60)],
+      [skin[0], skin[1], ridge], palette, size, 0.27, true);
+      line(context, [body(-0.27, -0.79), body(-0.14, -0.83), body(-0.01, -0.78)], ridge + "be", size * 0.042);
+    } else if (mortar) {
+      const color = actor.windup > 0 ? "#e09365" : skin[1];
+      for (const [u,v,ratio] of [[-.25,-.91,.63],[.065,-.86,.58],[-.10,-.95,1]]) {
+        const sac = body(u, v - fore * 0.12 + pose.recoil * 0.15);
+        ellipse(context, ...sac, size * (0.16 + fore * 0.065) * ratio, size * 0.141 * ratio,
+          color, skin[0], Math.max(.8, size * 0.039));
+        ellipse(context, sac[0] - size * 0.050 * ratio, sac[1] - size * 0.051 * ratio,
+          size * 0.061 * ratio, size * 0.032 * ratio, "#ffd4a7ae");
+      }
+    } else {
+      line(context, [body(-0.31, -0.70), body(-0.16, -0.76), body(0.02, -0.75)],
+        skin[2] + "ad", Math.max(0.7, size * 0.037));
+    }
+    if (!low) {
+      const forelimb = body(0.42 + thrust, -0.34 - fore * 0.25);
+      guardianArm(context, body(0.16, -0.69), body(0.29, -0.49 - fore * 0.13), forelimb, size, skin);
+      line(context, [forelimb, [forelimb[0] + side * size * 0.105, forelimb[1] + size * 0.05]],
+        "#d1b192", size * 0.034);
+    }
+
+    const rise = sentry ? -0.15 : runner ? 0.065 : boss ? -0.045 : 0;
+    const head = (x, y) => at(side * (x + 0.245 + thrust - fore * 0.06),
+      y + bodyDip + rise + fy * 0.08);
+    const jaw = fore * 0.072 + pose.recoil * 0.038;
+    if (runner) {
+      forgedPlate(context, [head(-0.195, -0.938), head(-0.36, -1.117), head(-0.211, -1.095),
+        head(-0.037, -0.984)], skin, palette, size, .18, true);
+      forgedPlate(context, [head(-0.091, -0.951), head(-0.209, -1.160), head(-0.069, -1.134),
+        head(0.051, -0.994)], skin, palette, size, .18, true);
+    }
+    forgedPlate(context, [head(-0.20, -0.77), head(-0.176, -0.96), head(-0.056, -1.031),
+      head(0.10, -1.006), head(0.225, -0.927), head(0.26, -0.824), head(0.175, -0.77 + jaw),
+      head(0.04, -0.69 + jaw), head(-0.095, -0.73)], skin, palette, size, 0.32, true);
+    line(context, [head(0.26, -0.826), head(0.13, -0.800 + jaw * 0.22), head(0.022, -0.772 + jaw * 0.46)],
+      "#291e29", size * (sentry ? 0.071 : 0.045));
+    const eyes = sentry ? [[-.061,-.956,.044],[.045,-.979,.057],[.157,-.947,.037]] : [[.093,-.949,.055]];
+    for (const [u,v,radius] of eyes) {
+      const eye = head(u,v);
+      ellipse(context, ...eye, size * radius, size * radius * .71,
+        actor.windup > 0 ? "#ffedaa" : sentry ? "#ff9c60" : "#ffe498", "#3f2b34", Math.max(.7, size * .019));
+      ellipse(context, ...head(u + radius * .35, v + radius * .15), size * radius * .39, size * radius * .50, "#392a34");
+    }
+    if (lancer || boss) {
+      const hornReach = lancer ? 0.53 + pose.charge * 0.28 : 0.25;
+      forgedPlate(context, [head(-0.074, -0.94), head(-0.05, -1.065), head(hornReach, -1.13 + fore * 0.09),
+        head(0.156, -0.959)], ["#543b3d", "#b18f68", "#f1ce9c"], palette, size, 0.15, true);
+      if (boss) line(context, [head(-0.14, -0.867), head(-0.31, -1.06), head(-0.38, -1.115)],
+        skin[2], size * 0.067);
+    }
+  }
+
+  function enemy(context, camera, actor, reduced, pose, palette) {
+    const [x, y] = point(camera, actor.x, actor.y);
+    const unit = camera.unit;
+    const boss = actor.kind === "boss";
+    const runner = actor.kind === "runner";
+    const warden = actor.kind === "warden";
+    const mortar = actor.kind === "mortar";
+    const gunner = actor.kind === "sentry" || mortar;
+    const size = unit * (boss ? 1.74 : runner ? 0.82 : warden ? 1.22 : 1);
+    const creature = actor.faction === "creature";
+    const skins = creature ? creatureSkins : guardianMetals;
+    const metal = actor.flash > 0.08 ? ["#4d4046", "#c4a39b", "#fce8d4"] : skins[actor.kind] ?? skins.guard;
+    const facing = unitVector(pose.look);
+    const [fx] = facing;
+    const impact = reduced ? 0 : pose.impact;
+    const lean = pose.recoil * (gunner ? -0.10 : 0.14) + pose.charge * 0.18
+      - pose.anticipation * 0.09 - impact * 0.079 + (runner ? pose.gait * 0.14 : 0);
+    const dip = pose.breath - Math.abs(pose.stride) * (runner ? 0.25 : 0.13)
+      + pose.anticipation * (mortar || runner ? 0.105 : 0.062) + pose.charge * 0.09;
+    const base = (horizontal, vertical) => [x + horizontal * size, y + vertical * size];
+    const at = (horizontal, vertical) => base(horizontal + fx * lean, vertical + dip);
+    contactShadow(context, x, y, size, palette);
+    groundRing(context, camera, actor.x, actor.y, boss ? 0.51 : 0.29, "#fa78560e", "#f394756c", 1.1);
+    if (actor.shielded) ellipse(context, ...at(0, -0.59), unit * 0.92, unit * 1.27, "#7febff20", "#a1e8f8", 2);
+    if (warden && (actor.guarded || pose.guarded > 0.07)) {
+      context.save();
+      context.globalAlpha *= actor.guarded ? 0.6 + pose.guarded * 0.4 : pose.guarded;
+      poly(context, [at(-0.53, -0.63), at(-0.43, -1.15), at(0, -1.43),
+        at(0.43, -1.15), at(0.53, -0.63), at(0, -0.16)], "#5fdbed21", "#aef4ff", 1.4);
+      context.restore();
+    }
+    if (creature) {
+      burrowCreature(context, base, at, actor, pose, size, metal, palette, facing);
+      return;
+    }
+    legStride(context, base, at, pose.charge > 0 ? facing : unitVector(pose.travel),
+      pose, size, metal[0], metal[1], pose.charge * 0.15, actor.faction === "human");
+    if (gunner && actor.faction !== "human") pressureGunner(context, at, facing, actor, pose, size, metal, palette);
+    else compressionGuard(context, at, actor, pose, size, metal, palette, facing);
+  }
+
+  function enemyHealthHeight(actor) {
+    if (actor.faction === "human") {
+      return actor.kind === "boss" ? 2.43 : actor.kind === "runner" ? 1.16 : actor.kind === "warden" ? 1.77 : 1.48;
+    }
+    if (actor.faction === "creature" && actor.kind === "boss") return 2.14;
+    return actor.kind === "boss" ? 2.03 : actor.kind === "runner" ? 1.04 : actor.kind === "warden" ? 1.55 : 1.3;
+  }
+
+  function enemyHealth(context, camera, actor) {
+    const boss = actor.kind === "boss";
+    const [x, y] = point(camera, actor.x, actor.y, enemyHealthHeight(actor));
+    const width = camera.unit * (boss ? 1.66 : 0.85);
+    const height = boss ? 4.4 : 2.8;
+    context.fillStyle = "#171620";
+    context.fillRect(x - width / 2 - 1, y - 1, width + 2, height + 2);
+    context.fillStyle = actor.shielded ? "#a1e8f8" : boss ? "#febc8a" : "#ef866a";
+    context.fillRect(x - width / 2, y, width * clamp(actor.hp / actor.maxHp, 0, 1), height);
+    if (actor.marked) {
+      const top = y - Math.max(7, camera.unit * 0.25);
+      const marker = Math.max(3.5, camera.unit * 0.14);
+      poly(context, [[x, top - marker], [x + marker, top], [x, top + marker], [x - marker, top]],
+        "#da88f3", "#fff1fb", 1.2);
+      ellipse(context, x, top, marker * 0.21, marker * 0.21, "#44284d");
+    }
+    if (actor.gateGuard) {
+      const top = y - Math.max(8, camera.unit * 0.28);
+      const marker = Math.max(4.0, camera.unit * 0.16);
+      const badgeX = actor.marked ? x + marker * 2.5 : x;
+      poly(context, [[badgeX - marker, top - marker * 0.84], [badgeX + marker, top - marker * 0.84],
+        [badgeX + marker * 0.76, top + marker * 0.27], [badgeX, top + marker * 1.03],
+        [badgeX - marker * 0.76, top + marker * 0.27]], "#9f6038", "#fff0bb", 1.2);
+      line(context, [[badgeX, top - marker * 0.55], [badgeX, top + marker * 0.36]], "#fff0bb", 1.1);
+    }
+  }
+
+  function playerHealth(context, camera, actor, pose, elevation, enemies) {
+    const local = onSurface(camera, elevation, actor);
+    const unit = camera.unit * (camera.width < 500 ? 1.12 : 1);
+    const head = heroVisualHeight - (pose?.dashing || 0) * 0.082 - (pose?.breath || 0);
+    const [x, anchorY] = point(local, actor.x, actor.y, head * unit / camera.unit);
+    const width = Math.max(19, unit * 0.79);
+    const height = camera.width < 500 ? 3.1 : 3.8;
+    const bars = enemies.map((enemy) => {
+      const target = onSurface(camera, elevation, enemy);
+      const [barX, barY] = point(target, enemy.x, enemy.y, enemyHealthHeight(enemy));
+      return { x: barX, y: barY, half: camera.unit * (enemy.kind === "boss" ? 0.83 : 0.425),
+        space: enemy.marked || enemy.gateGuard ? 12 : 5 };
+    });
+    let y = anchorY - 5.5;
+    for (const bar of bars.sort((a, b) => b.y - a.y)) {
+      if (Math.abs(bar.x - x) < width / 2 + bar.half + 2 && y + height + 1 > bar.y - bar.space && y < bar.y + 5) {
+        y = bar.y - bar.space - height - 2;
+      }
+    }
+    const left = x - width / 2;
+    if (y < anchorY - 7.5) line(context, [[x, y + height], [x, anchorY - 1]], "#a5dfc788", 0.75);
+    context.fillStyle = "#111c24";
+    context.fillRect(left - 1, y - 1, width + 2, height + 2);
+    context.fillStyle = "#44665f";
+    context.fillRect(left, y, width, height);
+    context.fillStyle = "#aceed3";
+    context.fillRect(left, y, width * clamp(actor.hp / Math.max(1, actor.maxHp), 0, 1), height);
+  }
+
+  function projectile(context, camera, entry, reduced, elevation) {
+    if (entry.life <= 0) return;
+    const absolute = Number.isFinite(entry.absoluteZ);
+    const z = absolute ? entry.absoluteZ : surfaceHeight(elevation, entry.x, entry.y) + 0.56;
+    const [x, y] = point(camera, entry.x, entry.y, z);
+    const radius = Math.max(2.7, (entry.radius || 0.13) * camera.unit);
+    if (!reduced) {
+      const trailX = entry.x - (entry.vx || 0) * 0.08;
+      const trailY = entry.y - (entry.vy || 0) * 0.08;
+      const trailZ = absolute ? z - (entry.vz || 0) * 0.08 : surfaceHeight(elevation, trailX, trailY) + 0.56;
+      const trail = point(camera, trailX, trailY, trailZ);
+      line(context, [[x, y], trail], "#fb724c90", radius * 1.54);
+    }
+    ellipse(context, x, y, radius * 1.55, radius * 1.55, "#f8543790");
+    ellipse(context, x, y, radius, radius, "#fff1cb", "#ff9557", 1.2);
+  }
+
+  function rewardEffect(context, camera, entry, alpha) {
+    const progress = 1 - alpha;
+    const level = entry.kind === "level";
+    const color = level ? "#fff1a3" : "#e8bbff";
+    const { unit } = camera;
+    context.globalAlpha = Math.min(1, alpha * 1.6);
+    groundRing(context, camera, entry.x, entry.y, 0.35 + progress * (level ? 1.2 : 0.70),
+      level ? "#ffe58c34" : "#ba79f636", color, 1.8);
+
+    if (level) {
+      for (const [dx, dy] of [[0.37, 0.28], [-0.37, -0.28], [-0.32, 0.37], [0.32, -0.37]]) {
+        const x = entry.x + dx;
+        const y = entry.y + dy;
+        line(context, [point(camera, x, y, progress * 0.58),
+          point(camera, x, y, 1.68 + progress * 0.6)], "#ffd05862", unit * 0.075);
+        line(context, [point(camera, x, y, 0.37 + progress * 0.7),
+          point(camera, x, y, 1.50 + progress * 0.7)], color, Math.max(1, unit * 0.025));
+      }
+    }
+
+    const [x, y] = point(camera, entry.x, entry.y, (level ? 1.22 : 0.58) + progress * 0.92);
+    const halfSize = unit * (level ? 0.18 : 0.16);
+    poly(context, [[x, y - halfSize * 1.38], [x + halfSize, y], [x, y + halfSize * 1.38],
+      [x - halfSize, y]], level ? "#ffe29046" : "#bc83ef9a", color, 1.4);
+    for (let index = 0; index < 6; index++) {
+      const theta = index / 6 * tau;
+      const radius = unit * (0.32 + progress * 0.43);
+      ellipse(context, x + Math.cos(theta) * radius, y + Math.sin(theta) * radius * 0.58, 1.6, 1.6, color);
+    }
+  }
+
+  function effect(context, camera, entry, reduced) {
+    const alpha = clamp(entry.life / (entry.maxLife || 0.26), 0, 1);
+    if (alpha === 0) return;
+    const [x, y] = point(camera, entry.x, entry.y, 0.46);
+    const unit = camera.unit;
+    context.save();
+    context.globalAlpha = alpha;
+    if (entry.kind === "slash") {
+      const angle = Math.atan2(entry.facingY ?? 0, entry.facingX ?? 1);
+      const arc = [];
+      for (let part = 0; part <= 10; part++) {
+        const theta = angle - 0.91 + part * 0.182;
+        const radius = 0.82 + (1 - alpha) * 0.57;
+        arc.push(point(camera, entry.x + Math.cos(theta) * radius, entry.y + Math.sin(theta) * radius, 0.50));
+      }
+      if (!reduced) line(context, arc, "#58d3b06c", unit * 0.23);
+      line(context, arc, "#d8fff0", Math.max(1.6, unit * 0.069));
+    } else if (entry.kind === "dash") {
+      groundRing(context, camera, entry.x, entry.y, 0.35 + (1 - alpha) * 0.4, "#9feac624", "#b8ffdb", 1.2);
+    } else if (entry.kind === "danger") {
+      groundRing(context, camera, entry.x, entry.y, 0.6 + (1 - alpha) * 0.67, "#f8905a40", "#ffad85", 1.9);
+    } else if (entry.kind === "level" || entry.kind === "loot") {
+      rewardEffect(context, camera, entry, alpha);
+    } else if (entry.kind === "charge") {
+      dangerRing(context, camera, entry.x, entry.y, 0.42 + alpha * 0.68, "#fb573622", "#ffc296", 1.7, true);
+    } else if (entry.kind === "hit" || entry.kind === "pickup" || entry.kind === "fall") {
+      const color = entry.kind === "hit" ? "#ffe1a5" : entry.kind === "fall" ? "#d8a492" : "#a3faff";
+      const count = reduced ? 4 : entry.kind === "fall" ? 10 : 7;
+      if (!reduced && entry.kind === "hit") ellipse(context, x, y, unit * 0.19, unit * 0.15, "#fff2cf");
+      if (entry.kind === "fall") groundRing(context, camera, entry.x, entry.y,
+        0.30 + (1 - alpha) * 0.38, "#60444144", "#b77464", 1.15);
+      for (let index = 0; index < count; index++) {
+        const theta = index / count * tau;
+        const near = (0.15 + (1 - alpha) * 0.21) * unit;
+        const far = (0.28 + (1 - alpha) * 0.42) * unit;
+        const ray = (radius) => [x + Math.cos(theta) * radius, y + Math.sin(theta) * radius * 0.74];
+        line(context, [ray(near), ray(far)], color, 1.45);
+      }
+    }
+    context.restore();
+  }
+
+  function shelterBrushes(palette, seconds, reduced) {
+    return { point, rectangle, poly, line, ellipse, contactShadow, palette, seconds, reduced };
+  }
+
+  function isInView(camera, entry, side, above, below) {
+    const unit = camera.unit;
+    const x = camera.x + (entry.x - entry.y) * unit;
+    const y = camera.y + (entry.x + entry.y) * unit * slope;
+    return x + side * unit >= -2 && x - side * unit <= camera.width + 2
+      && y + below * unit >= -2 && y - above * unit <= camera.height + 2;
+  }
+
+  function drawArenaObjects(context, camera, objects, state, palette, theme, seconds, reduced, playerHeight, brushes) {
+    for (const object of objects) {
+      const height = object.height ?? 0;
+      const local = raisedCamera(camera, height);
+      switch (object.type) {
+        case "obstacle": {
+          const span = (object.w + object.h) * 0.5;
+          if (!object.fixture && !isInView(local, object, span + 0.8, span * slope + 1.8, span * slope + 0.6)) break;
+          const cutaway = obscuresPlayer(local, object, state.player, palette, playerHeight - height);
+          obstacle(context, local, object, palette, seconds, theme, cutaway, reduced);
+          break;
+        }
+        case "story": storyApparatus(context, local, object, palette, seconds, reduced); break;
+        case "station": window.TowerShelter.station(context, local, object, brushes); break;
+        case "item": item(context, local, object, seconds, palette); break;
+        case "enemy":
+          if (isInView(local, object, 3.2, 3.6, 1.5)) enemy(context, local, object, reduced, object.pose, palette);
+          break;
+        case "player": player(context, local, object, seconds, reduced, object.pose, palette); break;
+      }
+    }
+  }
+
+  function drawArenaCues(context, camera, state, enemies, elevation, seconds, layer) {
+    const elevated = (entry) => surfaceHeight(elevation, entry.x, entry.y) > 0.04;
+    const matches = (entry) => Boolean(layer) === elevated(entry);
+    const hazards = layer === undefined ? state.hazardTiles : state.hazardTiles?.filter(matches);
+    const targets = layer === undefined ? state.bossTargets : state.bossTargets?.filter(matches);
+    const shells = layer === undefined ? state.mortarTargets : state.mortarTargets?.filter(matches);
+    const zone = state.holdZone;
+    if (zone && (layer === undefined || matches(zone))) holdArea(context, onSurface(camera, elevation, zone), zone);
+    hazardTiles(context, camera, hazards, seconds, elevation);
+    bossTargets(context, camera, targets, seconds, elevation);
+    bossTargets(context, camera, shells, seconds, elevation);
+    for (const enemy of enemies) {
+      if (layer === undefined || (enemy.kind === "sentry" ? layer === 1 : matches(enemy))) {
+        enemyTelegraph(context, camera, enemy, elevation);
+      }
+    }
+  }
+
+  function draw(canvas, state, now = performance.now()) {
+    const bounds = canvas.getBoundingClientRect();
+    if (!(bounds.width > 0 && bounds.height > 0)) return;
+    const ratio = clamp(window.devicePixelRatio || 1, 1, 2);
+    const pixelWidth = Math.round(bounds.width * ratio);
+    const pixelHeight = Math.round(bounds.height * ratio);
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+      canvas.width = pixelWidth;
+      canvas.height = pixelHeight;
+    }
+    const context = canvas.getContext("2d");
+    context.setTransform(pixelWidth / bounds.width, 0, 0, pixelHeight / bounds.height, 0, 0);
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    const reduced = state.reducedMotion === true || motionPreference?.matches === true;
+    const story = state.mode === "story";
+    const quietDoor = state.mode === "shelter" && !state.landing;
+    if (quietDoor || state.revealed === false || !state.map) {
+      frameCameras.delete(canvas);
+      motionFrames.delete(canvas);
+      sealedRoom(context, bounds.width, bounds.height, state, reduced || story, quietDoor);
+      return;
+    }
+    const fallback = fallbackThemes[(Math.max(1, state.floor || 1) - 1) % fallbackThemes.length];
+    const theme = Object.hasOwn(biomes, state.theme) ? state.theme : fallback;
+    const palette = biomes[theme];
+    const camera = frameCamera(canvas, bounds, state, theme, now, reduced);
+    const motion = beginMotionFrame(canvas, state, now, reduced);
+    const seconds = reduced ? 0 : now / 1000;
+    const elevation = state.elevation;
+    const playerHeight = state.player ? surfaceHeight(elevation, state.player.x, state.player.y) : 0;
+    const enemies = state.combatComplete || story ? [] : (state.enemies ?? []).filter((entry) => entry.hp > 0);
+    const brushes = state.shelter ? shelterBrushes(palette, seconds, reduced) : null;
+    const objects = [
+      ...(state.obstacles ?? []).filter((entry) => !entry.shelterDecor && !entry.gateDecor)
+        .map((entry) => ({ ...entry, type: "obstacle" })),
+      ...(state.items ?? []).map((entry) => ({ ...entry, type: "item" })),
+      ...(state.stations ?? []).map((entry) => ({ ...entry, type: "station" })),
+      ...enemies.map((entry, index) => ({ ...entry, type: "enemy", pose: actorPose(motion, entry, entry.id ?? index) })),
+    ];
+    if (state.gateMarker) objects.push({ ...state.gateMarker, type: "item", kind: "exit" });
+    if (state.storyPoint) {
+      const marker = state.storyPoint;
+      objects.push({ ...marker, type: "story", x: marker.x - (marker.atExit ? 0.6 : 0),
+        y: marker.y - (marker.atExit ? 0.95 : 0) });
+    }
+    if (state.player) objects.push({ ...state.player, type: "player", pose: actorPose(motion, state.player, "player") });
+    const painterDepth = (entry) => entry.x + entry.y + (entry.kind === "exit" ? 0.64 : 0);
+    objects.sort((a, b) => painterDepth(a) - painterDepth(b));
+    background(context, canvas, camera, palette, theme, seconds, state.hazard, reduced);
+    paintTerrain(context, canvas, camera, state, palette, theme, ratio);
+    drawTerrain(context, camera, state.terrain, seconds, reduced, elevation, elevation ? 0 : undefined);
+    clinicPipes(context, camera, state, palette);
+    if (brushes) window.TowerShelter.dress(context, camera, state, brushes);
+    paintGateMarkings(context, camera, state, palette, elevation, elevation ? 0 : undefined);
+    perimeterMotion(context, camera, state, palette, theme, seconds, reduced);
+    stageArrival(context, camera, state, palette, theme, reduced);
+    let front = objects;
+    if (elevation) {
+      const rear = [];
+      front = [];
+      let playerCover;
+      for (const object of objects) {
+        object.height = surfaceHeight(elevation, object.x, object.y);
+        if (object.type === "player") {
+          const { behind, cutaway } = playerTerraceCoverage(camera, elevation, object);
+          (behind ? rear : front).push(object);
+          playerCover = cutaway;
+        } else {
+          (terraceCover(camera, elevation, object) ? rear : front).push(object);
+        }
+      }
+      terraceShadows(context, camera, elevation);
+      drawArenaCues(context, camera, state, enemies, elevation, seconds, 0);
+      drawArenaObjects(context, camera, rear, state, palette, theme, seconds, reduced, playerHeight, brushes);
+      paintTerraces(context, canvas, camera, state, palette, theme, ratio, playerCover);
+      drawTerrain(context, camera, state.terrain, seconds, reduced, elevation, 1);
+      paintGateMarkings(context, camera, state, palette, elevation, 1);
+    }
+    drawArenaCues(context, camera, state, enemies, elevation, seconds, elevation ? 1 : undefined);
+    drawArenaObjects(context, camera, front, state, palette, theme, seconds, reduced, playerHeight, brushes);
+    for (const entry of state.projectiles ?? []) projectile(context, camera, entry, reduced, elevation);
+    for (const entry of enemies) enemyHealth(context, onSurface(camera, elevation, entry), entry);
+    if (state.mode === "playing" && state.player?.hp > 0) {
+      playerHealth(context, camera, state.player, motion.poses.get("player"), elevation, enemies);
+    }
+    const swingVisible = state.player && (state.player.swingLife ?? state.player.attackFlash) > 0;
+    for (const entry of state.effects ?? []) {
+      if (entry.kind !== "slash" || !swingVisible) effect(context, onSurface(camera, elevation, entry), entry, reduced);
+    }
+    if (state.mode === "playing") objectiveLabels(context, camera, state);
+    if (story) storyLighting(context, camera, state);
+  }
+
+  function screenToWorld(canvas, clientX, clientY, state) {
+    const bounds = canvas.getBoundingClientRect();
+    if (!(bounds.width > 0 && bounds.height > 0) || state.revealed === false || !state.map) return { x: 0, y: 0 };
+    const elevation = state.elevation;
+    const painted = frameCameras.get(canvas);
+    const currentFrame = painted?.camera.width === bounds.width && painted.camera.height === bounds.height
+      && painted.mapWidth === state.map.width && painted.mapHeight === state.map.height
+      && painted.floor === state.floor && painted.elevation === elevation;
+    const camera = currentFrame ? painted.camera : cameraFor(bounds.width, bounds.height, state.map, state.player, elevation);
+    const ground = basePlanePoint(camera, clientX - bounds.left, clientY - bounds.top);
+    if (!elevation) return ground;
+    const { x, y } = surfaceHit(elevation, ground, true);
+    return { x, y };
+  }
+
+  window.TowerRenderer = { draw, screenToWorld };
+})();
