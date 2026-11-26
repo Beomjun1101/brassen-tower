@@ -193,9 +193,6 @@
     "heating-signal": () => radio("라온", "난방 중계기가 살아났어요. 아래에선 어느 관이 데워졌나 확인해 볼게요."),
     "test-signal": () => radio("라온", "시험 공급이 끝났어요. 하층 보고가 계기판에 도착했어요."),
     "handoff-signal": () => radio("라온", "배분실까지 한 구간 남았어요. 자동 차단기부터 확인해요."),
-    "iron-gate-open": ({ reservoir } = {}) => reservoir === "district"
-      ? radio("진료소", "아래 계량기가 움직여요. 밤새 멈춰 있던 바늘이요.")
-      : radio("정비조", "비축 온수로 관문의 얼음을 녹였어요."),
     "return-line-open": () => radio("진료소", "연결됐어요. 시험 온수 받을게요."),
     "shift-log": ({ ledger } = {}) => ledger === "public"
       ? radio("야간조", "빠진 교대 명단이에요. 연락이 끊긴 사람들이죠.")
@@ -210,10 +207,27 @@
   };
 
   const interludes = {
-    9: {
-      art: "pressure", chapter: "9층 · 주철 관문", title: "물이 한 층 더 오른다",
-      device: "valve", prompt: "관문 계량기 확인", cue: "iron-gate-open", supply: "reservoir", optional: true,
-      beats: (choices) => [cues["iron-gate-open"](choices), radio("라온", "수리조는 복귀 회선을 따라갈게요.")],
+    10: {
+      art: "shelter", chapter: "10층 · 성당", title: "문 앞의 명단",
+      device: "guard", prompt: "성당의 문지기와 이야기하기",
+      beats: ({ reservoir } = {}) => [
+        room("성당 문지기", reservoir === "district" ? "아래 병실이 따뜻해졌다고 연락이 왔어요. 그래도 환자를 옮기라는 명령은 취소되지 않았어요."
+          : reservoir === "reserve" ? "관문이 녹자마자 환자들이 출발했어요. 그런데 위쪽 문 앞에서 돌려보냈답니다."
+            : "진료소 환자들이 위로 올라오다가 봉쇄초소에서 돌려보내졌어요."),
+        player("빈 방은 있는데 왜 돌려보내죠?"),
+        room("성당 문지기", "통과 명단에 이름이 없대요. 15층 봉쇄기가 환자 통로와 그 명단을 보관한 창고를 함께 잠그고 있어요."),
+      ],
+    },
+    20: {
+      id: "lower-gate-warning", art: "pressure", chapter: "20층 · 신전", title: "뒤에서 잠기는 문",
+      device: "guard", prompt: "초소에서 내려온 경비와 이야기하기",
+      beats: ({ inspection } = {}) => [
+        room("초소 경비", inspection === "escort" ? "당신이 연 길로 환자들이 지나갔어요. 곧바로 그 길을 다시 잠그라는 명령이 떨어졌고요."
+          : inspection === "evidence" ? "가져온 문서에 찍힌 발신부호를 알아요. 방금도 같은 사람이 하층 출구를 닫으라고 했어요."
+            : "위층에서 하층으로 돌아가는 문을 모두 잠그라고 했어요. 아직 아래에 사람이 남았는데도요."),
+        player("당신이 받은 명령은 어디서 왔죠?"),
+        room("초소 경비", "29층입니다. 거기 당직병이 수동문 열쇠를 갖고 있어요. 지금 올라가지 않으면 그 사람도 입을 닫을 겁니다."),
+      ],
     },
     29: {
       art: "pressure", chapter: "29층 · 복귀 회선", title: "첫 통화",
@@ -253,10 +267,6 @@
     art: "memory", chapter: floor + "층 · 정비 기록", title, prompt, device, beats, optional: true,
   });
   const shelterNotes = {
-    20: note(20, "보온포 세 장", "진료소 소식 확인", "radio", ({ reservoir } = {}) => [
-      reservoir === "district" ? radio("진료소", "보내 준 온수로 아이들 병실을 다시 열었어요.")
-        : radio("진료소", "남은 세 사람은 난로 옆으로 옮겼어요. 회선이 열리면 바로 연락 주세요."),
-    ]),
     95: note(95, "낡은 분배도", "배관 도면 확인", "ledger", () => [
       terminal("정비 도면", "한파 시 하층 난방관으로 유량 1/3 전환."),
       player("여기 표시가 긁혔어요. 나중에 붙인 판엔 생산관이 먼저라고 쓰여 있어요."),
@@ -291,6 +301,28 @@
   });
 
   const operations = {
+    7: ({ reservoir } = {}) => reservoir === "district"
+      ? fieldOperation(7, "열이 닿은 병실", "switch", "valve", "진료소 환류 밸브",
+        "진료소에 보낸 온수가 되돌아오고 있습니다. 환류 밸브를 열어 끊기지 않게 하세요.",
+        "온수가 순환합니다. 아래 진료소에서 아이들 병실을 다시 열었습니다.")
+      : fieldOperation(7, "관문 뒤에서 켜진 불", "switch", "relay", "환자 이동로 유도등",
+        "차갑던 환자 이동로에 보조 전원이 들어왔습니다. 유도등을 켜 후송대를 부르세요.",
+        "이동로를 밝혔습니다. 진료소는 후송대를 보냈지만, 15층에서 통과 허가를 내주지 않고 있습니다."),
+    9: ({ reservoir } = {}) => fieldOperation(9, "주철 관문 안쪽", "switch", "valve", "관문 보조 손잡이",
+      "관문 경비가 물러났습니다. 안쪽 손잡이로 남은 길을 여세요.",
+      reservoir === "district" ? "관문이 열렸습니다. 진료소에 온수를 보내고도 수동 통로를 살려냈습니다."
+        : "관문이 열렸습니다. 벽의 발급기에 새 통행 명단이 꽂혀 있습니다."),
+    12: () => fieldOperation(12, "명단에 붙은 가격", "lift", "cartridge", "검문 발급기 원본 회수",
+      "발급기가 원본을 내보냈습니다. 경비가 돌아오기 전에 가져가세요.", "발급기 원본을 들었습니다.",
+      { kind: "fit", device: "ledger", label: "서로 다른 통행증 대조", task: "대조기에 원본을 넣고 환자 명단과 비교하세요.",
+        done: "같은 자리가 두 번 팔렸습니다. 돈을 낸 이름만 최종 명단에 남았습니다." }),
+    17: ({ inspection } = {}) => inspection === "escort"
+      ? fieldOperation(17, "마지막 들것", "hold", "pressure", "후송문 열린 상태 유지",
+        "후송대 마지막 들것이 아직 문 안쪽에 있습니다. 발판 위에 서서 문을 열어 두세요.",
+        "마지막 들것이 지나갔습니다. 19층 초소가 통로를 다시 닫으려 합니다.")
+      : fieldOperation(17, "위에서 온 도장", "switch", "relay", "압수 기록을 성당으로 송신",
+        "검문 기록을 성당에 보내세요. 봉쇄 명령의 발신지가 찍혀 있습니다.",
+        "성당이 사본을 받았습니다. 실제로 명령을 내린 곳은 19층 검문 회선보다 더 위입니다."),
     19: () => fieldOperation(19, "봉쇄 명령의 발신지", "switch", "relay", "검문 채널 도청",
       "경비가 쓰던 중계기의 봉인을 풀어 누가 폐쇄 명령을 냈는지 확인하세요.", "폐쇄 명령은 사고 신고 전에 내려왔습니다. 더 위에 있는 경비 초소에서 발신됐습니다."),
     30: ({ collapse }) => collapse === "records"

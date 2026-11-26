@@ -625,11 +625,11 @@
       return { scene: story.scenes[chapter], chapter, setting };
     }
     if (floor === content.floorCount) return null;
-    const seen = run.scenesSeen.includes(floor);
     const operation = story.operations[floor]?.(run.storyChoices);
-    if (operation && !seen) return operation;
+    if (operation && !run.scenesSeen.includes(operation.scene.id ?? floor)) return operation;
     const scene = story.interludes[floor] ?? story.shelterNotes[floor];
     if (!scene) return null;
+    const seen = run.scenesSeen.includes(scene.id ?? floor);
     if (seen && !content.isShelterFloor(floor)) return null;
     return { scene, setting: seen ? "read" : undefined };
   }
@@ -659,7 +659,7 @@
     hideRadio();
     renderFloorSteps();
     enterPlayableScene();
-    if (state.storyPoint?.active && !startIncident(state.storyPoint)) showRadio(encounter.scene.cue);
+    if (state.storyPoint?.active) activateStoryPoint(state.storyPoint);
   }
 
   function hideRadio() {
@@ -677,6 +677,22 @@
     setText("story-radio-line", cue.line);
     audio.deviceSignal("radio");
     radioUntil = performance.now() + Math.max(4100, cue.line.length * 120);
+  }
+
+  function activateStoryPoint(marker) {
+    const physical = startIncident(marker);
+    if (physical) hideRadio();
+    else showRadio(marker.scene.cue);
+    if (state.floor <= previewFloorLimit && !marker.scene.optional) {
+      notify("이야기 · " + marker.scene.title, 2800);
+    }
+    return physical;
+  }
+
+  function rememberStoryPoint(point) {
+    if (point.chapter || point.atExit) return;
+    const id = point.scene.id ?? state.floor;
+    if (!run.scenesSeen.includes(id)) run.scenesSeen.push(id);
   }
 
   function applyStoryChoice(chapter, choice) {
@@ -788,7 +804,7 @@
     incident.task = result;
     anchor.setting = point.choice ?? "read";
     anchor.triggeredAt = point.triggeredAt;
-    if (!anchor.chapter && !run.scenesSeen.includes(state.floor)) run.scenesSeen.push(state.floor);
+    rememberStoryPoint(anchor);
     audio.deviceSignal(point.device);
     addEffect("loot", point, 0.75);
     notify(result, 2800);
@@ -1084,7 +1100,8 @@
       const { x, y, radius } = state.holdZone;
       mapPolygon(context, shape(x - radius / 2, y - radius / 2, radius, radius), "#4cad99", "#9cf7df");
     }
-    for (const marker of state.incident?.points ?? []) {
+    const storyMarkers = state.incident?.points ?? (state.storyPoint ? [state.storyPoint] : []);
+    for (const marker of storyMarkers) {
       if (!marker.active) continue;
       const [mx, my] = point(marker.x, marker.y);
       mapPolygon(context, [[mx, my - 4], [mx + 4, my], [mx, my + 4], [mx - 4, my]], "#edbb79", "#2e261a");
@@ -1481,7 +1498,7 @@
       settleCombat();
     }
     showScene(point, () => {
-      if (!point.chapter && !point.atExit) run.scenesSeen.push(state.floor);
+      rememberStoryPoint(point);
       if (point.chapter === "commission") enterFloor(1, state.player.hp);
       else if (state.shelter) {
         point.setting ??= "read";
@@ -1648,16 +1665,16 @@
       return;
     }
     if (station.kind === "departure") {
-      if (!adminRun && state.floor >= previewFloorLimit && run.previewComplete) {
-        showPreviewComplete();
-        return;
-      }
       if (state.incident && !state.incident.complete) {
         notify(state.incident.task, 1800);
         return;
       }
       if (state.storyPoint?.active && !state.storyPoint.scene.optional) {
         notify(state.storyPoint.scene.prompt + " · 출발 전에 확인하세요.", 1600);
+        return;
+      }
+      if (!adminRun && state.floor >= previewFloorLimit && run.previewComplete) {
+        showPreviewComplete();
         return;
       }
       run.cleared = state.floor;
@@ -2312,14 +2329,7 @@
       if (state.storyPoint) {
         const marker = state.storyPoint;
         marker.active = true;
-        if (marker.scene.supply) {
-          marker.setting = run.storyChoices[marker.scene.supply];
-          marker.triggeredAt = marker.setting ? 0 : undefined;
-        }
-        if (!startIncident(marker)) {
-          showRadio(marker.scene.cue);
-          if (marker.scene.optional) state.finishAt = state.elapsed + 2.4;
-        }
+        if (!activateStoryPoint(marker) && marker.scene.optional) state.finishAt = state.elapsed + 2.4;
       } else {
         state.gateMarker.active = true;
         state.gateMarker.openSince = state.elapsed;
@@ -2446,10 +2456,11 @@
       };
     });
     const reward = trial ? " · " + trial + " 금화 +" + challengeGold : "";
+    const storyResult = state.floor <= previewFloorLimit && state.incident?.complete ? state.incident.task + "\n" : "";
     panel({
       kicker: state.floor + "층 통과",
       title: "보상 선택",
-      copy: (xp ? "목표 달성 +" + xp + " XP" + reward + " · " : "") +
+      copy: storyResult + (xp ? "목표 달성 +" + xp + " XP" + reward + " · " : "") +
         "보유 금화 " + run.gold + (gains.length ? "\n레벨 상승 · " + gains.join(" · ") : ""),
       options,
       primary: "보상 받기",
@@ -2506,7 +2517,8 @@
     run.previewComplete = true;
     saveCheckpoint(state.floor, state.player.hp);
     panel({ kicker: "체험판 · " + previewFloorLimit + "층", title: "첫 구간 등반 완료",
-      copy: "진행 기록을 저장했습니다. 시작 화면에서 이어하면 마지막 쉼터로 돌아갑니다.",
+      copy: (run.scenesSeen.includes("lower-gate-warning") ? "하층으로 돌아가는 문이 잠겼습니다. 명령은 29층에서 내려왔습니다.\n" : "") +
+        "진행 기록을 저장했습니다. 시작 화면에서 이어하면 마지막 쉼터로 돌아갑니다.",
       primary: "시작 화면으로", activate: () => setupTitle() });
   }
 

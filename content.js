@@ -534,6 +534,7 @@
     forge: "가압 장치를 안정화하세요.",
   };
   const storyBossFloors = new Set([9, 19, 29, 49, 89, 169, 229, 329, 489, 829, 1009, 1199, 1329, floorCount]);
+  const storyOperationFloors = new Set([7, 12, 17]);
 
   const obstacleMargin = 0.46;
   const terraceHeight = 1.45;
@@ -1354,7 +1355,8 @@
       width,
       height,
       elevation,
-      storySocket: storyBossFloors.has(floor) ? { x: 30.7, y: 16.3 } : null,
+      storySocket: storyBossFloors.has(floor) ? { x: 30.7, y: 16.3 }
+        : storyOperationFloors.has(floor) ? { x: 30.7, y: foldY(terrace && placement === 1 ? 9.35 : 7.15) } : null,
       spawn: { x: template.spawn[0], y: foldY(template.spawn[1]) },
       hazard: variation.hazard,
       timeLimit: variation.timeLimit,
