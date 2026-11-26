@@ -144,31 +144,114 @@
     }, floor);
   }
 
-  function create(floor) {
-    const visit = Math.floor((floor - 1) / 5);
-    if (floor >= 35) return createRecess(floor, visit);
+  function earlyVariation(floor, plan) {
+    if (!plan || floor < 5 || floor > 20 || floor % 5 !== 0) return undefined;
+    const bounded = (value) => Number.isFinite(value) ? Math.max(-1, Math.min(1, value)) : 0;
+    const { structureIndex, widthOffset, depthOffset, laneBias } = plan;
+    if (![structureIndex, widthOffset, depthOffset, laneBias].some(Number.isFinite)) return undefined;
+    return {
+      width: Math.round(bounded(widthOffset)), depth: Math.round(bounded(depthOffset)), lane: bounded(laneBias),
+      structure: Number.isInteger(structureIndex) ? Math.max(0, Math.min(3, structureIndex)) : 0,
+    };
+  }
+
+  function openShelterPoint(room, x, y, radius) {
+    if (x < radius || y < radius || x > room.width - radius || y > room.height - radius) return false;
+    return room.obstacles.every((entry) => {
+      const gapX = Math.max(0, Math.abs(x - entry.x) - entry.w / 2);
+      const gapY = Math.max(0, Math.abs(y - entry.y) - entry.h / 2);
+      return gapX * gapX + gapY * gapY >= radius * radius;
+    });
+  }
+
+  function walkableShelterPoints(room, start) {
+    const step = .32;
+    const points = [{ x: start.x, y: start.y, row: 0, col: 0 }];
+    const tested = new Set(["0,0"]);
+    for (let index = 0; index < points.length; index++) {
+      const from = points[index];
+      for (const [dx, dy] of [[1, 0], [0, -1], [0, 1], [-1, 0]]) {
+        const row = from.row + dy, col = from.col + dx;
+        const id = `${col},${row}`;
+        if (tested.has(id)) continue;
+        const x = start.x + col * step, y = start.y + row * step;
+        if (!openShelterPoint(room, x, y, .34)) {
+          tested.add(id);
+          continue;
+        }
+        if (!openShelterPoint(room, (from.x + x) / 2, (from.y + y) / 2, .34)) continue;
+        tested.add(id);
+        points.push({ x, y, row, col, from });
+      }
+    }
+    return points;
+  }
+
+  function validatedShelterPath(room, variation) {
+    const { spawn, storySocket, stations } = room;
+    if (!openShelterPoint(room, spawn.x, spawn.y, .34) || !openShelterPoint(room, storySocket.x, storySocket.y, .47)) return undefined;
+    const departure = stations.find((entry) => entry.kind === "departure");
+    const reachable = walkableShelterPoints(room, spawn);
+    const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+    if (!reachable.some((point) => distance(point, storySocket) <= .64) ||
+      !stations.every((station) => reachable.some((point) => distance(point, station) <= 1.31))) return undefined;
+    const closest = (points, target) => points.reduce((best, point) => distance(point, target) < distance(best, target) ? point : best);
+    const lane = closest(reachable, { x: room.width * (.38 + variation.structure * .057),
+      y: room.height * (.49 + variation.structure % 2 * .14) + variation.lane * .60 });
+    const endpoint = closest(walkableShelterPoints(room, lane), departure);
+    const trace = (point) => {
+      const path = [];
+      for (let node = point; node; node = node.from) path.unshift({ x: node.x, y: node.y });
+      return path;
+    };
+    const path = [...trace(lane), ...trace(endpoint).slice(1)];
+    return path.filter((point, index) => {
+      const previous = path[index - 1], next = path[index + 1];
+      if (!previous || !next) return true;
+      return Math.abs((point.x - previous.x) * (next.y - point.y) - (point.y - previous.y) * (next.x - point.x)) > .0001;
+    });
+  }
+
+  function createSettlement(floor, visit, variation) {
     const inhabited = true;
     const room = settlements[visit % settlements.length];
-    const { width, height, title, theme, fixture, layout } = room;
+    const { title, theme, fixture, layout } = room;
+    const width = room.width + (variation?.width ?? 0);
+    const height = room.height + (variation?.depth ?? 0);
+    const shift = variation ? (variation.structure - 1.5) * .18 : 0;
+    const lane = variation?.lane ?? 0;
     const landmark = { well: "cistern", forge: "heater", ward: "medcase", market: "stall", supply: "depot" }[layout];
     const station = (kind, x, y, caption) => ({ x, y, kind, caption, inhabited,
       style: layout, cloth: room.cloth, trim: room.trim, variant: visit % settlements.length });
     const stations = [
       station("rest", width * 0.25, height * (layout === "ward" ? 0.43 : 0.36), "휴식"),
       station("workbench", width * 0.67, height * (layout === "market" ? 0.70 : 0.33), "작업대"),
-      station("departure", width - 2.05, height * 0.62, "위층으로"),
+      station("departure", width - 2.05, height * 0.62 + lane * .28, "위층으로"),
     ];
     const decor = [
-      { x: width * 0.23, y: 1.42, w: 2.65, h: 1.35, design: "house" },
-      { x: width * 0.67, y: 1.42, w: layout === "ward" ? 3.45 : 2.9, h: 1.35, design: "house" },
+      { x: width * 0.23 + shift, y: 1.42, w: 2.65, h: 1.35, design: "house" },
+      { x: width * 0.67 - shift, y: 1.42, w: layout === "ward" ? 3.45 : 2.9, h: 1.35, design: "house" },
       { x: width * 0.65, y: height - 1.2, w: layout === "supply" ? 2.4 : 1.5, h: 0.9, design: landmark ?? "supplies" },
     ];
     const obstacles = decor.map((entry) => ({ ...entry, shelterDecor: true }));
     return addVillageServices({
       title, theme, fixture, width, height, inhabited, layout, cloth: room.cloth, trim: room.trim,
-      spawn: { x: 2.75, y: height - 2.2 }, storySocket: { x: width * 0.48, y: height * 0.48 },
+      spawn: { x: 2.75 + shift, y: height - 2.2 + lane * .26 },
+      storySocket: { x: width * 0.48 + lane * .45, y: height * 0.48 + shift },
       stations, obstacles, decor, terrain: [], items: [], enemies: [], rolls: [],
     }, floor);
+  }
+
+  function create(floor, plan) {
+    const visit = Math.floor((floor - 1) / 5);
+    if (floor >= 35) return createRecess(floor, visit);
+    const variation = earlyVariation(floor, plan);
+    if (variation) {
+      const room = createSettlement(floor, visit, variation);
+      const paths = validatedShelterPath(room, variation);
+      if (paths) return { ...room, paths };
+    }
+    return createSettlement(floor, visit);
   }
 
   function box(context, camera, art, x, y, w, h, z, base, shade, top, edge = null, lift = 0) {

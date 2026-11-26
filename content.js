@@ -2,6 +2,7 @@
   "use strict";
 
   const floorCount = 1332;
+  const mapPlanningLimit = 20;
   const shelterInterval = 5;
   const frontierFloor = 35;
   const floorKinds = ["combat", "relay", "boss", "hold", "hunt", "escape"];
@@ -910,6 +911,7 @@
     const scaleY = targetHeight / stage.height;
     const shapes = [...stage.terrain, ...stage.obstacles, ...(stage.elevation?.decks ?? []), ...(stage.elevation?.stairs ?? [])];
     const points = [stage.spawn, ...stage.items, ...stage.enemies, ...stage.wave, ...stage.reinforcements];
+    if (stage.storySocket) points.push(stage.storySocket);
     if (stage.hold) {
       stage.hold.radius *= Math.min(scaleX, scaleY);
       points.push(stage.hold);
@@ -937,6 +939,73 @@
     }
     stage.width = targetWidth;
     stage.height = targetHeight;
+  }
+
+  function mapProposal(planning, context) {
+    const manual = Number.isInteger(planning);
+    if (!manual && !Number.isSafeInteger(planning?.seed)) return null;
+    const plan = manual ? { structureIndex: planning } : window.BrassenMapPlanner?.plan?.({ ...context, seed: planning?.seed });
+    if (!plan) return null;
+    const structureIndex = Number.isInteger(plan.structureIndex) && plan.structureIndex >= 0 && plan.structureIndex < floorPlans.length
+      ? plan.structureIndex : null;
+    if (manual && structureIndex === null) return null;
+    const manualSizes = [[-1, 1], [0, 2], [2, -1], [1, 0]];
+    const [widthOffset, depthOffset] = manual ? manualSizes[structureIndex] : [plan.widthOffset, plan.depthOffset];
+    const boundedOffset = (value) => Number.isFinite(value) ? Math.max(-2, Math.min(2, Math.round(value))) : 0;
+    return { structureIndex, widthOffset: boundedOffset(widthOffset), depthOffset: boundedOffset(depthOffset),
+      laneBias: Math.max(-1, Math.min(1, boundedOffset(plan.laneBias))) };
+  }
+
+  function reachableLayout(stage) {
+    const { width, height, elevation, terrain, obstacles, spawn } = stage;
+    const spacing = 0.8;
+    const radius = 0.55;
+    const columns = Math.floor(width / spacing);
+    const rows = Math.floor(height / spacing);
+    const cells = columns * rows;
+    const reached = new Uint8Array(cells);
+    const queue = [];
+    const open = (x, y, clearance) => x >= clearance && y >= clearance && x <= width - clearance && y <= height - clearance
+      && isDry(elevation, terrain, x, y, clearance)
+      && obstacles.every((wall) => {
+        const dx = Math.max(0, Math.abs(x - wall.x) - wall.w / 2);
+        const dy = Math.max(0, Math.abs(y - wall.y) - wall.h / 2);
+        return dx * dx + dy * dy >= clearance * clearance;
+      });
+    const point = (index) => ({ x: (index % columns + 0.5) * spacing, y: (Math.floor(index / columns) + 0.5) * spacing });
+    const link = (from, to, clearance) => open(to.x, to.y, clearance)
+      && open((from.x + to.x) / 2, (from.y + to.y) / 2, clearance)
+      && canTraverse(elevation, from.x, from.y, to.x, to.y);
+    const nearby = ({ x, y }, accept) => {
+      const col = Math.floor(x / spacing);
+      const row = Math.floor(y / spacing);
+      for (let r = Math.max(0, row - 1); r <= Math.min(rows - 1, row + 1); r++) {
+        for (let c = Math.max(0, col - 1); c <= Math.min(columns - 1, col + 1); c++) {
+          const index = r * columns + c;
+          if (accept(index, point(index))) return true;
+        }
+      }
+      return false;
+    };
+    const enqueue = (index) => { reached[index] = 1; queue.push(index); };
+    nearby(spawn, (index, next) => {
+      if (link(spawn, next, radius)) enqueue(index);
+      return false;
+    });
+    for (let cursor = 0; cursor < queue.length; cursor++) {
+      const index = queue[cursor];
+      const from = point(index);
+      const col = index % columns;
+      const edges = [index - columns, index + columns, col ? index - 1 : -1, col < columns - 1 ? index + 1 : -1];
+      for (const next of edges) {
+        if (next >= 0 && next < cells && !reached[next] && link(from, point(next), radius)) enqueue(next);
+      }
+    }
+    const targets = [...stage.items, ...stage.enemies, ...stage.wave, ...stage.reinforcements];
+    if (stage.hold) targets.push(stage.hold);
+    if (stage.storySocket) targets.push(stage.storySocket);
+    return targets.every((target) => nearby(target, (index, from) => reached[index]
+      && link(from, target, target.kind === "boss" ? 0.58 : 0.44)));
   }
 
   function facilityRoomSize(plan, dryRoom) {
@@ -967,13 +1036,13 @@
     stage.obstacles.push(...walls);
   }
 
-  function placeFacility(stage, plan, occupied, preserveFootprint) {
+  function placeFacility(stage, plan, occupied, preserveFootprint, laneBias = 0) {
     const { width: mapWidth, height: mapHeight, elevation, terrain } = stage;
     const signature = stage.number * 37 % 1333;
     const lane = [0.30, 0.52, 0.67, 0.41][(stage.number + plan.form) % 4];
     const row = [0.26, 0.69, 0.41, 0.57, 0.76][(stage.number * 3 + plan.form) % 5];
     const [regionX, regionY] = stage.kind === "boss" ? [0, 0] : plan.architecture.machine;
-    const x = mapWidth * (lane + regionX) + (signature % 9 - 4) * 0.12;
+    const x = mapWidth * (lane + regionX + laneBias * 0.07) + (signature % 9 - 4) * 0.12;
     const y = mapHeight * (row + regionY) + (Math.floor(signature / 9) % 9 - 4) * 0.12;
     const distanceToBay = (rect) => Math.hypot(rect.x - x, rect.y - y);
     if (!preserveFootprint) {
@@ -1073,7 +1142,7 @@
     return "guard";
   }
 
-  function createFloor(floor, rng = Math.random, kind, storyChoices = {}, structureIndex) {
+  function createFloor(floor, rng = Math.random, kind, storyChoices = {}, planning) {
     let trialRoll = 0;
     let stage;
     const final = floor === floorCount;
@@ -1084,6 +1153,9 @@
     const route = storyRoutes[floor];
     const storyChoice = storyChoices?.[route?.chapter];
     const consequence = !kind && route && Object.hasOwn(route.branches, storyChoice) ? route.branches[storyChoice] : null;
+    const earlyPlan = floor <= mapPlanningLimit && planning != null && !isShelterFloor(floor);
+    const drawn = earlyPlan ? [] : null;
+    const next = drawn ? () => { const value = rng(); drawn.push(value); return value; } : rng;
     if (final) {
       stage = 2;
     } else if (isBossFloor(floor)) {
@@ -1091,9 +1163,9 @@
     } else if (floor <= 3) {
       stage = floorKinds.indexOf(consequence?.kind ?? trials[0]);
       // Keep the seeded environment and layout aligned with the previous floor-3 draw stream.
-      if (floor === 3 && requestedTrial < 0) rng();
+      if (floor === 3 && requestedTrial < 0) next();
     } else {
-      trialRoll = requestedTrial < 0 ? roll(rng, trials.length) : requestedTrial + 1;
+      trialRoll = requestedTrial < 0 ? roll(next, trials.length) : requestedTrial + 1;
       stage = floorKinds.indexOf(consequence?.kind ?? trials[trialRoll - 1]);
       if (consequence) trialRoll = 0;
     }
@@ -1104,13 +1176,13 @@
     const opening = consequence ?? openingStages[floor]?.[trialKind];
     const authoredBoss = final ? finalTrial : stage === 2 ? bossTrials[floor] : null;
     const bossTrial = stage === 2 ? authoredBoss ?? standardBoss : null;
-    const macro = final ? 1 : roll(rng, 6);
-    const placement = final ? 1 : roll(rng, 4);
-    const minor = final ? 1 : roll(rng, 4);
+    const macro = final ? 1 : roll(next, 6);
+    const placement = final ? 1 : roll(next, 4);
+    const minor = final ? 1 : roll(next, 4);
     const regionalDestinations = destinations[region.id];
     const bossDestinations = bossTrial && !authoredBoss ? Object.values(regionalDestinations).slice(0, 3) : [];
     // Generic bosses keep their original hazard, geometry and roster draws before drawing a destination.
-    const bossDestinationRoll = bossDestinations.length ? roll(rng, bossDestinations.length) : 0;
+    const bossDestinationRoll = bossDestinations.length ? roll(next, bossDestinations.length) : 0;
     const rolledDestination = bossDestinations[bossDestinationRoll - 1]
       ?? (floor > 4 && trialRoll && !sites[floor] ? regionalDestinations[trialKind] : null);
     const facility = facilityPlan(floor, regionSpec, rolledDestination, consequence);
@@ -1133,9 +1205,13 @@
     const waterway = waterMap ? profile.waterway : null;
     const terrace = floor > 1 && !final && (hasDivider || stage === 3) ? terraces[placement - 1] : null;
     const elevation = terrace ? makeElevation(terrace, foldY, layout.fold) : null;
-    // Surveyed planner walls fit flat, dry rooms without changing bridge or stair landings.
-    const plannedStructure = dryRoom && !elevation && !consequence && floor > 4 && Number.isInteger(structureIndex)
-      ? floorPlans[structureIndex] : null;
+    const proposal = earlyPlan ? mapProposal(planning, {
+      floor, choices: storyChoices ?? {}, kind: trialKind, theme, macro, placement, minor, district: region.id, shelter: false,
+    }) : null;
+    // Independent wall recipes fit flat dry rooms; wet and terraced rooms reflow their authored crossings together.
+    const plannedIndex = proposal?.structureIndex
+      ?? (Number.isInteger(planning) && floor > mapPlanningLimit && !consequence ? planning : null);
+    const plannedStructure = dryRoom && !elevation && plannedIndex !== null ? floorPlans[plannedIndex] : null;
     const structure = plannedStructure ?? floorPlans[placement - 1];
     const layoutTitle = waterMap ? ["세로 수로", "가로 수로", "굽은 수로", "나란한 두 수로"][placement - 1] : structure.title;
     const exit = { x: 31.95, y: foldY(15.5 + 0.25 * layout.offsets[0]), kind: "exit" };
@@ -1256,10 +1332,13 @@
     if (!terrace && !bossTrial && !final) {
       result.obstacles.push(...profile.cover.map(([x, y, w, h]) => ({ x, y: foldY(y), w, h })));
     }
-    if (floor === 2) fitRoom(result, structure.terraceSize);
-    else if (floor > 4 && !bossTrial && !final) fitRoom(result, facilityRoomSize(facility, dryRoom));
-    else if (dryRoom) fitRoom(result, dryRoom.early);
-    else if (floor <= 4 && floor !== 2) fitRoom(result, profile.size);
+    const baseSize = floor === 2 ? structure.terraceSize
+      : floor > 4 && !bossTrial && !final ? facilityRoomSize(facility, dryRoom)
+      : dryRoom ? dryRoom.early : floor <= 4 ? profile.size : null;
+    if (proposal) {
+      const [roomWidth, roomDepth] = baseSize ?? [width, height];
+      fitRoom(result, [Math.max(20, roomWidth + proposal.widthOffset), Math.max(17, roomDepth + proposal.depthOffset)]);
+    } else if (baseSize) fitRoom(result, baseSize);
 
     const occupied = [result.spawn, ...items];
     if (result.storySocket) occupied.push(result.storySocket);
@@ -1282,8 +1361,12 @@
       result.terrain.push({ x: 6.35 * scaleX, y: foldY(14.75) * scaleY, w: 1.1 * scaleX, h: 3.2 * scaleY,
         kind: "conduit", phase: layout.fold > 0 ? 0.26 : 0.44 });
     }
-    placeFacility(result, facility, occupied, floor <= 4 || final);
+    placeFacility(result, facility, occupied, floor <= 4 || final, proposal?.laneBias);
     placeEnemies(result, occupied, floor <= 4 ? 0.72 : dryRoom || !final ? 0.57 : obstacleMargin);
+    if (proposal && !reachableLayout(result)) {
+      let index = 0;
+      return createFloor(floor, () => drawn[index++], kind, storyChoices);
+    }
     return result;
   }
 

@@ -72,7 +72,6 @@
   let stage;
   let state;
   let minimapBackground;
-  let localMapMenu = false;
   let adminRun = false;
   let cellGoal = 0;
   let allocation;
@@ -221,11 +220,7 @@
       return;
     }
     const floorSeed = run.floorSeeds[number - 1] ?? crypto.getRandomValues(new Uint32Array(1))[0];
-    const region = content.getRegion(number);
-    const topology = run.localPlans?.[number] ?? window.BrassenMapPlanner?.structure({
-      floor: number, seed: floorSeed, district: region.id, choices: run.storyChoices,
-    });
-    stage = content.createFloor(number, randomFrom(floorSeed), undefined, run.storyChoices, topology);
+    stage = content.createFloor(number, randomFrom(floorSeed), undefined, run.storyChoices, { seed: floorSeed });
     const routeEffects = content.routes.find(({ id }) => id === routeId)?.effects ?? {};
     state = viewFloor(number, stage, health, "rolling", routeEffects.enemyDamageMultiplier);
     state.routeEffects = routeEffects;
@@ -313,6 +308,7 @@
       run = { ...saved.run, storyChoices: saved.run.storyChoices ?? {}, scenesSeen: saved.run.scenesSeen ?? [],
         classId: saved.run.classId ?? null, quests: saved.run.quests ?? [], villageVisits: saved.run.villageVisits ?? {},
         random: randomFrom(saved.randomSeed), stats: village.applyClass(rpg.getStats(saved.run.progress), saved.run.classId) };
+      delete run.localPlans;
       renderGear();
       const health = Math.min(run.stats.maxHp, Math.max(1, saved.health ?? run.stats.maxHp));
       if (saved.floor === 1 && !run.storyChoices.commission) {
@@ -433,7 +429,6 @@
   }
 
   function setupTitle(menu = false) {
-    localMapMenu = false;
     adminRun = false;
     run = undefined;
     stage = null;
@@ -455,77 +450,12 @@
       id: "new-run", title: "새 등반", description: checkpoint ? "시련에 들어가면 새 기록이 저장됩니다." : "능력치 5점을 배분해 등반을 준비합니다.",
       choose: setupBuild,
     });
-    if (menu && window.TowerLocalAI) options.push({
-      id: "map-model", title: "로컬 지도 모델",
-      description: window.TowerLocalAI.getStatus().phase === "ready" ? "모델이 준비됐습니다." : "선택 사항 · 기본 지도 모델은 이미 내장되어 있습니다.",
-      choose: () => showLocalMapMenu(),
-    });
     panel({ kicker: "", title: "Brassen Tower", copy: menu ? "" : "1,332층을 향하는 액션 로그라이크 · 1–20층 체험판",
       options, primary: menu ? undefined : "시작",
       activate: () => {
         audio.unlock().then(refreshAudioUI);
         setupTitle(true);
       } });
-  }
-
-  function showLocalMapMenu(message) {
-    const ai = window.TowerLocalAI;
-    const status = ai.getStatus();
-    localMapMenu = true;
-    const busy = status.phase === "loading" || status.phase === "generating";
-    const load = (file) => {
-      let lastPercent = -1;
-      ai.load(file, { onProgress: ({ loaded, total }) => {
-        const percent = total > 0 ? Math.min(100, Math.round(loaded / total * 100)) : 0;
-        if (localMapMenu && percent !== lastPercent) {
-          lastPercent = percent;
-          setText("overlay-copy", "로컬 모델 준비 중 · " + percent + "%");
-        }
-      } }).then(() => {
-        if (localMapMenu) showLocalMapMenu("모델을 불러왔습니다. 등반 중 일부 일반 전장의 골격을 미리 생성합니다.");
-      }, (error) => {
-        if (localMapMenu) showLocalMapMenu("모델을 불러오지 못했습니다. " + error.message);
-      });
-      showLocalMapMenu("로컬 모델을 준비하고 있습니다.");
-    };
-    const ready = status.phase === "ready";
-    const options = [
-      { id: "map-load-file", title: "GGUF 모델 불러오기", description: "이 기기에 저장된 모델을 선택합니다.", disabled: busy,
-        choose: () => {
-          const picker = document.createElement("input");
-          picker.type = "file";
-          picker.accept = ".gguf";
-          picker.addEventListener("change", () => { if (picker.files?.[0]) load(picker.files[0]); }, { once: true });
-          picker.click();
-        } },
-      { id: "map-download", title: "Kanana 내려받기", description: "약 1.52GB · 다운로드한 뒤 추론은 이 브라우저에서 실행합니다.", disabled: busy,
-        choose: () => load() },
-    ];
-    if (ready) options.push({ id: "map-unload", title: "모델 끄기", choose: async () => {
-      await ai.unload();
-      if (localMapMenu) showLocalMapMenu();
-    } });
-    panel({ kicker: "지도 생성", title: "로컬 지도 모델",
-      copy: message ?? (ready ? status.model : "내장 모델로 바로 플레이할 수 있습니다. 추가 모델을 불러오면 호환되는 전장에 새 지도 골격을 제안합니다."),
-      options, primary: "돌아가기", activate: () => setupTitle(true) });
-  }
-
-  function queueLocalMap() {
-    const ai = window.TowerLocalAI;
-    if (ai?.getStatus().phase !== "ready") return;
-    const campaign = run;
-    const floor = state.floor + 3;
-    const plannedFloor = Array.from({ length: 5 }, (_, offset) => floor + offset).find((number) =>
-      number > 4 && number < content.floorCount && number % 10 !== 9 &&
-      !content.isShelterFloor(number) && campaign.localPlans?.[number] === undefined);
-    if (!plannedFloor) return;
-    const seed = campaign.floorSeeds[plannedFloor - 1];
-    ai.generate({ floor: plannedFloor, seed, theme: stage.theme, kind: state.kind }).then((plan) => {
-      if (run !== campaign || state.floor >= plannedFloor) return;
-      const wideRooms = plan.rooms.filter(({ w, h }) => w > h).length;
-      const structure = plan.topology === "loop" ? 1 : plan.topology === "fork" ? 0 : wideRooms > 1 ? 3 : 2;
-      (campaign.localPlans ??= {})[plannedFloor] = structure;
-    }).catch(() => {});
   }
 
   function updateBuild() {
@@ -611,7 +541,6 @@
     state.revealTimer = reducedMotion ? 0 : 1.05;
     state.cameraShake = reducedMotion ? 0 : 0.14;
     enterPlayableScene();
-    queueLocalMap();
     if (stage.final && state.kind === "boss") {
       const anchor = { ...stage.storySocket, scene: story.starPrelude, active: false, celestial: true };
       state.storyPoint = anchor;
@@ -710,7 +639,13 @@
   }
 
   function openLanding(floor, health, encounter) {
-    const landing = floor === 1 ? clinicLanding : shelter.create(floor);
+    const seed = run.floorSeeds[floor - 1];
+    const planner = window.BrassenMapPlanner;
+    const roll = randomFrom(seed);
+    const plan = floor > 1 && floor <= previewFloorLimit ? planner?.plan({ floor, seed, kind: "shelter", theme: "shelter",
+      choices: run.storyChoices, macro: 1 + Math.floor(roll() * 6), placement: 1 + Math.floor(roll() * 4),
+      minor: 1 + Math.floor(roll() * 4) }) : null;
+    const landing = floor === 1 ? clinicLanding : shelter.create(floor, plan);
     stage = {
       ...landing, region: content.getRegion(floor), hazard: "none",
       objective: "휴식하거나 장비를 정비한 뒤 출발하세요.",
@@ -729,7 +664,6 @@
     renderFloorSteps();
     enterPlayableScene();
     if (state.storyPoint?.active && !startIncident(state.storyPoint)) showRadio(encounter.scene.cue);
-    queueLocalMap();
   }
 
   function hideRadio() {
