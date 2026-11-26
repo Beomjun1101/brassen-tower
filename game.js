@@ -248,14 +248,10 @@
     const exit = state.items.find((item) => item.kind === "exit");
     if (exit) {
       state.exit = exit;
-      const wallX = exit.x + 0.64;
-      state.obstacles = [
-        ...state.obstacles, { x: wallX, y: exit.y, w: 0.28, h: 1.18, gateLeaf: true, gateDecor: true },
-        { x: wallX, y: exit.y - 0.86, w: 0.29, h: 0.54, gateDecor: true },
-        { x: wallX, y: exit.y + 0.86, w: 0.29, h: 0.54, gateDecor: true },
-      ];
+      state.obstacles = [...state.obstacles, ...content.exitGateWalls(exit)];
     } else if (number === 1) {
-      state.gateMarker = { x: stage.width - 1.55, y: stage.height * 0.61, type: "sluice", active: false, openProgress: 0 };
+      const gate = stage.gateMarker ?? { x: stage.width - 1.55, y: stage.height * 0.61 };
+      state.gateMarker = { ...gate, type: "sluice", active: false, openProgress: 0 };
     }
     if (stage.final && exit) {
       state.storyPoint = { x: exit.x, y: exit.y, scene: story.epilogue(run.storyChoices), atExit: true,
@@ -645,7 +641,7 @@
     const plan = floor > 1 && floor <= previewFloorLimit ? planner?.plan({ floor, seed, kind: "shelter", theme: "shelter",
       choices: run.storyChoices, macro: 1 + Math.floor(roll() * 6), placement: 1 + Math.floor(roll() * 4),
       minor: 1 + Math.floor(roll() * 4) }) : null;
-    const landing = floor === 1 ? clinicLanding : shelter.create(floor, plan);
+    const landing = floor === 1 ? clinicLanding : shelter.create(floor, plan, { seed, choices: run.storyChoices });
     stage = {
       ...landing, region: content.getRegion(floor), hazard: "none",
       objective: "휴식하거나 장비를 정비한 뒤 출발하세요.",

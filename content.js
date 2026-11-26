@@ -976,6 +976,7 @@
     const link = (from, to, clearance) => open(to.x, to.y, clearance)
       && open((from.x + to.x) / 2, (from.y + to.y) / 2, clearance)
       && canTraverse(elevation, from.x, from.y, to.x, to.y);
+    if (!open(spawn.x, spawn.y, 0.29)) return false;
     const nearby = ({ x, y }, accept) => {
       const col = Math.floor(x / spacing);
       const row = Math.floor(y / spacing);
@@ -1004,8 +1005,80 @@
     const targets = [...stage.items, ...stage.enemies, ...stage.wave, ...stage.reinforcements];
     if (stage.hold) targets.push(stage.hold);
     if (stage.storySocket) targets.push(stage.storySocket);
+    if (stage.gateMarker) targets.push(stage.gateMarker);
     return targets.every((target) => nearby(target, (index, from) => reached[index]
       && link(from, target, target.kind === "boss" ? 0.58 : 0.44)));
+  }
+
+  function exitGateWalls(exit) {
+    const x = exit.x + 0.64;
+    return [
+      { x, y: exit.y, w: 0.28, h: 1.18, gateLeaf: true, gateDecor: true },
+      { x, y: exit.y - 0.86, w: 0.29, h: 0.54, gateDecor: true },
+      { x, y: exit.y + 0.86, w: 0.29, h: 0.54, gateDecor: true },
+    ];
+  }
+
+  function rebuildLayout(base, context) {
+    const planner = window.TowerFloorGraph;
+    if (typeof planner?.rebuild !== "function") return null;
+    const isPoint = (point) => Number.isFinite(point?.x) && Number.isFinite(point?.y);
+    const isRect = (rect) => isPoint(rect) && Number.isFinite(rect.w) && rect.w > 0
+      && Number.isFinite(rect.h) && rect.h > 0;
+    const hasRects = (rects) => Array.isArray(rects) && rects.every(isRect);
+    const position = (value, point) => ({ ...value, x: point.x, y: point.y });
+    const groups = ["items", "enemies", "wave", "reinforcements"];
+    const anchors = ["spawn", "hold", "storySocket"];
+    const terrainKinds = ["water", "bridge", "conduit", "vent"];
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const layout = planner.rebuild(base, { ...context, attempt });
+      if (!layout || !layout.roomGraph || !Number.isFinite(layout.width) || layout.width <= 0
+          || !Number.isFinite(layout.height) || layout.height <= 0
+          || !hasRects(layout.obstacles) || !hasRects(layout.terrain)
+          || !layout.terrain.every(({ kind }) => terrainKinds.includes(kind))
+          || base.terrain.some(({ kind }) => !layout.terrain.some((region) => region.kind === kind))
+          || Boolean(base.elevation) !== Boolean(layout.elevation)
+          || anchors.some((key) => base[key] && !isPoint(layout[key]))) continue;
+
+      const { elevation } = layout;
+      if (elevation && (!Number.isFinite(elevation.height) || elevation.height <= 0
+          || !hasRects(elevation.decks) || !hasRects(elevation.stairs)
+          || elevation.stairs.some(({ axis, rise }) => !["x", "y"].includes(axis) || Math.abs(rise) !== 1))) continue;
+      if (!groups.every((key) => Array.isArray(layout[key]) && layout[key].length === base[key].length
+          && layout[key].every(isPoint))) continue;
+      if (layout.gateMarker && !isPoint(layout.gateMarker)) continue;
+
+      const stage = { ...base, width: layout.width, height: layout.height, elevation: elevation ?? null,
+        obstacles: layout.obstacles, terrain: layout.terrain, roomGraph: layout.roomGraph };
+      if (layout.gateMarker) stage.gateMarker = layout.gateMarker;
+      for (const key of anchors) if (base[key]) stage[key] = position(base[key], layout[key]);
+      for (const key of groups) stage[key] = base[key].map((value, index) => position(value, layout[key][index]));
+      if (stage.hold && Number.isFinite(layout.hold.radius) && layout.hold.radius > 0) {
+        stage.hold.radius = Math.min(stage.hold.radius, layout.hold.radius);
+      }
+      if (typeof layout.floorPlan?.title === "string") stage.floorPlan = layout.floorPlan;
+      const detail = layout.rolls?.at(-2)?.detail;
+      if (typeof detail === "string") {
+        stage.rolls = base.rolls.map((roll, index) => index === base.rolls.length - 2 ? { ...roll, detail } : roll);
+      }
+
+      if (elevation) {
+        const heightFor = (room, point) => heightAt(room.elevation, point.x, point.y);
+        const sameTier = (previous, next) => (heightFor(base, previous) >= base.elevation.height / 2)
+          === (heightFor(stage, next) >= elevation.height / 2);
+        const upperSentry = (room) => room.enemies.some((enemy) => enemy.kind === "sentry"
+          && heightFor(room, enemy) >= room.elevation.height / 2);
+        if (!sameTier(base.spawn, stage.spawn)
+            || (stage.hold && !sameTier(base.hold, stage.hold))
+            || stage.items.some((item, index) => !sameTier(base.items[index], item))
+            || stage.enemies.some((enemy, index) => enemy.gateGuard && !sameTier(base.enemies[index], enemy))
+            || (stage.kind === "relay" && upperSentry(base) && !upperSentry(stage))) continue;
+      }
+      const exit = stage.items.find(({ kind }) => kind === "exit");
+      const closedStage = exit ? { ...stage, obstacles: [...stage.obstacles, ...exitGateWalls(exit)] } : stage;
+      if (reachableLayout(closedStage)) return stage;
+    }
+    return null;
   }
 
   function facilityRoomSize(plan, dryRoom) {
@@ -1205,9 +1278,11 @@
     const waterway = waterMap ? profile.waterway : null;
     const terrace = floor > 1 && !final && (hasDivider || stage === 3) ? terraces[placement - 1] : null;
     const elevation = terrace ? makeElevation(terrace, foldY, layout.fold) : null;
-    const proposal = earlyPlan ? mapProposal(planning, {
-      floor, choices: storyChoices ?? {}, kind: trialKind, theme, macro, placement, minor, district: region.id, shelter: false,
-    }) : null;
+    const context = {
+      floor, seed: planning?.seed, choices: storyChoices ?? {}, kind: trialKind, theme,
+      macro, placement, minor, district: region.id, shelter: false,
+    };
+    const proposal = earlyPlan ? mapProposal(planning, context) : null;
     // Independent wall recipes fit flat dry rooms; wet and terraced rooms reflow their authored crossings together.
     const plannedIndex = proposal?.structureIndex
       ?? (Number.isInteger(planning) && floor > mapPlanningLimit && !consequence ? planning : null);
@@ -1363,6 +1438,10 @@
     }
     placeFacility(result, facility, occupied, floor <= 4 || final, proposal?.laneBias);
     placeEnemies(result, occupied, floor <= 4 ? 0.72 : dryRoom || !final ? 0.57 : obstacleMargin);
+    if (earlyPlan && Number.isSafeInteger(context.seed)) {
+      const rebuilt = rebuildLayout(result, { ...context, proposal });
+      if (rebuilt) return rebuilt;
+    }
     if (proposal && !reachableLayout(result)) {
       let index = 0;
       return createFloor(floor, () => drawn[index++], kind, storyChoices);
@@ -1371,5 +1450,5 @@
   }
 
   window.TowerContent = { floorCount, shelterInterval, frontierFloor, isShelterFloor, isBossFloor, getRegion, createFloor,
-    heightAt, canTraverse, isDry, routes, routeOptions };
+    heightAt, canTraverse, isDry, exitGateWalls, routes, routeOptions };
 })();

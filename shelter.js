@@ -187,7 +187,7 @@
     return points;
   }
 
-  function validatedShelterPath(room, variation) {
+  function validatedShelterPath(room, variation, waypoint) {
     const { spawn, storySocket, stations } = room;
     if (!openShelterPoint(room, spawn.x, spawn.y, .34) || !openShelterPoint(room, storySocket.x, storySocket.y, .47)) return undefined;
     const departure = stations.find((entry) => entry.kind === "departure");
@@ -196,7 +196,7 @@
     if (!reachable.some((point) => distance(point, storySocket) <= .64) ||
       !stations.every((station) => reachable.some((point) => distance(point, station) <= 1.31))) return undefined;
     const closest = (points, target) => points.reduce((best, point) => distance(point, target) < distance(best, target) ? point : best);
-    const lane = closest(reachable, { x: room.width * (.38 + variation.structure * .057),
+    const lane = closest(reachable, waypoint ?? { x: room.width * (.38 + variation.structure * .057),
       y: room.height * (.49 + variation.structure % 2 * .14) + variation.lane * .60 });
     const endpoint = closest(walkableShelterPoints(room, lane), departure);
     const trace = (point) => {
@@ -242,12 +242,107 @@
     }, floor);
   }
 
-  function create(floor, plan) {
+  function settlementPlacement(chambers, preferred, spec, room, reserved) {
+    const w = spec?.w ?? 0;
+    const h = spec?.h ?? 0;
+    const insetX = .65 + w / 2;
+    const insetY = .65 + h / 2;
+    const radius = Math.max(w, h) * .37;
+    for (const chamber of [preferred, ...chambers.filter((entry) => entry !== preferred)]) {
+      let best;
+      let bestDistance = Infinity;
+      const targetX = chamber.left + chamber.w * (spec?.u ?? .5);
+      const targetY = chamber.top + chamber.h * (spec?.v ?? .5);
+      for (let x = chamber.left + insetX; x <= chamber.right - insetX; x += .38) {
+        for (let y = chamber.top + insetY; y <= chamber.bottom - insetY; y += .38) {
+          if (reserved.some((entry) => Math.hypot(x - entry.x, y - entry.y) < entry.clearance + radius)) continue;
+          const nearWall = room.obstacles.some((entry) => {
+            const gapX = Math.max(0, Math.abs(x - entry.x) - (w + entry.w) / 2);
+            const gapY = Math.max(0, Math.abs(y - entry.y) - (h + entry.h) / 2);
+            return gapX * gapX + gapY * gapY < .39 ** 2;
+          });
+          if (nearWall) continue;
+          const distance = Math.hypot(x - targetX, y - targetY);
+          if (distance < bestDistance) {
+            best = { x, y };
+            bestDistance = distance;
+          }
+        }
+      }
+      if (best) return best;
+    }
+    return undefined;
+  }
+
+  function generatedSettlement(floor, base, variation, context, attempt) {
+    const width = Math.max(24, base.width + 10);
+    const height = Math.max(18, base.height + 8);
+    const seed = context?.seed ?? (Math.imul(floor, 0x45d9f3b) ^ (variation.structure << 24)
+      ^ (variation.width << 12) ^ (variation.depth << 6) ^ Math.round(variation.lane * 32));
+    const graph = window.TowerFloorGraph?.build({ width, height, seed, kind: "shelter", theme: base.theme, floor, attempt,
+      choices: context?.choices ?? {}, profile: { structureIndex: variation.structure, widthOffset: variation.width,
+        depthOffset: variation.depth, laneBias: variation.lane } });
+    if (!graph?.rooms?.length || graph.rooms.length < 3) return undefined;
+    const byId = new Map(graph.rooms.map((entry) => [entry.id, entry]));
+    const entry = byId.get(graph.entry);
+    const exit = byId.get(graph.exit);
+    if (!entry || !exit || entry === exit) return undefined;
+    const interior = graph.rooms.filter((room) => room !== entry && room !== exit)
+      .sort((a, b) => b.w * b.h - a.w * a.h);
+    const story = interior[0];
+    const service = interior[1] ?? exit;
+    const spawn = { x: entry.x, y: entry.y };
+    const storySocket = { x: story.x, y: story.y };
+    const departure = { x: exit.x, y: exit.y };
+    const room = { ...base, width, height, roomGraph: graph, spawn, storySocket, stations: [], decor: [], obstacles: [...graph.walls] };
+    const reserved = [
+      { ...spawn, clearance: 1.05 }, { ...storySocket, clearance: 1.80 }, { ...departure, clearance: 1.10 },
+      ...graph.links.map((link) => ({ x: link.x, y: link.y, clearance: .85 })),
+    ];
+    const positions = {
+      rest: { room: entry, u: .23, v: .28 }, workbench: { room: service, u: .70, v: .29 },
+      board: { room: entry, u: .72, v: .71 }, shop: { room: service, u: .74, v: .72 },
+      campfire: { room: entry, u: .27, v: .77 }, shrine: { room: exit, u: .48, v: .27 },
+    };
+    for (const station of base.stations) {
+      if (station.kind === "departure") {
+        room.stations.push({ ...station, ...departure });
+        continue;
+      }
+      const slot = positions[station.kind];
+      const collision = base.obstacles.find((obstacle) => obstacle.x === station.x && obstacle.y === station.y);
+      const at = settlementPlacement(graph.rooms, slot.room, { ...slot, w: collision?.w, h: collision?.h }, room, reserved);
+      if (!at) return undefined;
+      room.stations.push({ ...station, ...at });
+      reserved.push({ ...at, clearance: collision ? 1.48 : 1.32 });
+      if (collision) room.obstacles.push({ ...collision, ...at });
+    }
+    const decorRooms = [entry, service, exit];
+    for (const [index, art] of base.decor.entries()) {
+      const preferred = decorRooms[index];
+      const at = settlementPlacement(graph.rooms, preferred, { w: art.w, h: art.h, u: .27, v: .19 }, room, reserved);
+      if (!at) continue;
+      room.decor.push({ ...art, ...at });
+      room.obstacles.push({ ...art, ...at, shelterDecor: true });
+      reserved.push({ ...at, clearance: 1.36 });
+    }
+    const routeMiddle = byId.get(graph.route[Math.floor(graph.route.length / 2)]);
+    const paths = validatedShelterPath(room, variation, routeMiddle);
+    return paths ? { ...room, paths } : undefined;
+  }
+
+  function create(floor, plan, context) {
     const visit = Math.floor((floor - 1) / 5);
     if (floor >= 35) return createRecess(floor, visit);
     const variation = earlyVariation(floor, plan);
     if (variation) {
       const room = createSettlement(floor, visit, variation);
+      if (typeof window.TowerFloorGraph?.build === "function") {
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const generated = generatedSettlement(floor, room, variation, context, attempt);
+          if (generated) return generated;
+        }
+      }
       const paths = validatedShelterPath(room, variation);
       if (paths) return { ...room, paths };
     }
@@ -469,6 +564,20 @@
     const { width, height, inhabited, trim, cloth, decor } = room;
     const center = height * 0.54;
     const p = (x, y, z = 0.024) => art.point(camera, x, y, z);
+    if (room.roomGraph) {
+      for (const chamber of room.roomGraph.rooms) {
+        const area = art.rectangle(camera, chamber.left + .20, chamber.top + .20, chamber.w - .40, chamber.h - .40, .017);
+        art.poly(context, area, cloth + "31", trim + "58", 1.0);
+      }
+      for (const door of room.roomGraph.links) {
+        const alongX = door.axis === "x";
+        const span = door.width * .64;
+        const w = alongX ? .62 : span;
+        const h = alongX ? span : .62;
+        art.poly(context, art.rectangle(camera, door.x - w / 2, door.y - h / 2, w, h, .026),
+          "#2b302a8e", trim + "85", 1.1);
+      }
+    }
     if (room.paths) {
       const trace = room.paths.map(({ x, y }) => p(x, y));
       art.line(context, trace, "#151f2090", camera.unit * 0.27);
