@@ -13,6 +13,40 @@
       escape: { title: "격리문 비상통로", theme: "sluice", objective: "잠금이 풀릴 때까지 버틴 뒤 상단 출구의 경비를 제압하고 탈출하세요." },
     },
   };
+  const storyRoutes = {
+    1: { chapter: "commission", branches: {
+      open: { kind: "combat", theme: "sluice", feature: "intake", title: "주민들이 열어 준 수문",
+        objective: "건널목을 확보하고 수문 경비대와 증원대를 모두 밀어내세요.",
+        cue: ["주민", "건널목을 열었어요. 수문 앞은 경비대가 몰려옵니다."] },
+      quiet: { kind: "hunt", theme: "forge", feature: "pumps", title: "정비조 우회 갱도",
+        objective: "정비 통로로 침투해 표식이 붙은 수문 책임자를 쓰러뜨리세요.",
+        targetName: "수문 책임자", cue: ["정비조", "우회 갱도가 비었어요. 수문 열쇠는 책임자가 갖고 있습니다."] },
+    } },
+    6: { chapter: "reservoir", branches: {
+      district: { kind: "hold", theme: "sluice", feature: "pumps", title: "꺼진 관문 전열로",
+        objective: "젖은 건널목을 지나 상단의 수동 해제 구역을 사수하세요.",
+        cue: ["라온", "진료소로 온수가 갑니다. 위 관문은 수동으로 열어야 해요."] },
+      reserve: { kind: "relay", theme: "relay", feature: "transformers", title: "가열된 관문 배전실",
+        objective: "건조해진 배전 통로에서 전력 셀 3개를 찾아 출구를 여세요. 경비가 출구를 지킵니다.",
+        cue: ["정비조", "열선이 통로를 말렸어요. 배전 회로를 세 군데서 연결하세요."] },
+    } },
+    16: { chapter: "inspection", branches: {
+      escort: { kind: "hold", theme: "forge", feature: "valve-bank", title: "환자 대피 계단",
+        objective: "환자들이 계단을 건널 동안 상단 대피 구역을 지키세요.",
+        cue: ["진료소", "환자들을 계단으로 옮겨요. 출구 쪽을 잠시 지켜 주세요."] },
+      evidence: { kind: "hunt", theme: "relay", feature: "relay-rack", title: "압수품 이송 통로",
+        objective: "표식이 붙은 운반책을 쓰러뜨려 압수된 기록을 확보하세요.",
+        targetName: "압수 기록 운반책", cue: ["라온", "압수 기록이 이동 중이에요. 표식이 붙은 경비가 운반책입니다."] },
+    } },
+    666: { chapter: "relay", branches: {
+      rescue: { kind: "escape", theme: "sluice", feature: "intake", title: "구조 신호 우회 수로",
+        objective: "구조 회선이 고정될 때까지 버티고, 출구 경비를 쓰러뜨려 수로에서 빠져나가세요.",
+        cue: ["구조대", "우회 연결 잡았습니다. 신호가 고정되면 수로 끝으로 빠져요."] },
+      archive: { kind: "relay", theme: "relay", dry: true, feature: "relay-rack", title: "기록 보존 전원실",
+        objective: "전력 셀 3개를 회수해 보존 기록의 전원을 유지하고 출구 경비를 제압하세요.",
+        cue: ["라온", "기록을 읽으려면 전원이 필요해요. 전력 셀 세 개를 회수하세요."] },
+    } },
+  };
   const geometryForTrial = [0, 1, 2, 0, 2, 1];
   const width = 34;
   const height = 26;
@@ -24,6 +58,14 @@
     { id: "furnace", name: "상층 연소 구역", through: 1179, trials: ["combat", "hunt", "escape"], theme: "forge", dividerTheme: "forge" },
     { id: "distribution", name: "중앙 배분 구역", through: floorCount, trials: ["relay", "hold", "hunt", "escape"], theme: "forge", dividerTheme: "relay" },
   ];
+  const regionalArchitecture = {
+    "lower-drainage": { title: "수로 교대", room: [0, 0], machine: [0, 0] },
+    pressure: { title: "깊은 압력 격실", room: [0, 3], machine: [0.02, -0.06] },
+    service: { title: "옆으로 긴 정비 선로", room: [4, 0], machine: [-0.08, 0] },
+    transmission: { title: "평행 송수 회랑", room: [3, 1], machine: [0.04, 0.08] },
+    furnace: { title: "넓은 내화 공정장", room: [2, 3], machine: [0.07, 0.02] },
+    distribution: { title: "중앙 분기 작업장", room: [3, 2], machine: [-0.03, -0.04] },
+  };
   // A destination couples its trial with a working space, independently of the layout roll.
   const destinations = {
     "lower-drainage": {
@@ -75,7 +117,7 @@
     1009: { name: "권한 인계실", theme: "relay" },
     1199: { name: "상층 송수관", theme: "sluice" },
     1329: { name: "최종 제어실", theme: "forge" },
-    1332: { name: "최종 배분실", theme: "relay" },
+    1332: { name: "별불 배분실", theme: "forge" },
   };
   const bossTrials = {
     9: { title: "주철 관문", bossName: "주철문 검문대장", objective: "주철문 검문대를 돌파해 관문을 여세요." },
@@ -103,13 +145,18 @@
     return { faction, name: rosterNames[faction][kind] };
   }
   const finalTrial = {
-    title: "최종 배분실",
-    objective: "배분 회로 3개를 복구하고 출구 경비를 쓰러뜨린 뒤 공급 밸브를 여세요.",
+    title: "별불 배분실",
+    bossName: "별의 산파",
+    objective: "배분실을 봉쇄한 별의 산파를 쓰러뜨리고 아래로 흐르는 길을 여세요.",
     environment: {
-      name: "배분 장치 가동",
+      name: "별불 차단",
       hazard: "none",
-      enemies: ["warden", "lancer", "sentry", "runner", "mortar"],
+      enemies: ["boss", "warden", "sentry"],
     },
+    obstacles: [
+      [8.2, 5.8, 5.0, 2.6], [8.2, 20.2, 5.0, 2.6], [15.6, 7.9, 2.0, 2.8], [15.6, 18.1, 2.0, 2.8],
+      [25.7, 5.2, 4.3, 2.1], [25.7, 20.8, 4.3, 2.1], [30.6, 11, 1.8, 2.8],
+    ],
   };
   const entrancePatrols = [
     { name: "혼성 경비", front: ["guard", "runner"], support: "guard" },
@@ -485,7 +532,7 @@
     relay: "중계 신호를 복구하세요.",
     forge: "가압 장치를 안정화하세요.",
   };
-  const storyBossFloors = new Set([9, 29, 329, 489, 829, 1009, 1199, 1329]);
+  const storyBossFloors = new Set([9, 19, 29, 49, 89, 169, 229, 329, 489, 829, 1009, 1199, 1329, floorCount]);
 
   const obstacleMargin = 0.46;
   const terraceHeight = 1.45;
@@ -599,7 +646,7 @@
   }
 
   function isBossFloor(floor) {
-    return Number.isInteger(floor) && floor >= 9 && floor <= floorCount && floor % 10 === 9;
+    return floor === floorCount || (Number.isInteger(floor) && floor >= 9 && floor < floorCount && floor % 10 === 9);
   }
 
   function regionForFloor(floor) {
@@ -611,10 +658,11 @@
     const site = sites[floor]?.name;
     const eligible = entranceTrials[floor - 1] ?? trials;
     const uncharted = floor >= frontierFloor;
-    return { id, name: uncharted ? name : "하층 개척 구역", uncharted, trials: [...eligible], ...(site ? { site } : {}) };
+    return { id, name: uncharted ? name : "하층 개척 구역", uncharted, trials: [...eligible],
+      architecture: regionalArchitecture[id].title, ...(site ? { site } : {}) };
   }
 
-  function facilityPlan(floor, region, destination) {
+  function facilityPlan(floor, region, destination, consequence) {
     const district = facilityDistricts[region.id];
     const previous = regions[regions.indexOf(region) - 1];
     const offset = floor - (previous?.through ?? 0) - 1;
@@ -622,15 +670,16 @@
     const [introFeature, introTitle] = openingFacilities[floor - 1] ?? [];
     const [destinationTitle, destinationFeatures] = destination ? [destination[1], destination[2]] : [];
     const trialOrdinal = floor - Math.floor(floor / shelterInterval);
-    const feature = introFeature ?? destinationFeatures?.[trialOrdinal % 2] ?? district.features[offset % district.features.length];
+    const feature = consequence?.feature ?? introFeature ?? destinationFeatures?.[trialOrdinal % 2]
+      ?? district.features[offset % district.features.length];
     const equipmentType = equipment[feature];
     const lane = serviceLanes[form % serviceLanes.length];
     const branch = branchNames[Math.floor(form / serviceLanes.length)];
     const circuit = ["유입측", "환류측", "비상측", "배출측"][offset % 4];
-    const title = introTitle ?? sites[floor]?.name ?? bossTrials[floor]?.title
+    const title = consequence?.title ?? introTitle ?? sites[floor]?.name ?? bossTrials[floor]?.title
       ?? (destinationTitle ? `${district.name} ${branch} ${lane} ${circuit} ${destinationTitle}`
         : `${district.name} ${branch} ${lane} ${equipmentType.name}`);
-    return { feature, title, purpose: equipmentType.purpose, equipmentType, form };
+    return { feature, title, purpose: equipmentType.purpose, equipmentType, form, architecture: regionalArchitecture[region.id] };
   }
 
   function makeElevation(terrace, foldY, fold) {
@@ -893,10 +942,11 @@
   function facilityRoomSize(plan, dryRoom) {
     const [baseWidth, baseHeight] = dryRoom?.widthAndDepth ?? [width, height];
     const [widthBias, heightBias] = plan.equipmentType.aspect;
+    const [regionWidth, regionHeight] = plan.architecture.room;
     const span = plan.form % 5 - 2;
     const depth = Math.floor(plan.form / 3) % 5 - 2;
-    return [Math.max(dryRoom ? 25 : 32, baseWidth + widthBias + span),
-      Math.max(dryRoom ? 21 : 25, baseHeight + heightBias + depth)];
+    return [Math.max(dryRoom ? 25 : 32, baseWidth + widthBias + regionWidth + span),
+      Math.max(dryRoom ? 21 : 25, baseHeight + heightBias + regionHeight + depth)];
   }
 
   function installStructure(stage, plan, foldY, occupied) {
@@ -922,8 +972,9 @@
     const signature = stage.number * 37 % 1333;
     const lane = [0.30, 0.52, 0.67, 0.41][(stage.number + plan.form) % 4];
     const row = [0.26, 0.69, 0.41, 0.57, 0.76][(stage.number * 3 + plan.form) % 5];
-    const x = mapWidth * lane + (signature % 9 - 4) * 0.12;
-    const y = mapHeight * row + (Math.floor(signature / 9) % 9 - 4) * 0.12;
+    const [regionX, regionY] = stage.kind === "boss" ? [0, 0] : plan.architecture.machine;
+    const x = mapWidth * (lane + regionX) + (signature % 9 - 4) * 0.12;
+    const y = mapHeight * (row + regionY) + (Math.floor(signature / 9) % 9 - 4) * 0.12;
     const distanceToBay = (rect) => Math.hypot(rect.x - x, rect.y - y);
     if (!preserveFootprint) {
       const [wide, deep] = plan.equipmentType.footprint;
@@ -1022,7 +1073,7 @@
     return "guard";
   }
 
-  function createFloor(floor, rng = Math.random, kind) {
+  function createFloor(floor, rng = Math.random, kind, storyChoices = {}, structureIndex) {
     let trialRoll = 0;
     let stage;
     const final = floor === floorCount;
@@ -1030,24 +1081,28 @@
     const regionSpec = regionForFloor(floor);
     const trials = region.trials;
     const requestedTrial = trials.indexOf(kind);
+    const route = storyRoutes[floor];
+    const storyChoice = storyChoices?.[route?.chapter];
+    const consequence = !kind && route && Object.hasOwn(route.branches, storyChoice) ? route.branches[storyChoice] : null;
     if (final) {
-      stage = 1;
+      stage = 2;
     } else if (isBossFloor(floor)) {
       stage = 2;
     } else if (floor <= 3) {
-      stage = floorKinds.indexOf(trials[0]);
+      stage = floorKinds.indexOf(consequence?.kind ?? trials[0]);
       // Keep the seeded environment and layout aligned with the previous floor-3 draw stream.
       if (floor === 3 && requestedTrial < 0) rng();
     } else {
       trialRoll = requestedTrial < 0 ? roll(rng, trials.length) : requestedTrial + 1;
-      stage = floorKinds.indexOf(trials[trialRoll - 1]);
+      stage = floorKinds.indexOf(consequence?.kind ?? trials[trialRoll - 1]);
+      if (consequence) trialRoll = 0;
     }
 
     const geometry = geometryForTrial[stage];
     const trialKind = floorKinds[stage];
     const template = floors[stage];
-    const opening = openingStages[floor]?.[trialKind];
-    const authoredBoss = stage === 2 ? bossTrials[floor] : null;
+    const opening = consequence ?? openingStages[floor]?.[trialKind];
+    const authoredBoss = final ? finalTrial : stage === 2 ? bossTrials[floor] : null;
     const bossTrial = stage === 2 ? authoredBoss ?? standardBoss : null;
     const macro = final ? 1 : roll(rng, 6);
     const placement = final ? 1 : roll(rng, 4);
@@ -1058,7 +1113,7 @@
     const bossDestinationRoll = bossDestinations.length ? roll(rng, bossDestinations.length) : 0;
     const rolledDestination = bossDestinations[bossDestinationRoll - 1]
       ?? (floor > 4 && trialRoll && !sites[floor] ? regionalDestinations[trialKind] : null);
-    const facility = facilityPlan(floor, regionSpec, rolledDestination);
+    const facility = facilityPlan(floor, regionSpec, rolledDestination, consequence);
     const variation = final ? finalTrial.environment : template.variations[macro - 1];
     const layout = layouts[placement - 1];
     const profile = routeProfiles[placement - 1];
@@ -1072,13 +1127,16 @@
     const hasDivider = geometry === 1;
     const theme = opening?.theme ?? sites[floor]?.theme ?? rolledDestination?.[0]
       ?? (hasDivider ? regionSpec.dividerTheme : regionSpec.theme);
-    const transmission = theme === "relay" && region.id === "transmission";
+    const transmission = theme === "relay" && region.id === "transmission" && !consequence?.dry;
     const waterMap = theme === "sluice" || transmission;
     const dryRoom = !waterMap && !bossTrial && !final && floor !== 2 ? dryProfiles[placement - 1] : null;
     const waterway = waterMap ? profile.waterway : null;
     const terrace = floor > 1 && !final && (hasDivider || stage === 3) ? terraces[placement - 1] : null;
     const elevation = terrace ? makeElevation(terrace, foldY, layout.fold) : null;
-    const structure = floorPlans[placement - 1];
+    // Surveyed planner walls fit flat, dry rooms without changing bridge or stair landings.
+    const plannedStructure = dryRoom && !elevation && !consequence && floor > 4 && Number.isInteger(structureIndex)
+      ? floorPlans[structureIndex] : null;
+    const structure = plannedStructure ?? floorPlans[placement - 1];
     const layoutTitle = waterMap ? ["세로 수로", "가로 수로", "굽은 수로", "나란한 두 수로"][placement - 1] : structure.title;
     const exit = { x: 31.95, y: foldY(15.5 + 0.25 * layout.offsets[0]), kind: "exit" };
     const remoteCells = terrace?.cells ?? [[24.65 + 0.4 * layout.offsets[0], 11.95 + 0.33 * layout.offsets[1]],
@@ -1128,7 +1186,7 @@
         : elevation ? terraceObjectives[trialKind] ?? template.objective : template.objective);
     const title = final ? finalTrial.title : authoredBoss?.title ?? opening?.title
       ?? (floor <= 2 ? template.title : facility.title);
-    const destinationLine = rolledDestination?.[3] ?? (floor === 4 ? openingCues[trialKind] : null);
+    const destinationLine = consequence?.cue[1] ?? rolledDestination?.[3] ?? (floor === 4 ? openingCues[trialKind] : null);
     const result = {
       number: floor,
       kind: trialKind,
@@ -1136,7 +1194,7 @@
       region,
       facility: { feature: facility.feature, title: facility.title, purpose: facility.purpose },
       destination: destinationLine ? { title, kind: trialKind, theme } : null,
-      destinationCue: destinationLine ? { speaker: "등반가", line: destinationLine } : null,
+      destinationCue: destinationLine ? { speaker: consequence?.cue[0] ?? "등반가", line: destinationLine } : null,
       floorPlan: final ? null : { id: waterMap ? waterway ?? "straight" : structure.id, title: layoutTitle },
       title,
       objective,
@@ -1155,7 +1213,7 @@
       rolls: final ? [] : rolls,
       terrain: createTerrain({ geometry, theme, layout, profile, waterway, foldY, transmission,
         terraced: Boolean(elevation), boss: Boolean(bossTrial), macro }),
-      obstacles: roomShapes[geometry].flatMap(([x, y, w, h], index) => {
+      obstacles: (final ? finalTrial.obstacles : roomShapes[geometry]).flatMap(([x, y, w, h], index) => {
         if (!terrace && !bossTrial && !final && profile.replace.includes(index)) return [];
         return [{ x: x + layout.offsets[hasDivider && index < 2 ? 0 : index % layout.offsets.length], y: foldY(y), w, h }];
       }),
@@ -1165,7 +1223,11 @@
           enemyKind = floor >= 29 ? "warden" : "lancer";
         }
         let position = enemyPositions[stage][index];
-        const entranceScout = floor === 1 && stage === 0 && index < entranceScoutPositions.length;
+        const entranceScout = floor === 1 && (stage === 0 ? index < entranceScoutPositions.length : stage === 4 && index === 1);
+        if (floor === 1 && stage === 4) {
+          if (index === 0 || enemyKind === "lancer" || enemyKind === "warden") enemyKind = "guard";
+          else if (enemyKind === "mortar") enemyKind = "sentry";
+        }
         const gateGuard = hasDivider && index === 3;
         if (entranceScout) position = entranceScoutPositions[index];
         if (gateGuard) {
@@ -1179,7 +1241,10 @@
         if (entranceScout) enemy.engaged = true;
         if (gateGuard) enemy.gateGuard = true;
         if (kind === "boss" && bossTrial) enemy.name = bossTrial.bossName;
-        if (stage === 4 && index === 0) enemy.target = true;
+        if (stage === 4 && index === 0) {
+          enemy.target = true;
+          if (consequence?.targetName) enemy.name = consequence.targetName;
+        }
         return enemy;
       }),
       wave: changes.wave.map((kind, index) => spawnEnemy(promoteEnemy(kind, floor, macro, index), wavePositions[index], false, index)),

@@ -24,6 +24,14 @@
       routes: { district: ["valve", "진료소 온수 밸브"], reserve: ["valve", "관문 전열 밸브"] },
       result: { district: "진료소 쪽 관으로 온수가 흐릅니다.", reserve: "온수가 관문 아래 전열관으로 흐릅니다." },
     },
+    inspection: {
+      steps: [{ kind: "switch", device: "pump", label: "봉쇄기 전원 차단",
+        task: "경비가 대피 통로를 잠갔습니다. 봉쇄기의 전원을 내리세요.", done: "봉쇄기가 멈추고 두 통로의 잠금이 풀렸습니다." }],
+      task: "먼저 열 통로를 정하세요. 16층에서 그 길로 들어갑니다.",
+      routes: { escort: ["relay", "환자 이동로 개방"], evidence: ["ledger", "검문 창고 개방"] },
+      result: { escort: "환자 이동로가 열렸습니다. 16층에서 후송대와 합류합니다.",
+        evidence: "검문 창고가 열렸습니다. 16층에서 경비가 압수한 문서를 찾습니다." },
+    },
     ledger: {
       steps: [
         { kind: "switch", device: "pump", label: "기록 소거기 차단", task: "소거기가 작동 중입니다. 전원을 내려 원본을 지키세요.", done: "소거기가 꺼졌습니다. 기록통이 배출됐습니다." },
@@ -87,8 +95,31 @@
         { id: "reserve", title: "상층 비상 설비를 유지한다", description: "설비가 다음 시련에 보호막 22를 공급합니다.", effect: { ward: 22 } },
       ],
     },
+    inspection: {
+      art: "shelter", chapter: "1막 · 15층 봉쇄초소", title: "잠긴 대피로",
+      device: "terminal", prompt: "봉쇄기 확인", choicePrompt: "다음 층의 어느 통로를 열까요?",
+      beats: () => [terminal("봉쇄 제어기", "환자 이동로와 검문 창고가 경비 명령으로 봉쇄되었습니다.")],
+      choices: [
+        { id: "escort", title: "환자 이동로를 연다", description: "16층에서 후송대를 호위합니다.", effect: { ward: 12 } },
+        { id: "evidence", title: "검문 창고를 연다", description: "16층에서 압수된 자료를 찾아냅니다.", effect: { gold: 15 } },
+      ],
+    },
+    collapse: {
+      art: "pressure", chapter: "2막 · 29층 붕괴선", title: "위로 가야 살아",
+      device: "guard", prompt: "부상당한 경비에게 다가가기", choicePrompt: "경비의 마지막 열쇠로 어디를 열까요?",
+      beats: () => [
+        room("부상당한 경비", "난방이 꺼진 게 아니야. 밑에서부터 탑이 무너지고 있어."),
+        player("그걸 알면서 대피로를 잠갔어요?"),
+        room("부상당한 경비", "위쪽 좌석을 팔았어. 명단에 없는 사람은 아래에 남겨 두라는 명령이었고."),
+        room("부상당한 경비", "살려면 위로 가. 30층 수동문까지는 이 열쇠로 열 수 있어."),
+      ],
+      choices: [
+        { id: "alarm", title: "먼저 주민 대피를 알린다", description: "30층에서 경보기를 켜 비상 계단을 엽니다.", effect: { ward: 14 } },
+        { id: "records", title: "대피 좌석 명단을 확보한다", description: "30층에서 명단 통을 회수해 안전한 보관함에 옮깁니다.", effect: { gold: 18 } },
+      ],
+    },
     ledger: {
-      art: "pressure", chapter: "2막 · 329층 압력 기록실", title: "닫는 사람과 여는 사람",
+      art: "pressure", chapter: "3막 · 329층 압력 기록실", title: "닫는 사람과 여는 사람",
       device: "ledger", cue: "ledger-lead", prompt: "사고 장부 열기", choicePrompt: "장부를 공개할까요, 당직자 이야기를 먼저 들을까요?",
       beats: ({ reservoir } = {}) => [
         terminal("압력 기록기", "하층 차단 승인: 라온. 압력 안정 뒤 재개 명령 없음."),
@@ -107,7 +138,7 @@
       ],
     },
     relay: {
-      art: "memory", chapter: "3막 · 665층 전송실", title: "이번에는 전화를 받을 수 있다",
+      art: "memory", chapter: "4막 · 665층 전송실", title: "이번에는 전화를 받을 수 있다",
       device: "relay", cue: "relay-lead", prompt: "교환대 호출 듣기", choicePrompt: "구조 전화를 연결할까요, 기록을 먼저 복사할까요?",
       beats: ({ ledger } = {}) => [
         ledger === "public"
@@ -125,7 +156,7 @@
       ],
     },
     key: {
-      art: "heart", chapter: "4막 · 1009층 인계실", title: "다음 겨울의 당직표",
+      art: "heart", chapter: "5막 · 1009층 인계실", title: "누가 다음 문을 여는가",
       device: "terminal", cue: "handoff-lead", prompt: "제어권 인계 확인", choicePrompt: "복구 후 비상 차단은 누가 맡을까요?",
       beats: ({ relay, ledger } = {}) => [
         terminal("인계 단말기", "재가동 준비 완료. 새 비상 차단 담당자를 지정하세요."),
@@ -253,6 +284,93 @@
     ]),
   };
 
+  const fieldOperation = (floor, title, kind, device, label, task, done, extra) => ({
+    scene: { art: "memory", chapter: floor + "층", title, device, prompt: label,
+      beats: () => [room("등반가", task)] },
+    operation: { steps: [{ kind, device, label, task, done, time: 1.65 }, ...(extra ? [extra] : [])] },
+  });
+
+  const operations = {
+    19: () => fieldOperation(19, "봉쇄 명령의 발신지", "switch", "relay", "검문 채널 도청",
+      "경비가 쓰던 중계기의 봉인을 풀어 누가 폐쇄 명령을 냈는지 확인하세요.", "폐쇄 명령은 사고 신고 전에 내려왔습니다. 더 위에 있는 경비 초소에서 발신됐습니다."),
+    30: ({ collapse }) => collapse === "records"
+      ? fieldOperation(30, "대피 좌석 장부", "lift", "cartridge", "압수 명단 회수",
+        "경비의 열쇠로 열린 함에서 대피 좌석 명단을 회수하세요.", "대피 좌석 명단을 들었습니다.",
+        { kind: "fit", device: "ledger", label: "독립 보관함에 명단 보존", task: "경비가 지우기 전에 명단을 독립 보관함에 넣으세요.", done: "명단을 봉인했습니다. 판매 대금이 경비부 계좌로 흘러간 흔적이 남았습니다." })
+      : fieldOperation(30, "비상 계단", "switch", "relay", "주민 대피 경보",
+        "경비의 열쇠를 꽂아 경보기를 켜세요. 예비 회선이 비상 계단도 엽니다.", "경보가 울리고 비상 계단이 열렸습니다."),
+    45: () => fieldOperation(45, "끌려 올라온 보급 상자", "lift", "cartridge", "대피소 의료품 확보",
+      "무너진 짐칸의 의료품을 집어 안쪽 대피소까지 옮기세요.", "의료품을 들었습니다.",
+      { kind: "fit", device: "relay", label: "대피소 리프트에 싣기", task: "의료품을 대피소 리프트에 넣으세요.", done: "리프트가 내려갑니다. 하층에서 올라온 사람들에게 의료품이 전달됩니다." }),
+    75: () => fieldOperation(75, "먼저 떠난 엘리베이터", "switch", "pump", "급행 승강기 우선권 차단",
+      "비어 있는 급행 승강기가 비상 계단의 전기를 빨아들이고 있습니다. 전력 우선권을 차단하세요.", "급행 승강기가 멈추고 비상 계단에 불이 켜졌습니다."),
+    125: () => fieldOperation(125, "뿌리 아래의 지주", "hold", "pressure", "흔들리는 지주 받치기",
+      "뿌리가 지지대를 밀어내고 있습니다. 바닥 받침을 눌러 후송 리프트가 지나갈 시간을 버세요.", "후송 리프트가 통과했습니다."),
+    175: () => fieldOperation(175, "봉인된 피난선", "switch", "valve", "빈 객실 봉인 해제",
+      "돈이 들어오기 전에는 빈 객실도 열지 못하게 잠갔습니다. 수동 밸브로 봉인을 푸세요.", "빈 객실이 열려 대피민을 태울 수 있게 됐습니다."),
+    225: () => fieldOperation(225, "균열 측정추", "lift", "cartridge", "균열 센서 회수",
+      "부러진 관측대에서 센서를 가져오세요.", "센서를 들었습니다.",
+      { kind: "fit", device: "terminal", label: "센서를 대피망에 연결", task: "센서를 대피망에 연결해 붕괴 시작 위치를 대조하세요.", done: "압력 손실보다 먼저 암반이 꺾였습니다. 탑의 붕괴는 사고 신고보다 앞서 시작됐습니다." }),
+    275: () => fieldOperation(275, "지워지는 명단", "switch", "pump", "청소 회로 차단",
+      "대피 인원과 좌석 장부를 지우는 회로를 끊으세요.", "삭제가 멎었습니다. 같은 좌석이 몇 번이나 팔렸다는 흔적이 남았습니다."),
+    330: ({ ledger }) => ledger === "public"
+      ? fieldOperation(330, "공개 송신을 막는 차폐", "switch", "relay", "구역 공개 송신 복구",
+        "경비가 장부 송신을 차단했습니다. 쉼터 송신기를 독립 회선으로 돌리세요.", "장부가 하층 광장의 수신기에 도착했습니다.")
+      : fieldOperation(330, "당직자의 원본", "lift", "cartridge", "보호된 증언통 인수",
+        "정비조가 따로 남긴 증언통을 받아 인수함으로 옮기세요.", "증언통을 들었습니다.",
+        { kind: "fit", device: "ledger", label: "증언 보호함에 봉인", task: "증언통을 보호함에 넣어 이름부터 가리세요.", done: "증언이 봉인됐습니다. 정비조가 신원을 가린 채 내용을 검증할 수 있습니다." }),
+    385: () => fieldOperation(385, "무너지는 기록 다리", "hold", "pressure", "기록 수레 건너보내기",
+      "기록을 실은 수레가 지나갈 때까지 다리의 압력을 유지하세요.", "수레가 건넜습니다. 이제 기록 한 곳이 무너져도 증거가 남습니다."),
+    445: () => fieldOperation(445, "없는 사람들의 신호", "switch", "relay", "삭제된 피난 신호 중계",
+      "명단에서 지워진 구역의 조난 신호를 공용 회선으로 돌리세요.", "지워졌던 구역이 구조망에 다시 올라왔습니다."),
+    505: () => fieldOperation(505, "비상 산소", "lift", "cartridge", "산소 셀 회수",
+      "연기가 깔린 계단으로 산소 셀을 보내야 합니다.", "산소 셀을 들었습니다.",
+      { kind: "fit", device: "pump", label: "비상 산소관에 연결", task: "산소 셀을 비상 산소관에 끼우세요.", done: "계단의 비상 산소관이 연결됐습니다." }),
+    565: () => fieldOperation(565, "정지 명령의 대가", "switch", "terminal", "유료 통과 제한 해제",
+      "구조요청을 막고 요금부터 받는 제한기를 해제하세요.", "요금 제한이 해제돼 구조대가 통과할 수 있습니다."),
+    615: () => fieldOperation(615, "아직 살아 있는 호출", "hold", "pressure", "끊긴 회선 유지",
+      "끊어지는 호출을 교환대까지 올릴 수 있게 접점을 붙잡으세요.", "호출이 위층 교환대로 넘어갔습니다."),
+    725: () => fieldOperation(725, "낙하 방지틀", "switch", "valve", "대피 통로 고정 장치 작동",
+      "옛 전송기가 바닥을 당기고 있습니다. 고정 장치로 대피 통로를 지탱하세요.", "통로가 고정됐습니다. 마지막 장비가 넘어올 수 있습니다."),
+    785: () => fieldOperation(785, "돌아오는 길", "switch", "relay", "남은 생존자에게 길 밝히기",
+      "돌아오는 구조대가 어둠 속에서 길을 놓치고 있습니다. 유도등을 켜세요.", "유도등이 켜졌습니다. 구조대가 신호를 따라옵니다."),
+    855: () => fieldOperation(855, "벽 너머의 빛", "switch", "terminal", "차광 장치 개방",
+      "탑 바깥에 있을 수 없는 빛이 새어 나옵니다. 차광 장치를 열어 방향을 확인하세요.", "빛은 탑 바깥이 아니라, 탑의 중심에서 하늘로 치솟고 있습니다."),
+    915: () => fieldOperation(915, "가벼워진 잔해", "lift", "cartridge", "떠오른 돌 조각을 채집",
+      "돌 조각들이 바닥에서 떠오릅니다. 채집통을 가져가세요.", "채집통을 들었습니다.",
+      { kind: "fit", device: "terminal", label: "중력 계기에 표본 넣기", task: "계기에 표본을 넣어 방향을 확인하세요.", done: "돌은 무게를 잃은 게 아닙니다. 정상에 생겨나는 무언가에 끌려갑니다." }),
+    965: () => fieldOperation(965, "누구를 태울 것인가", "switch", "ledger", "유료 승선표 폐기",
+      "마지막 승선표 분배기가 여전히 좌석을 팔고 있습니다. 장치를 끄세요.", "남은 객실이 모든 생존자에게 개방됐습니다."),
+    1010: ({ key }) => key === "districts"
+      ? fieldOperation(1010, "구역의 인계 시험", "switch", "relay", "구역별 제어 회선 연결",
+        "구역 대표들이 각자 문을 열 수 있도록 독립 회선을 연결하세요.", "구역별 인계가 끝났습니다. 중앙의 허가를 기다리지 않고 대피문을 열 수 있습니다.")
+      : fieldOperation(1010, "중앙의 인계 시험", "hold", "pressure", "중앙 차단기 부하 유지",
+        "정비조 차단기에 전원이 들어오는 동안 인계판을 밟아 압력을 유지하세요.", "중앙 차단기가 정비조에 연결됐습니다. 각 구역 계기판에도 압력이 표시됩니다."),
+    1055: () => fieldOperation(1055, "배분 권한 시험", "hold", "pressure", "새 인계 회로 유지",
+      "대피로를 통제하는 새 회로가 내려앉으려 합니다. 부하가 분산될 때까지 압력을 유지하세요.", "인계 회로가 안정됐습니다. 비상문을 이곳에서도 열 수 있습니다."),
+    1105: () => fieldOperation(1105, "살아 있는 신호를 분리한다", "switch", "relay", "별 공명기와 대피망 분리",
+      "정상에서 내려온 진동이 대피 회선을 삼키고 있습니다. 살아 있는 신호를 별도 회선으로 옮기세요.", "대피망이 분리됐습니다. 정상으로 가는 데 주민을 실어 보낼 필요가 없습니다."),
+    1165: () => fieldOperation(1165, "새벽처럼 보이는 것", "switch", "terminal", "가짜 수평선 차폐 해제",
+      "하늘 전체가 새벽처럼 빛납니다. 창을 가린 차폐를 열어 실제 발광원을 확인하세요.", "지평선 너머의 빛은 하나의 점에서 자라고 있습니다."),
+    1225: () => fieldOperation(1225, "마지막 정박장", "hold", "pressure", "대피선 이탈 지원",
+      "정박 고리가 끊기고 있습니다. 압력을 유지해 마지막 대피선이 빠져나가게 하세요.", "대피선이 탑에서 벗어났습니다. 정상에는 이제 등반가만 남았습니다."),
+    1285: () => fieldOperation(1285, "별에 연결된 관", "switch", "valve", "생존 회선 최종 분리",
+      "별로 이어진 관 하나가 아직 대피선을 향하고 있습니다. 수동 밸브를 잠그세요.", "대피선을 잡아당기던 흐름이 멎었습니다. 정상으로 이어지는 길이 열렸습니다."),
+  };
+
+  const starPrelude = {
+    art: "star", chapter: "종장 · 1332층", title: "태어나지 않은 별",
+    device: "terminal", prompt: "우주의 목소리",
+    beats: () => [
+      room("우주", "이건… 오직 새로운 별을 만들기 위한 시련이에요."),
+      player("뭐…라고? 밑에서 무너진 사람들도 전부 시련이었다고요?"),
+      room("우주", "탑은 별이 될 재료를 모았어요. 누굴 버리고 길을 막을지는 탑에 살던 사람들이 정했고요."),
+      player("그럼 별을 만든다는 이유로, 이제 막 빠져나간 사람들까지 데려가겠다는 건 누구 결정이죠?"),
+      room("우주", "별은 마지막 연료를 기다려요. 내 앞에 있는 산파가 그 생명들을 돌려주지 않을 거예요."),
+      player("살아 있는 사람을 빼고도 태어날 수 있는지, 제가 알아보죠."),
+    ],
+  };
+
   function epilogue(choices = {}) {
     const districts = choices.key === "districts";
     const publicRecord = choices.ledger === "public";
@@ -263,10 +381,11 @@
       ? publicRecord ? "광장의 계기판" : "다섯 개의 열쇠"
       : publicRecord ? "유리벽 제어실" : "야간 정비조";
     return {
-      art: "epilogue", chapter: "종장 · 다시 흐르는 열", title,
-      device: "radio", prompt: "진료소 응답 듣기",
+      art: "epilogue", chapter: "종장 · 새 별 아래", title,
+      device: "radio", prompt: "대피선 신호 받기",
       beats: () => [
-        radio("진료소", "관에 물 돌아요. 밸브를 놓으세요."),
+        room("우주", "탑의 잔해만으로 불이 붙었어요. 저 별에는 누구도 갇혀 있지 않아요."),
+        radio("진료소", "대피선에서도 보여요. 우린 여기 있어요."),
         districts
           ? radio("구역 대표", "구역마다 차단 열쇠를 맡았어요.")
           : radio("야간조", "제어반은 우리가 맡아요. 다음 교대부터 구역 대표도 계기판을 읽습니다."),
@@ -286,5 +405,5 @@
     };
   }
 
-  window.TowerStory = { incidents, scenes, interludes, shelterNotes, epilogue, cues };
+  window.TowerStory = { incidents, operations, scenes, interludes, shelterNotes, starPrelude, epilogue, cues };
 })();

@@ -808,6 +808,7 @@ kbd {
 .overlay[data-mode="story"][data-scene="pressure"] { --scene-accent: #f1b499; --scene-shade: #4c3227; }
 .overlay[data-mode="story"][data-scene="memory"] { --scene-accent: #d6c4eb; --scene-shade: #3e344a; }
 .overlay[data-mode="story"][data-scene="heart"] { --scene-accent: #ffe0a7; --scene-shade: #514328; }
+.overlay[data-mode="story"][data-scene="star"] { --scene-accent: #d8deff; --scene-shade: #20274a; }
 .overlay[data-mode="story"][data-scene="epilogue"] { --scene-accent: #c8e0bc; --scene-shade: #353f2d; }
 
 .overlay[data-mode="story"] .overlay-panel {
@@ -1447,4 +1448,79 @@ kbd {
   *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; animation-delay: 0s !important; }
   .overlay[data-mode="rolling"] .overlay-panel { animation: none; }
   .overlay[data-mode="title"][data-title-menu="false"] .primary-action { animation: none; }
+}
+
+#tower-admin-trigger {
+  position: absolute;
+  z-index: 7;
+  right: clamp(10px, 2vw, 24px);
+  bottom: clamp(10px, 2vw, 24px);
+  display: none;
+  min-width: 58px;
+  min-height: 36px;
+  padding: 4px 11px;
+  border: 1px solid #817151;
+  border-radius: 5px;
+  background: #15201ef0;
+  color: #eddbb6;
+  font-size: 12px;
+}
+
+.game-shell[data-app-mode="title"] #tower-admin-trigger { display: inline-grid; place-items: center; }
+#tower-admin-trigger:hover { border-color: var(--brass); background: #293a33; }
+
+#tower-admin-dialog {
+  inline-size: min(356px, calc(100% - 28px));
+  max-block-size: calc(100dvh - 24px);
+  overflow: auto;
+  margin: auto;
+  padding: 0;
+  border: 1px solid #817151;
+  border-radius: 12px;
+  background: #182522;
+  color: var(--text);
+  box-shadow: 0 18px 60px #060907b8;
+}
+
+#tower-admin-dialog[open] { animation: tower-admin-in 160ms ease-out both; }
+#tower-admin-dialog::backdrop { background: #080d0cbf; }
+#tower-admin-dialog .tower-admin-form { display: grid; gap: 9px; padding: clamp(17px, 4vw, 26px); }
+#tower-admin-dialog h2 { margin-bottom: 4px; color: var(--brass); font-size: 22px; }
+#tower-admin-dialog label { font-weight: 650; }
+#tower-admin-dialog input {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--edge-strong);
+  border-radius: 5px;
+  background: var(--surface-low);
+  color: var(--text);
+  font: 16px var(--mono);
+}
+
+#tower-admin-dialog input[aria-invalid="true"] { border-color: var(--danger); }
+#tower-admin-help { color: var(--muted); font-size: 13px; }
+#tower-admin-error { min-height: 1.45em; color: var(--danger); font-size: 13px; }
+#tower-admin-dialog .tower-admin-actions { display: flex; justify-content: flex-end; gap: 8px; }
+#tower-admin-dialog button {
+  min-width: 64px;
+  min-height: 40px;
+  border: 1px solid var(--edge-strong);
+  border-radius: 5px;
+  background: #273630;
+  color: var(--text);
+}
+
+#tower-admin-dialog button[type="submit"] { border-color: #a38455; background: #4a3a25; color: #fff0ce; }
+#tower-admin-dialog button:enabled:hover { border-color: var(--brass); }
+#tower-admin-dialog button:disabled { opacity: .64; }
+
+@keyframes tower-admin-in {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (pointer: coarse) {
+  #tower-admin-trigger { min-height: 44px; }
+  #tower-admin-dialog button { min-height: 44px; }
 }

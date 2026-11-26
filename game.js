@@ -42,7 +42,8 @@
     vent: { period: 6.5, warningAt: 3.7, activeAt: 5, stopsAt: 6.1, damage: 15 },
   };
   const entrance = { width: 34, height: 26, spawn: { x: 4, y: 13 }, enemies: [], obstacles: [], items: [] };
-  const storyChapters = { 5: "reservoir", 329: "ledger", 665: "relay", 1009: "key" };
+  const previewFloorLimit = 20;
+  const storyChapters = { 5: "reservoir", 15: "inspection", 29: "collapse", 329: "ledger", 665: "relay", 1009: "key" };
   const clinicLanding = {
     ...entrance, title: "진료소 배관실", theme: "sluice", fixture: "cold-pipe",
     width: 12, height: 9, spawn: { x: 3.55, y: 5.25 }, storySocket: { x: 6.35, y: 4.9 },
@@ -71,6 +72,8 @@
   let stage;
   let state;
   let minimapBackground;
+  let localMapMenu = false;
+  let adminRun = false;
   let cellGoal = 0;
   let allocation;
   let action;
@@ -162,14 +165,16 @@
       ...enemy, id: index, hp, maxHp: hp, windup: 0, attackRange: base.range,
       damage: Math.round(((base.damage + (enemy.elite ? 3 : 0)) * (1 + depth * 0.040) + (creature ? 3 : 0)) * damageMultiplier),
       guarded: enemy.kind === "warden", marked: Boolean(enemy.target),
+      stellar: floor === content.floorCount && enemy.kind === "boss",
       flash: 0, cooldown: (floor === 1 ? 0.83 : 0.66) + index % 4 * 0.13,
       facingX: -1, facingY: 0, steering: 0,
     };
   }
 
-  function newRun(survivor) {
+  function newRun(survivor, jumpFloor) {
+    adminRun = jumpFloor !== undefined;
     const seeds = crypto.getRandomValues(new Uint32Array(content.floorCount + 1));
-    const progress = survivor?.progress ?? rpg.createProgress(allocation);
+    const progress = survivor?.progress ?? rpg.createProgress(adminRun ? undefined : allocation);
     const classId = survivor?.classId ?? null;
     const stats = village.applyClass(rpg.getStats(progress), classId);
     const random = randomFrom(seeds[0]);
@@ -178,7 +183,9 @@
       storyChoices: survivor?.storyChoices ?? {}, scenesSeen: survivor?.scenesSeen ?? [],
       trials: [], progress, stats, classId, quests: [], villageVisits: {}, nextWard: 0, nextPower: 0 };
     renderGear();
-    if (!run.storyChoices.commission) {
+    if (adminRun) {
+      enterFloor(jumpFloor, stats.maxHp);
+    } else if (!run.storyChoices.commission) {
       openLanding(1, stats.maxHp, { scene: story.scenes.commission, chapter: "commission" });
     } else {
       enterFloor(1, stats.maxHp);
@@ -188,7 +195,7 @@
   function viewFloor(number, data, health, mode, damageMultiplier = 1) {
     return {
       floor: number,
-      kind: data.kind, theme: data.theme, revealed: false,
+      kind: data.kind, theme: data.theme, region: data.region, revealed: false,
       map: { width: data.width, height: data.height },
       facility: data.facility ?? null,
       elevation: data.elevation ?? null,
@@ -214,7 +221,11 @@
       return;
     }
     const floorSeed = run.floorSeeds[number - 1] ?? crypto.getRandomValues(new Uint32Array(1))[0];
-    stage = content.createFloor(number, randomFrom(floorSeed));
+    const region = content.getRegion(number);
+    const topology = run.localPlans?.[number] ?? window.BrassenMapPlanner?.structure({
+      floor: number, seed: floorSeed, district: region.id, choices: run.storyChoices,
+    });
+    stage = content.createFloor(number, randomFrom(floorSeed), undefined, run.storyChoices, topology);
     const routeEffects = content.routes.find(({ id }) => id === routeId)?.effects ?? {};
     state = viewFloor(number, stage, health, "rolling", routeEffects.enemyDamageMultiplier);
     state.routeEffects = routeEffects;
@@ -252,7 +263,7 @@
       state.gateMarker = { x: stage.width - 1.55, y: stage.height * 0.61, type: "sluice", active: false, openProgress: 0 };
     }
     if (stage.final && exit) {
-      state.storyPoint = { x: exit.x, y: exit.y, ...encounter, atExit: true,
+      state.storyPoint = { x: exit.x, y: exit.y, scene: story.epilogue(run.storyChoices), atExit: true,
         prompt: "공급 밸브 열기", device: "valve", active: false };
     } else if (encounter) {
       state.storyPoint = { ...(stage.storySocket ?? { x: 30.7, y: 16.3 }), ...encounter, active: false };
@@ -269,6 +280,7 @@
   }
 
   function saveCheckpoint(floor, health, route) {
+    if (adminRun) return;
     const { random, stats, floorSeeds, ...data } = run;
     try {
       localStorage.setItem(checkpointKey, JSON.stringify({ floor, health, route, randomSeed: random.snapshot(),
@@ -290,6 +302,7 @@
   }
 
   function restoreCheckpoint(saved) {
+    adminRun = false;
     try {
       for (const entry of saved.run.rewards) {
         if (entry.kind === "gear") {
@@ -420,6 +433,8 @@
   }
 
   function setupTitle(menu = false) {
+    localMapMenu = false;
+    adminRun = false;
     run = undefined;
     stage = null;
     cellGoal = 0;
@@ -440,12 +455,77 @@
       id: "new-run", title: "새 등반", description: checkpoint ? "시련에 들어가면 새 기록이 저장됩니다." : "능력치 5점을 배분해 등반을 준비합니다.",
       choose: setupBuild,
     });
-    panel({ kicker: "", title: "Brassen Tower", copy: menu ? "" : "1,332층을 오르는 액션 로그라이크",
+    if (menu && window.TowerLocalAI) options.push({
+      id: "map-model", title: "로컬 지도 모델",
+      description: window.TowerLocalAI.getStatus().phase === "ready" ? "모델이 준비됐습니다." : "선택 사항 · 기본 지도 모델은 이미 내장되어 있습니다.",
+      choose: () => showLocalMapMenu(),
+    });
+    panel({ kicker: "", title: "Brassen Tower", copy: menu ? "" : "1,332층을 향하는 액션 로그라이크 · 1–20층 체험판",
       options, primary: menu ? undefined : "시작",
       activate: () => {
         audio.unlock().then(refreshAudioUI);
         setupTitle(true);
       } });
+  }
+
+  function showLocalMapMenu(message) {
+    const ai = window.TowerLocalAI;
+    const status = ai.getStatus();
+    localMapMenu = true;
+    const busy = status.phase === "loading" || status.phase === "generating";
+    const load = (file) => {
+      let lastPercent = -1;
+      ai.load(file, { onProgress: ({ loaded, total }) => {
+        const percent = total > 0 ? Math.min(100, Math.round(loaded / total * 100)) : 0;
+        if (localMapMenu && percent !== lastPercent) {
+          lastPercent = percent;
+          setText("overlay-copy", "로컬 모델 준비 중 · " + percent + "%");
+        }
+      } }).then(() => {
+        if (localMapMenu) showLocalMapMenu("모델을 불러왔습니다. 등반 중 일부 일반 전장의 골격을 미리 생성합니다.");
+      }, (error) => {
+        if (localMapMenu) showLocalMapMenu("모델을 불러오지 못했습니다. " + error.message);
+      });
+      showLocalMapMenu("로컬 모델을 준비하고 있습니다.");
+    };
+    const ready = status.phase === "ready";
+    const options = [
+      { id: "map-load-file", title: "GGUF 모델 불러오기", description: "이 기기에 저장된 모델을 선택합니다.", disabled: busy,
+        choose: () => {
+          const picker = document.createElement("input");
+          picker.type = "file";
+          picker.accept = ".gguf";
+          picker.addEventListener("change", () => { if (picker.files?.[0]) load(picker.files[0]); }, { once: true });
+          picker.click();
+        } },
+      { id: "map-download", title: "Kanana 내려받기", description: "약 1.52GB · 다운로드한 뒤 추론은 이 브라우저에서 실행합니다.", disabled: busy,
+        choose: () => load() },
+    ];
+    if (ready) options.push({ id: "map-unload", title: "모델 끄기", choose: async () => {
+      await ai.unload();
+      if (localMapMenu) showLocalMapMenu();
+    } });
+    panel({ kicker: "지도 생성", title: "로컬 지도 모델",
+      copy: message ?? (ready ? status.model : "내장 모델로 바로 플레이할 수 있습니다. 추가 모델을 불러오면 호환되는 전장에 새 지도 골격을 제안합니다."),
+      options, primary: "돌아가기", activate: () => setupTitle(true) });
+  }
+
+  function queueLocalMap() {
+    const ai = window.TowerLocalAI;
+    if (ai?.getStatus().phase !== "ready") return;
+    const campaign = run;
+    const floor = state.floor + 3;
+    const plannedFloor = Array.from({ length: 5 }, (_, offset) => floor + offset).find((number) =>
+      number > 4 && number < content.floorCount && number % 10 !== 9 &&
+      !content.isShelterFloor(number) && campaign.localPlans?.[number] === undefined);
+    if (!plannedFloor) return;
+    const seed = campaign.floorSeeds[plannedFloor - 1];
+    ai.generate({ floor: plannedFloor, seed, theme: stage.theme, kind: state.kind }).then((plan) => {
+      if (run !== campaign || state.floor >= plannedFloor) return;
+      const wideRooms = plan.rooms.filter(({ w, h }) => w > h).length;
+      const structure = plan.topology === "loop" ? 1 : plan.topology === "fork" ? 0 : wideRooms > 1 ? 3 : 2;
+      (campaign.localPlans ??= {})[plannedFloor] = structure;
+    }).catch(() => {});
   }
 
   function updateBuild() {
@@ -531,6 +611,17 @@
     state.revealTimer = reducedMotion ? 0 : 1.05;
     state.cameraShake = reducedMotion ? 0 : 0.14;
     enterPlayableScene();
+    queueLocalMap();
+    if (stage.final && state.kind === "boss") {
+      const anchor = { ...stage.storySocket, scene: story.starPrelude, active: false, celestial: true };
+      state.storyPoint = anchor;
+      showScene(anchor, () => {
+        state.storyPoint = null;
+        enterPlayableScene();
+        notify("별의 산파 · 접근하는 별무리를 피해 틈을 노리세요.", 2600);
+      });
+      return;
+    }
     if (state.floor === 2) showRadio("sluice-open");
     if (state.floor === 3) showRadio("pressure-start");
     if (stage.final) showRadio("final-lead");
@@ -608,10 +699,12 @@
       if (setting && !content.isShelterFloor(floor)) return null;
       return { scene: story.scenes[chapter], chapter, setting };
     }
-    if (floor === content.floorCount) return { scene: story.epilogue(run.storyChoices) };
+    if (floor === content.floorCount) return null;
+    const seen = run.scenesSeen.includes(floor);
+    const operation = story.operations[floor]?.(run.storyChoices);
+    if (operation && !seen) return operation;
     const scene = story.interludes[floor] ?? story.shelterNotes[floor];
     if (!scene) return null;
-    const seen = run.scenesSeen.includes(floor);
     if (seen && !content.isShelterFloor(floor)) return null;
     return { scene, setting: seen ? "read" : undefined };
   }
@@ -636,6 +729,7 @@
     renderFloorSteps();
     enterPlayableScene();
     if (state.storyPoint?.active && !startIncident(state.storyPoint)) showRadio(encounter.scene.cue);
+    queueLocalMap();
   }
 
   function hideRadio() {
@@ -700,10 +794,10 @@
   }
 
   function startIncident(anchor) {
-    const definition = story.incidents[anchor.chapter];
+    const definition = anchor.operation ?? story.incidents[anchor.chapter];
     if (!definition) return false;
     const steps = definition.steps;
-    const options = anchor.scene.choices;
+    const options = anchor.scene.choices ?? [];
     const positions = incidentPositions(anchor, steps.length + options.length);
     if (!positions) return false;
     const points = steps.map(({ done, ...step }, index) => ({
@@ -735,7 +829,12 @@
     incident.step++;
     incident.progress = 0;
     if (incident.step === incident.steps) {
-      for (const branch of incident.points.slice(incident.steps)) branch.active = true;
+      const branches = incident.points.slice(incident.steps);
+      if (!branches.length) {
+        finishIncident(point, point.doneText);
+        return;
+      }
+      for (const branch of branches) branch.active = true;
       incident.task = incident.definition.task;
     } else {
       const next = incident.points[incident.step];
@@ -746,6 +845,26 @@
     addEffect("loot", point, 0.6);
     notify(point.doneText);
     setText("live-status", incident.task);
+  }
+
+  function finishIncident(point, result) {
+    const incident = state.incident;
+    const anchor = incident.anchor;
+    for (const entry of incident.points) entry.active = false;
+    point.done = true;
+    point.triggeredAt = performance.now() / 1000;
+    incident.complete = true;
+    incident.payload = false;
+    incident.task = result;
+    anchor.setting = point.choice ?? "read";
+    anchor.triggeredAt = point.triggeredAt;
+    if (!anchor.chapter && !run.scenesSeen.includes(state.floor)) run.scenesSeen.push(state.floor);
+    audio.deviceSignal(point.device);
+    addEffect("loot", point, 0.75);
+    notify(result, 2800);
+    setText("live-status", result);
+    if (state.shelter) saveVillage();
+    else incident.leaveAt = state.elapsed + 1.1;
   }
 
   function useIncidentPoint(point) {
@@ -759,20 +878,7 @@
       const anchor = incident.anchor;
       const choice = anchor.scene.choices.find(({ id }) => id === point.choice);
       if (!applyStoryChoice(anchor.chapter, choice)) return;
-      for (const entry of incident.points) entry.active = false;
-      point.done = true;
-      point.triggeredAt = performance.now() / 1000;
-      incident.complete = true;
-      incident.payload = false;
-      incident.task = incident.definition.result[point.choice];
-      anchor.setting = point.choice;
-      anchor.triggeredAt = point.triggeredAt;
-      audio.deviceSignal(point.device);
-      addEffect("loot", point, 0.75);
-      notify(incident.task, 2300);
-      setText("live-status", incident.task);
-      if (state.shelter) saveVillage();
-      else incident.leaveAt = state.elapsed + 1.1;
+      finishIncident(point, incident.definition.result[point.choice]);
       return;
     }
     if (point.kind === "lift") incident.payload = true;
@@ -917,7 +1023,8 @@
   }
 
   function renderFloorSteps() {
-    const start = Math.max(1, Math.min(state.floor - 1, content.floorCount - 3));
+    const limit = adminRun ? content.floorCount : Math.max(previewFloorLimit, state.floor);
+    const start = Math.max(1, Math.min(state.floor - 1, limit - 3));
     elements["floor-steps"].replaceChildren(...Array.from({ length: 4 }, (_, index) => {
       const floor = start + index;
       const step = document.createElement("span");
@@ -1104,7 +1211,7 @@
     const alive = livingEnemies();
     const maxHp = state.player.maxHp;
     const status = run ? rpg.getLevelStatus(run.progress) : null;
-    setText("floor-value", state.floor + " / " + content.floorCount);
+    setText("floor-value", state.floor + " / " + (adminRun ? content.floorCount : Math.max(previewFloorLimit, state.floor)));
     const region = state.revealed ? stage.region?.name ?? "" : "";
     setText("region-label", region);
     elements["region-label"].hidden = !region;
@@ -1611,6 +1718,10 @@
       return;
     }
     if (station.kind === "departure") {
+      if (!adminRun && state.floor >= previewFloorLimit && run.previewComplete) {
+        showPreviewComplete();
+        return;
+      }
       if (state.incident && !state.incident.complete) {
         notify(state.incident.task, 1800);
         return;
@@ -2077,14 +2188,15 @@
       state.bossPhaseTwo = true;
       boss.shielded = true;
       state.bossShockCooldown = 0.15;
-      notify("수호자 폭주 · 바닥 표식 밖으로 피하세요.");
+      notify(stage.final ? "별무리가 모입니다 · 빛이 닿기 전에 표식 밖으로 피하세요." :
+        "수호자 폭주 · 바닥 표식 밖으로 피하세요.");
       syncMusic();
     }
     if (!state.bossOverdrive && boss.hp <= boss.maxHp * 0.27) {
       state.bossOverdrive = true;
       boss.shielded = true;
       state.bossShockCooldown = Math.min(state.bossShockCooldown, 0.14);
-      notify("과열 · 충격파가 연달아 퍼집니다.");
+      notify(stage.final ? "별이 점화됩니다 · 유성 낙하지점이 교대로 터집니다." : "과열 · 충격파가 연달아 퍼집니다.");
       syncMusic();
     }
     if (state.bossTargets.length) {
@@ -2122,6 +2234,21 @@
       y: Math.max(0.6, Math.min(state.map.height - 0.6, y)),
       radius, remaining, active: false, overdrive: state.bossOverdrive,
     });
+    if (stage.final) {
+      const rotation = state.shockBursts * 0.19;
+      const count = state.bossOverdrive ? 6 : 4;
+      const center = targetAt(player.x, player.y, 1.45, 0.90);
+      const volley = { ...targetAt(boss.x, boss.y, 1.12, 1.48), volley: true, angle: rotation };
+      state.bossTargets = [center, volley];
+      for (let index = 0; index < count; index++) {
+        const angle = rotation + index * Math.PI * 2 / count;
+        state.bossTargets.push(targetAt(player.x + Math.cos(angle) * 3.2, player.y + Math.sin(angle) * 3.2,
+          1.12, 1.18 + (index % 2) * 0.29));
+      }
+      boss.windup = 0;
+      boss.cooldown = Math.max(boss.cooldown, 1.5);
+      return;
+    }
     state.bossTargets = [targetAt(player.x, player.y, deep ? 1.78 : 1.68, 0.84)];
     if (state.floor >= 19 || state.bossOverdrive) {
       const volley = targetAt(boss.x, boss.y, 1.05, 1.11);
@@ -2239,6 +2366,15 @@
 
   function finishFloor() {
     if (state.mode !== "playing") return;
+    if (stage.final && state.kind === "boss") {
+      settleCombat();
+      syncMusic();
+      const anchor = { x: state.player.x, y: state.player.y, scene: story.epilogue(run.storyChoices),
+        celestial: true, active: false };
+      state.storyPoint = anchor;
+      showScene(anchor, finishFloorRewards);
+      return;
+    }
     if (state.storyPoint || state.gateMarker) {
       settleCombat();
       notify(null);
@@ -2393,6 +2529,10 @@
 
   function chooseRoute() {
     run.selectedReward = undefined;
+    if (!adminRun && state.floor >= previewFloorLimit) {
+      showPreviewComplete();
+      return;
+    }
     if (state.floor === content.floorCount) {
       endRun(true);
       return;
@@ -2431,6 +2571,15 @@
     });
   }
 
+  function showPreviewComplete() {
+    state.mode = "victory";
+    run.previewComplete = true;
+    saveCheckpoint(state.floor, state.player.hp);
+    panel({ kicker: "체험판 · " + previewFloorLimit + "층", title: "첫 구간 등반 완료",
+      copy: "진행 기록을 저장했습니다. 시작 화면에서 이어하면 마지막 쉼터로 돌아갑니다.",
+      primary: "시작 화면으로", activate: () => setupTitle() });
+  }
+
   function loseRewards() {
     const cutoff = run.totalClears - 5;
     const recent = run.rewards.filter((entry) => entry.earnedAt > cutoff);
@@ -2463,7 +2612,9 @@
     const progress = run.cleared + "층 통과 · Lv. " + run.progress.level + " · " + time + " · 금화 " + run.gold;
     const trials = run.trials.length ? " · 추가 목표 " + run.trials.length + "개 달성" : "";
     if (victory) {
-      try { localStorage.removeItem(checkpointKey); } catch {}
+      if (!adminRun) {
+        try { localStorage.removeItem(checkpointKey); } catch {}
+      }
       panel({ kicker: "이야기 완료", title: story.epilogue(run.storyChoices).title, copy: progress + trials,
         primary: "시작 화면으로", activate: () => setupTitle() });
       return;
@@ -2486,16 +2637,17 @@
       "남은 보유품 " + run.rewards.filter((entry) => entry.kind !== "gold").length + "개 · 금화 " + run.gold,
     ];
     panel({ kicker: "등반 종료", title: state.floor + "층에서 쓰러졌습니다", copy: report.join("\n"),
-      primary: "남은 것을 들고 1층부터", activate: () => newRun(run) });
+      primary: "남은 것을 들고 1층부터", activate: () => newRun(run, adminRun ? 1 : undefined) });
   }
 
   function frame(now) {
     const gap = Math.max(0, now - previousTime);
     const delta = Math.min(1 / 30, gap / 1000);
     previousTime = now;
-    if (state.mode === "rolling" && !document.hidden) advanceEntry(gap);
+    const paused = document.hidden || window.TowerAdmin?.isOpen();
+    if (state.mode === "rolling" && !paused) advanceEntry(gap);
     state.cameraShake = Math.max(0, state.cameraShake - Math.max(0, delta));
-    if (state.mode === "playing" && delta > 0 && !document.hidden) {
+    if (state.mode === "playing" && delta > 0 && !paused) {
       updateGame(delta);
     }
     if (now >= notificationUntil && !elements.notification.hidden) elements.notification.hidden = true;
@@ -2615,6 +2767,11 @@
   });
 
   const previewStats = rpg.getStats(rpg.createProgress());
+  window.TowerAdmin?.setup({ maxFloor: content.floorCount, move(floor) {
+    if (!Number.isInteger(floor) || floor < 1 || floor > content.floorCount) return;
+    if (adminRun && run) enterFloor(floor, run.stats.maxHp);
+    else newRun(undefined, floor);
+  } });
   setupTitle();
   requestAnimationFrame(frame);
 })();

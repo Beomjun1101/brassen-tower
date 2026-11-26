@@ -30,6 +30,43 @@
       materialLight: "#c98664", materialShade: "#20131b", surfaceJoint: "#2d1e2866",
     },
   };
+  const chapterEnvironments = [
+    { through: 28 },
+    { through: 35, landscape: "rupture", upper: "#071923", lower: "#100e1e", fog: "#455053",
+      tiles: ["#35494a", "#44484a", "#3f3b46", "#4a484b"], edge: "#888b78", inlay: "#a0a995",
+      wallX: "#454849", wallY: "#303743", accent: "#dfccb0", materialLight: "#a7a38a", materialShade: "#171c28" },
+    { through: 209, landscape: "roots", upper: "#172c24", lower: "#071619", fog: "#415d3d",
+      tiles: ["#414a32", "#4a5039", "#3b4738", "#4d533e"], edge: "#828b60", inlay: "#929f6e",
+      wallX: "#3a4232", wallY: "#293332", cap: "#98916a", capSide: "#676c49", capDark: "#40462f",
+      accent: "#c5ce92", materialLight: "#a6ad78", materialShade: "#242d25", surfaceJoint: "#2c352866" },
+    { through: 419, landscape: "erosion", upper: "#2d271e", lower: "#17151a", fog: "#916a44",
+      tiles: ["#695c47", "#6e6049", "#665741", "#74614b"], edge: "#ac906a", inlay: "#b09a73",
+      wallX: "#534332", wallY: "#40352c", cap: "#ad946e", capSide: "#80684c", capDark: "#5b4734",
+      accent: "#d4bd8b", materialLight: "#c3a06f", materialShade: "#342921", surfaceJoint: "#4a3b2c66" },
+    { through: 664, landscape: "archive", upper: "#19292d", lower: "#0c141d", fog: "#667372",
+      tiles: ["#4a5151", "#4f5653", "#484e50", "#545b56"], edge: "#8c988f", inlay: "#adb2a2",
+      wallX: "#47504d", wallY: "#343b3b", cap: "#a5a897", capSide: "#696f66", capDark: "#484e48",
+      accent: "#c3cebb", materialLight: "#a7b4ad", materialShade: "#202b31", surfaceJoint: "#2b373566" },
+    { through: 1008, landscape: "ruins", upper: "#232336", lower: "#110f1d", fog: "#5f5469",
+      tiles: ["#4d4859", "#555164", "#4d4d5d", "#5e5363"], edge: "#9889a5", inlay: "#ae9eb1",
+      wallX: "#4c425b", wallY: "#322d46", cap: "#a69ab6", capSide: "#6d637c", capDark: "#4d455f",
+      accent: "#d8bfd6", materialLight: "#b29ab7", materialShade: "#2a263b", surfaceJoint: "#3b344966" },
+    { through: 1179, landscape: "dawn", upper: "#3d2948", lower: "#211829", fog: "#d49581",
+      tiles: ["#73606a", "#78676c", "#6f5b64", "#856d73"], edge: "#b69a97", inlay: "#d1a9a4",
+      wallX: "#6b515b", wallY: "#4e3b51", cap: "#c6a3a0", capSide: "#967678", capDark: "#69505c",
+      accent: "#f1c2a5", materialLight: "#d59c96", materialShade: "#37293e", surfaceJoint: "#4a384c66" },
+    { through: 1331, landscape: "remains", upper: "#241f30", lower: "#130f1b", fog: "#5d515c",
+      tiles: ["#524c56", "#59505a", "#504b58", "#5f545d"], edge: "#9a8b9b", inlay: "#b3a3aa",
+      wallX: "#494153", wallY: "#352e42", cap: "#aaa099", capSide: "#736675", capDark: "#4f4657",
+      accent: "#ccc1b5", materialLight: "#b6a9a4", materialShade: "#272233", surfaceJoint: "#322a4266" },
+    { through: Infinity, landscape: "stars", upper: "#151435", lower: "#070915", fog: "#57477d",
+      tiles: ["#39394f", "#404158", "#3a3c57", "#45435b"], edge: "#9496c1", inlay: "#a8a9d7",
+      wallX: "#403d61", wallY: "#292641", cap: "#b1b6da", capSide: "#7377a1", capDark: "#4c4e73",
+      accent: "#ded7f7", materialLight: "#a5a8d3", materialShade: "#201f3b", surfaceJoint: "#22224066" },
+  ];
+  const environmentalPalettes = Object.fromEntries(Object.entries(biomes).map(([theme, palette]) => [
+    theme, chapterEnvironments.map((chapter) => chapter.landscape ? { ...palette, ...chapter } : palette),
+  ]));
   const fallbackThemes = ["sluice", "relay", "forge"];
   const backdropCache = new WeakMap();
   const terrainCache = new WeakMap();
@@ -272,6 +309,152 @@
     context.restore();
   }
 
+  function rockHorizon(context, width, height, tint, depth, seed, severe = false) {
+    const steps = 20;
+    const rim = Array.from({ length: steps + 1 }, (_, index) => [
+      width * index / steps,
+      height * (depth - noise(index + seed, 13) * (severe ? .18 : .05)
+        - Math.sin(index * .29 + seed) ** 2 * (severe ? .19 : .13)),
+    ]);
+    poly(context, [...rim, [width, height], [0, height]], tint);
+    return rim;
+  }
+
+  function starBackdrop(context, width, height) {
+    const belt = context.createLinearGradient(0, height * .7, width, 0);
+    belt.addColorStop(0, "#5d467e00");
+    belt.addColorStop(.43, "#74579b45");
+    belt.addColorStop(.62, "#8c66a04f");
+    belt.addColorStop(1, "#43296400");
+    poly(context, [[0, height * .58], [width * .82, 0], [width, height * .04],
+      [width, height * .28], [width * .10, height * .86], [0, height * .77]], belt);
+    for (let i = 0; i < 180; i++) {
+      const x = width * noise(i, 73);
+      const y = height * (i < 112 ? noise(i, 17) : clamp(.66 - x / width * .52 + (noise(i, 37) - .5) * .29, 0, 1));
+      const radius = .42 + noise(i, 95) ** 2 * 1.12;
+      ellipse(context, x, y, radius, radius, i % 7 === 0 ? "#ffe0bbbf" : "#d9d4fc9f");
+      if (i < 10 && radius > 1) {
+        line(context, [[x - radius * 2.65, y], [x + radius * 2.65, y]], "#dfc7f3a1", .62);
+        line(context, [[x, y - radius * 3.35], [x, y + radius * 3.35]], "#eee2fcc1", .68);
+      }
+    }
+    const radius = Math.min(width, height) * .113;
+    const x = width * .71;
+    const y = height * .21;
+    context.save();
+    context.translate(x, y);
+    context.rotate(-.29);
+    ellipse(context, 0, 0, radius * 2.08, radius * .45, null, "#d2c4eb5c", Math.max(1, radius * .033));
+    ellipse(context, 0, 0, radius * 1.89, radius * .39, null, "#6f99cf59", Math.max(1.3, radius * .06));
+    const disk = context.createLinearGradient(-radius, -radius, radius * .72, radius * .70);
+    disk.addColorStop(0, "#ccc4e5");
+    disk.addColorStop(.33, "#8f81b6");
+    disk.addColorStop(.71, "#414770");
+    disk.addColorStop(1, "#201c42");
+    ellipse(context, 0, 0, radius, radius, disk, "#e5cef273", .85);
+    context.save();
+    context.beginPath();
+    context.arc(0, 0, radius, 0, tau);
+    context.clip();
+    for (let band = -2; band <= 3; band++) {
+      const px = band * radius * .20;
+      line(context, [[-radius, px], [-radius * .3, px + radius * .06], [radius, px - radius * .08]],
+        band % 2 ? "#ddc4e936" : "#292b593e", radius * .09);
+    }
+    context.restore();
+    context.beginPath();
+    context.ellipse(0, 0, radius * 2.08, radius * .45, 0, .15, Math.PI - .02);
+    context.strokeStyle = "#e9c6f4a1";
+    context.lineWidth = Math.max(1, radius * .038);
+    context.stroke();
+    context.restore();
+  }
+
+  function chapterBackdrop(context, camera, palette) {
+    const { width, height } = camera;
+    const theme = palette.landscape;
+    if (theme === "stars") {
+      starBackdrop(context, width, height);
+      return;
+    }
+    if (theme === "roots") {
+      rockHorizon(context, width, height, "#3d574e", .62, 16);
+      rockHorizon(context, width, height, "#243e38", .74, 8);
+      for (const depth of [1, 0]) {
+        for (let index = 0; index < 14; index++) {
+          const x = width * (index + noise(index, 91)) / 14;
+          const base = height * (.77 - depth * .13);
+          const tier = height * (.16 + noise(index, depth + 3) * .44);
+          const spread = width * (.024 + noise(index, 57) * .035);
+          const color = depth ? "#304c3e" : "#122e29";
+          line(context, [[x, base], [x - spread * .2, base - tier * .68], [x + spread * .12, base - tier]], color, spread * .22);
+          poly(context, [[x - spread, base - tier * .79], [x - spread * .78, base - tier],
+            [x - spread * .23, base - tier * 1.10], [x + spread * .51, base - tier * 1.02],
+            [x + spread, base - tier * .72], [x + spread * .27, base - tier * .67]], color);
+        }
+      }
+      return;
+    }
+    if (theme === "archive" || theme === "ruins") {
+      const ruins = theme === "ruins";
+      rockHorizon(context, width, height, ruins ? "#4f405a" : "#3d5554", .63, 13, ruins);
+      const cast = ruins ? "#372c43" : "#2d3c3e";
+      const light = ruins ? "#9d829777" : "#a8ada55e";
+      const span = width / (width > 650 ? 6 : 4);
+      for (let i = 0; i * span < width; i++) {
+        const x = i * span + span * .46;
+        const foot = height * .76;
+        const peak = height * (.19 + noise(i, 31) * .13);
+        const r = span * (ruins ? .36 : .42);
+        context.beginPath();
+        context.moveTo(x - r, foot);
+        context.lineTo(x - r, peak + r * .60);
+        context.quadraticCurveTo(x - r * .61, peak, x, peak);
+        context.quadraticCurveTo(x + r * .65, peak, x + r, peak + r * .60);
+        context.lineTo(x + r, foot);
+        context.strokeStyle = cast;
+        context.lineWidth = r * .31;
+        context.stroke();
+        line(context, [[x - r * .93, peak + r * .74], [x - r * .93, foot], [x - r * .81, foot]], light, .85);
+        if (ruins && i % 2 === 0) {
+          poly(context, [[x + r * .78, foot], [x + r * .23, peak + r * 1.25], [x + r * 1.15, peak + r * .79],
+            [x + r * 1.32, foot]], cast);
+        }
+      }
+      return;
+    }
+    if (theme === "dawn") {
+      const x = width * .69;
+      const y = height * .46;
+      const radius = Math.min(width, height) * .25;
+      const haze = context.createRadialGradient(x, y, radius * .22, x, y, radius * 1.9);
+      haze.addColorStop(0, "#ffe0af78");
+      haze.addColorStop(1, "#ffc1a700");
+      ellipse(context, x, y, radius * 2, radius * 1.1, haze);
+      ellipse(context, x, y, radius * .56, radius * .56, "#f0c698cd", "#ffebc1b6", 1.05);
+      for (let i = 0; i < 4; i++) {
+        const yy = y + (i - .5) * radius * .16;
+        line(context, [[x - radius * (1.2 + i * .19), yy], [x + radius * (1.00 + i * .08), yy]], "#e9a9a368", 1.1);
+      }
+      rockHorizon(context, width, height, "#86596b", .68, 7);
+      rockHorizon(context, width, height, "#514054", .80, 15);
+      return;
+    }
+    const erosion = theme === "erosion";
+    const remains = theme === "remains";
+    const rim = rockHorizon(context, width, height, erosion ? "#6a4e3a" : remains ? "#44384b" : "#373646", .70, 15, true);
+    const thickness = height * (erosion ? .06 : .045);
+    for (let strip = 1; strip <= 3; strip++) {
+      line(context, rim.map(([x, y], i) => [x, y + thickness * (strip + noise(i, strip) * .48)]),
+        erosion ? "#dbad7854" : "#a194a64f", thickness * .10);
+    }
+    if (theme === "rupture") {
+      poly(context, [[width * .57, 0], [width * .65, 0], [width * .57, height * .20],
+        [width * .68, height * .31], [width * .56, height * .57], [width * .59, height * .32],
+        [width * .50, height * .21]], "#b4b89144");
+    }
+  }
+
   function drawBackdrop(context, camera, palette, theme) {
     const { width, height, unit } = camera;
     const fill = context.createLinearGradient(0, 0, 0, height);
@@ -287,6 +470,9 @@
     glow.addColorStop(1, "#04060b00");
     context.fillStyle = glow;
     context.fillRect(0, 0, width, height);
+
+    if (palette.landscape) chapterBackdrop(context, camera, palette);
+    if (palette.landscape && palette.landscape !== "rupture") return;
 
     context.save();
     for (const scale of [1, 0.62]) {
@@ -317,7 +503,7 @@
 
   function background(context, canvas, camera, palette, theme, seconds, hazard, reduced) {
     const { width, height, unit } = camera;
-    const key = `${theme}:${width}:${height}:${unit}:${canvas.width}:${canvas.height}`;
+    const key = `${theme}:${palette.landscape}:${width}:${height}:${unit}:${canvas.width}:${canvas.height}`;
     let backdrop = backdropCache.get(canvas);
     if (backdrop?.key !== key) {
       const surface = document.createElement("canvas");
@@ -333,6 +519,19 @@
     }
     context.drawImage(backdrop.surface, 0, 0, width, height);
     if (reduced) return;
+    if (palette.landscape && palette.landscape !== "rupture") {
+      context.save();
+      for (let index = 0; index < 25; index++) {
+        const stars = palette.landscape === "stars";
+        const x = width * fraction(noise(index, 67) + (stars ? 0 : seconds * (.007 + noise(index, 69) * .010)));
+        const y = height * fraction(noise(index, 74) - (stars ? 0 : seconds * .022));
+        const size = .55 + noise(index, 78) * 1.23;
+        context.globalAlpha = .18 + (.5 + Math.sin(seconds * .9 + index) * .5) * .30;
+        ellipse(context, x, y, size, stars ? size : size * .65, palette.accent);
+      }
+      context.restore();
+      return;
+    }
     const speed = theme === "forge" ? 0.038 : theme === "sluice" ? -0.033 : 0.018;
     context.save();
     for (let index = 0; index < 42; index++) {
@@ -746,6 +945,103 @@
     }
   }
 
+  function chapterGround(context, camera, bounds, z, palette, seed) {
+    const { x, y, width, height } = bounds;
+    const area = width * height;
+    const terrain = palette.landscape;
+    const at = (u, v) => point(camera, x + width * u, y + height * v, z);
+    context.save();
+    poly(context, [at(0, 0), at(1, 0), at(1, 1), at(0, 1)]);
+    context.clip();
+    const count = Math.max(8, Math.ceil(area * .14));
+    for (let i = 0; i < count; i++) {
+      const u = noise(i + seed, 34);
+      const v = noise(i + seed, 38);
+      const r = .60 + noise(i + seed, 84) * 3.6;
+      const points = Array.from({ length: 7 }, (_, n) => {
+        const edge = r * (.42 + noise(i, n + seed) * .58);
+        const angle = n * tau / 7;
+        return at(u + Math.cos(angle) * edge / width, v + Math.sin(angle) * edge * .63 / height);
+      });
+      poly(context, points, palette.tiles[i % palette.tiles.length] + "bf");
+    }
+    if (terrain === "roots") {
+      for (let i = 0; i < 16; i++) {
+        const u = noise(i + seed, 50);
+        const v = noise(i + seed, 52);
+        const direction = i % 2 ? 1 : -1;
+        const spread = .8 + noise(seed, i) * 3.5;
+        const start = at(u, v);
+        const knot = at(u + direction * spread * .20 / width, v + spread * .29 / height);
+        const end = at(u + direction * spread / width, v + spread * .72 / height);
+        line(context, [start, knot, end], "#242e21a9", Math.max(1, camera.unit * .084));
+        line(context, [start, knot, end], "#a19a5089", Math.max(.5, camera.unit * .031));
+        const fork = at(u + direction * spread * .32 / width, v - spread * .15 / height);
+        line(context, [knot, fork], "#a5966090", .86);
+      }
+    }
+    if (terrain === "stars") {
+      const center = at(.53, .51);
+      const radius = Math.min(width, height) * camera.unit * .43;
+      for (const scale of [.44, .70, 1]) {
+        ellipse(context, ...center, radius * scale * 1.6, radius * scale * .77, null, "#a9a0d56b", 1.2);
+      }
+      for (let index = 0; index < 33; index++) {
+        const star = at(noise(index + seed, 39), noise(index + seed, 58));
+        ellipse(context, ...star, index % 7 === 0 ? 1.95 : 1.05, index % 7 === 0 ? 1.55 : .85, "#d0c9ef7c");
+      }
+    } else {
+      const stone = terrain === "archive" || terrain === "ruins";
+      const detail = Math.max(6, Math.ceil(area * (terrain === "roots" ? .33 : .18)));
+      for (let i = 0; i < detail; i++) {
+        const u = noise(i + seed, 12);
+        const v = noise(i + seed, 15);
+        const r = .09 + noise(i + seed, 43) * (stone ? .54 : .27);
+        const mark = [at(u - r / width, v + r * .19 / height), at(u + r * .33 / width, v - r * .26 / height),
+          at(u + r / width, v + r * .14 / height), at(u + r * .09 / width, v + r * .59 / height)];
+        poly(context, mark, palette.materialShade + (stone ? "69" : "4d"));
+        if (i % 3 === 0) line(context, [mark[0], mark[1]], palette.materialLight + "51", .78);
+      }
+      const cracks = stone ? 14 : terrain === "remains" ? 12 : 8;
+      for (let i = 0; i < cracks; i++) {
+        const u = noise(i + seed, 19);
+        const v = noise(i + seed, 26);
+        const run = .8 + noise(i + seed, 117) * 5.6;
+        const offset = i % 2 ? 1 : -1;
+        const joint = at(u + run * .28 / width, v + offset * run * .12 / height);
+        const course = [at(u, v), joint, at(u + run * .50 / width, v + offset * run * .49 / height),
+          at(u + run / width, v + offset * run * .43 / height)];
+        line(context, course, palette.materialShade + "a2", Math.max(.72, camera.unit * .043));
+        if (i % 2 === 0) line(context, [joint, at(u + run * .41 / width, v - offset * run * .20 / height)],
+          palette.materialShade + "87", .86);
+      }
+    }
+    context.restore();
+  }
+
+  function chapterEdge(context, camera, width, height, palette, seed) {
+    for (const [parallel, length, side] of [[true, width, height], [false, height, width]]) {
+      const edge = (distance, z) => parallel ? point(camera, distance, side, z) : point(camera, side, distance, z);
+      for (let seam = 0; seam < 3; seam++) {
+        const sections = Math.ceil(length / 2);
+        const bits = Array.from({ length: sections + 1 }, (_, i) =>
+          edge(length * i / sections, -.24 - seam * .18 - noise(i + seed, seam + 83) * .14));
+        line(context, bits, palette.materialLight + (seam ? "4b" : "9b"), seam ? 1.02 : 1.65);
+      }
+      for (let at = .45; at < length - .4; at += 1.6) {
+        const variation = noise(at + seed, length);
+        if (palette.landscape === "roots") {
+          line(context, [edge(at, -.025), edge(at + variation * .27, -.30), edge(at + variation * .11, -.66)],
+            "#292b1f", Math.max(1, camera.unit * .12));
+          line(context, [edge(at, -.025), edge(at + variation * .27, -.30), edge(at + variation * .11, -.66)],
+            "#848851", Math.max(.7, camera.unit * .049));
+        } else {
+          line(context, [edge(at, -.07), edge(at + .14, -.27), edge(at + .06, -.59)], palette.seam + "a7", .95);
+        }
+      }
+    }
+  }
+
   function floor(context, camera, state, palette, theme) {
     const { width, height } = state.map;
     const { unit } = camera;
@@ -761,6 +1057,13 @@
     poly(context, [top[1], top[2], rim[2], rim[1]], palette.edge, palette.seam);
     poly(context, [top[2], top[3], rim[3], rim[2]], palette.capSide, palette.seam);
     poly(context, top, palette.tiles[0]);
+    if (palette.landscape && palette.landscape !== "rupture") {
+      chapterGround(context, camera, { x: 0, y: 0, width, height }, 0, palette, state.floor * .82);
+      finishSurface(context, camera, state.map, top, 0, palette);
+      chapterEdge(context, camera, width, height, palette, state.floor);
+      poly(context, top, null, palette.inlay + "b8", Math.max(1.4, unit * .040));
+      return;
+    }
     for (let x = 0; x < width; x++) {
       for (let y = 0; y < height; y++) {
         const blockX = x - x % 2;
@@ -773,6 +1076,10 @@
       }
     }
     finishSurface(context, camera, state.map, top, 0, palette);
+    if (palette.landscape === "rupture") {
+      chapterGround(context, camera, { x: .3, y: .3, width: width - .6, height: height - .6 },
+        0, palette, state.floor * .82);
+    }
     for (let x = 0; x < width; x++) {
       for (let y = 0; y < height; y++) {
         if (theme === "relay" && x % 4 === 1 && y % 4 === 1) {
@@ -830,7 +1137,7 @@
     const { width, height } = state.map;
     const unit = camera.unit;
     const feature = state.facility?.feature;
-    const key = `${theme}:${state.floor}:${width}:${height}:${unit}:${ratio}:${feature}:${Boolean(state.landing || state.shelter)}`;
+    const key = `${theme}:${palette.landscape}:${state.floor}:${width}:${height}:${unit}:${ratio}:${feature}:${Boolean(state.landing || state.shelter)}`;
     let layer = terrainCache.get(canvas);
     if (layer?.key !== key || layer.elevation !== state.elevation || layer.obstacles !== state.obstacles) {
       const surface = document.createElement("canvas");
@@ -851,7 +1158,7 @@
       const layerIndex = state.elevation ? 0 : undefined;
       floor(paint, local, state, palette, theme);
       paintEarlyBrasswork(paint, local, state, state.elevation, layerIndex);
-      paintFacilityDressing(paint, local, state, palette, state.elevation, layerIndex);
+      if (!palette.landscape || palette.landscape === "rupture") paintFacilityDressing(paint, local, state, palette, state.elevation, layerIndex);
       layer = { key, surface, drawWidth, drawHeight, originX, originY,
         elevation: state.elevation, obstacles: state.obstacles };
       terrainCache.set(canvas, layer);
@@ -925,11 +1232,18 @@
           surfaceFinish, palette.surfaceJoint, 0.65);
         const relief = Math.min(0.16, (end - at) * 0.22);
         if (grade > 0.52) {
-          poly(context, [foot(at + relief, bottom + grade * 0.19), foot(end - relief, bottom + grade * 0.19),
-            foot(end - relief, bottom + grade * 0.71), foot(at + relief, bottom + grade * 0.71)],
-          palette.materialShade + "72", palette.surfaceJoint, 0.8);
-          line(context, [foot(at + relief, bottom + grade * 0.69), foot(end - relief, bottom + grade * 0.69)],
-            palette.materialLight + "50", 0.65);
+          if (palette.landscape) {
+            for (const seam of [.25, .58]) {
+              line(context, [foot(at, bottom + grade * seam), foot(at + (end - at) * .45, bottom + grade * (seam + .08)),
+                foot(end, bottom + grade * (seam - .02))], palette.materialLight + "4a", .85);
+            }
+          } else {
+            poly(context, [foot(at + relief, bottom + grade * 0.19), foot(end - relief, bottom + grade * 0.19),
+              foot(end - relief, bottom + grade * 0.71), foot(at + relief, bottom + grade * 0.71)],
+            palette.materialShade + "72", palette.surfaceJoint, 0.8);
+            line(context, [foot(at + relief, bottom + grade * 0.69), foot(end - relief, bottom + grade * 0.69)],
+              palette.materialLight + "50", 0.65);
+          }
         }
         line(context, [foot(at, height - 0.07), foot(end, height - 0.07)], palette.materialLight + "8b", 1.25);
         if (noise(section + 2, start - 4) > 0.52) line(context, [foot(at + relief, height - 0.16),
@@ -970,9 +1284,13 @@
     const cap = rectangle(camera, left, back, deck.w, deck.h, height);
     poly(context, cap, covered ? palette.capSide : palette.tiles[0]);
     if (!covered) {
-      for (let x = left; x < right - 0.02; x += 1.45) {
-        for (let y = back; y < front - 0.02; y += 1.45) {
-          matteSlab(context, camera, x, y, Math.min(1.45, right - x), Math.min(1.45, front - y), height, palette, 15.8);
+      if (palette.landscape) {
+        chapterGround(context, camera, { x: left, y: back, width: deck.w, height: deck.h }, height, palette, deck.x * 7);
+      } else {
+        for (let x = left; x < right - 0.02; x += 1.45) {
+          for (let y = back; y < front - 0.02; y += 1.45) {
+            matteSlab(context, camera, x, y, Math.min(1.45, right - x), Math.min(1.45, front - y), height, palette, 15.8);
+          }
         }
       }
       finishSurface(context, camera, map, cap, height, palette);
@@ -1153,7 +1471,7 @@
 
   function paintTerraces(context, canvas, camera, state, palette, theme, ratio, playerCover) {
     const { elevation, map } = state;
-    const key = `${theme}:${state.floor}:${map.width}:${map.height}:${camera.unit}:${ratio}:${state.facility?.feature}`;
+    const key = `${theme}:${palette.landscape}:${state.floor}:${map.width}:${map.height}:${camera.unit}:${ratio}:${state.facility?.feature}`;
     let layers = terraceCache.get(canvas);
     if (layers?.elevation !== elevation || layers.key !== key || layers.obstacles !== state.obstacles) {
       layers = { elevation, key, obstacles: state.obstacles, solid: null, cutaway: null };
@@ -1186,7 +1504,7 @@
       const local = { ...camera, x: -left, y: -top };
       drawTerraces(paint, local, elevation, palette, playerCover, map);
       paintEarlyBrasswork(paint, local, state, elevation, 1);
-      paintFacilityDressing(paint, local, state, palette, elevation, 1);
+      if (!palette.landscape || palette.landscape === "rupture") paintFacilityDressing(paint, local, state, palette, elevation, 1);
       layer = { surface, left, top, width, height, playerCover };
       layers[variant] = layer;
     }
@@ -1265,6 +1583,7 @@
   }
 
   function perimeterMotion(context, camera, state, palette, theme, seconds, reduced) {
+    if (palette.landscape && palette.landscape !== "rupture") return;
     const { width, height } = state.map;
     const unit = camera.unit;
     perimeterHardware(context, camera, state, palette, theme, seconds, reduced);
@@ -2098,7 +2417,7 @@
   function obscuresPlayer(camera, entry, player, palette, heightDifference) {
     if (!player || entry.x + entry.y < player.x + player.y || !withinWallSpan(camera, entry, player)) return false;
     const silhouette = playerSilhouette(camera, player, heightDifference);
-    if (entry.fixture && Object.hasOwn(facilityFixtures, entry.fixture)) {
+    if (entry.fixture && (!palette.landscape || palette.landscape === "rupture") && Object.hasOwn(facilityFixtures, entry.fixture)) {
       return (facilityCasing[entry.fixture] ?? []).some(([from, to, left, right, base, top]) =>
         wallCoverage(camera, facilityFootprint(entry, from, to, left, right), player, silhouette,
           () => top, base) >= wallCutawayThreshold);
@@ -2113,7 +2432,64 @@
     return palette.obstacleHeight * (dressed ? 0.69 : 1);
   }
 
+  function rockObstacle(context, camera, entry, palette, cutaway) {
+    const { x, y, w, h } = entry;
+    const height = obstacleHeight(entry, palette);
+    const seed = noise(x, y);
+    const at = (u, v, z = height) => point(camera, x + u * w, y + v * h, z);
+    const outline = [at(-.5, -.5), at(.5, -.5), at(.5, .5), at(-.5, .5)];
+    const corner = at(.04 + seed * .16, -.16);
+    contactShadow(context, ...at(.18, .08, 0), camera.unit * Math.min(w + h, 4.4), palette);
+    context.save();
+    if (cutaway) context.globalAlpha *= .34;
+    const face = materialShade(context, outline[0], outline[2], palette.capSide, palette, palette.cap, palette.capDark);
+    prism(context, camera, x - w * .5, y - h * .5, w, h, height, face, palette.wallX, palette.wallY, palette.seam);
+    poly(context, [outline[0], outline[1], corner, at(-.36, .02)], palette.materialLight + "51");
+    poly(context, [corner, outline[1], outline[2], at(.12, .39)], palette.materialShade + "52");
+    line(context, [outline[0], at(-.37, -.11), at(-.41, .19), outline[3]], palette.materialLight + "a1", 1.15);
+    for (const rise of [.19, .48, .76]) {
+      line(context, [at(-.50, .5, height * rise), at(-.18, .5, height * (rise + .09)),
+        at(.13, .5, height * (rise - .07)), at(.50, .5, height * (rise + .04))], palette.materialLight + "57", .86);
+      line(context, [at(.50, -.50, height * rise), at(.50, -.09, height * (rise + .13)),
+        at(.50, .5, height * (rise + .04))], palette.materialLight + "3f", .82);
+    }
+    if (palette.landscape === "roots") {
+      const moss = [at(-.48, -.45, height + .01), at(.17, -.48, height + .01), at(.36, -.23, height + .01),
+        at(.23, .18, height + .015), at(-.07, .24, height + .015), at(-.50, -.04, height + .01)];
+      poly(context, moss, "#7e8348a9", "#b2bc6c8e", .91);
+      for (const start of [-.34, -.04, .21]) {
+        line(context, [at(start, -.24, height + .02), at(start - .07, .29, height + .02),
+          at(start, .50), at(start + .13, .50, height * .53), at(start + .09, .50, height * .15)], "#ac955bba", 1.35);
+      }
+    } else if (palette.landscape === "archive" || palette.landscape === "ruins") {
+      for (const [start, end] of [[-.28, .11], [-.12, .28]]) {
+        line(context, [at(start, -.28), at(start + .065, .13), at(end, .17)], palette.materialShade + "ac", .9);
+        line(context, [at(start, -.25), at(start + .045, .11), at(end, .14)], palette.materialLight + "75", .85);
+      }
+    } else {
+      line(context, [at(-.29, -.25), at(-.09, -.045), at(.09, -.12), at(.31, .28), at(.49, .32)],
+        palette.materialShade + "cf", Math.max(.86, camera.unit * .049));
+      if (palette.landscape === "stars") {
+        for (const [u, v] of [[-.26, -.30], [.04, .01], [.25, -.24]]) {
+          const [sx, sy] = at(u, v, height + .025);
+          ellipse(context, sx, sy, Math.max(1.3, camera.unit * .058), Math.max(.85, camera.unit * .031), "#d5cfffaa");
+        }
+      }
+    }
+    context.restore();
+    if (cutaway) {
+      context.save();
+      context.setLineDash([3, 3]);
+      poly(context, outline, null, palette.accent + "bb", 1.1);
+      context.restore();
+    }
+  }
+
   function obstacle(context, camera, entry, palette, seconds, theme, cutaway, reduced) {
+    if (palette.landscape && palette.landscape !== "rupture") {
+      rockObstacle(context, camera, entry, palette, cutaway);
+      return;
+    }
     if (entry.fixture && facilityObstacle(context, camera, entry, palette, seconds, reduced, cutaway)) return;
     const { x, y, w, h } = entry;
     const dressed = w > 0.90 && h > 0.74;
@@ -2559,11 +2935,39 @@
       triggeredAt: done ? 0 : undefined }, palette, seconds, reduced);
   }
 
+  function woundedGuard(context, camera, entry, palette) {
+    const [x, y] = point(camera, entry.x, entry.y);
+    const unit = camera.unit * 1.12;
+    const at = (u, v) => [x + u * unit, y + v * unit];
+    const shape = (corners, fill, edge) => poly(context, corners.map(([u, v]) => at(u, v)), fill, edge, 1.1);
+    contactShadow(context, x, y, unit * 1.35, palette);
+    shape([[-.48, -.23], [-.47, -.77], [-.27, -.86], [-.18, -.23], [-.29, -.11]], palette.wallY, palette.inlay);
+    articulatedLimb(context, [at(-.14, -.39), at(.26, -.24), at(.42, -.08)], [unit * .184, unit * .155, unit * .13],
+      "#534751", "#201e28", "#8c7470");
+    articulatedLimb(context, [at(-.14, -.37), at(.10, -.18), at(.27, -.07)], [unit * .21, unit * .164, unit * .148],
+      "#6b574f", "#271f26", "#a38972");
+    shape([[.30, -.14], [.45, -.14], [.51, -.063], [.46, -.026], [.31, -.064]], "#3e332f", "#1d2026");
+    shape([[.18, -.12], [.31, -.139], [.36, -.063], [.31, -.014], [.17, -.046]], "#584135", "#231e25");
+    shape([[-.38, -.64], [-.28, -.78], [-.07, -.73], [.12, -.54], [.02, -.37], [-.23, -.33], [-.40, -.44]],
+      "#75615a", "#2c282d");
+    shape([[-.31, -.66], [-.13, -.69], [.02, -.52], [-.10, -.44], [-.29, -.49]], "#a3856b", "#5e4d46");
+    miniatureFace(context, (u, v) => at(-.22 + u * .75, -.85 + v * .77), unit * .83, palette,
+      { skin: ["#724e46", "#b9866c", "#d1a186"], crown: ["#46434c", "#71667a", "#aaa1a8"], hood: true });
+    articulatedLimb(context, [at(-.26, -.63), at(-.15, -.42), at(.054, -.49)],
+      [unit * .19, unit * .16, unit * .133], "#624d48", "#342933", "#9b7c6c");
+    line(context, [at(-.15, -.43), at(-.015, -.47), at(.048, -.49)], "#d8cbb2", Math.max(1.1, unit * .069));
+    ellipse(context, ...at(.045, -.49), unit * .064, unit * .045, "#c79675", "#493b3a", .74);
+  }
+
   function storyApparatus(context, camera, entry, palette, seconds, reduced) {
     const { unit } = camera;
     const { x, y } = entry;
     const at = (u, v, z = 0) => point(camera, x + u, y + v, z);
     const device = entry.device ?? entry.scene?.device;
+    if (device === "guard") {
+      woundedGuard(context, camera, entry, palette);
+      return;
+    }
     const lamp = entry.tint ?? (entry.active ? "#efc486" : entry.setting ? "#a8f3be" : "#917a58");
     const motion = entry.done ? 1 : entry.triggeredAt === undefined ? 0 : reduced ? 1 : eased((seconds - entry.triggeredAt) / 0.8);
     const base = rectangle(camera, x - 0.53, y - 0.43, 1.06, 0.86);
@@ -3427,6 +3831,39 @@
     }
   }
 
+  function stellarFigure(context, at, pose, actor, size) {
+    const active = actor.windup > 0;
+    const flare = .10 + pose.anticipation * .16;
+    const shade = context.createLinearGradient(...at(-.40, -1.15), ...at(.45, -.18));
+    shade.addColorStop(0, "#baacdc");
+    shade.addColorStop(.38, "#716d9a");
+    shade.addColorStop(1, "#2b284b");
+    const cloth = [at(0, -1.02), at(.33, -.88), at(.38, -.63), at(.46 + flare, -.29), at(.38, -.13),
+      at(.16, -.26), at(.10, -.07), at(-.10, -.24), at(-.37, -.10),
+      at(-.47 - flare, -.32), at(-.39, -.66), at(-.31, -.89)];
+    poly(context, cloth, shade, "#211d3b", Math.max(1.15, size * .043));
+    for (const sign of [-1, 1]) {
+      line(context, [at(sign * .16, -.83), at(sign * .18, -.53), at(sign * (.43 + flare), -.28)], "#c2b7eaab", size * .035);
+      const hand = at(sign * (.48 + flare), -.55 - pose.anticipation * .20);
+      articulatedLimb(context, [at(sign * .23, -.83), at(sign * (.37 + flare), -.68), hand],
+        [size * .22, size * .136, size * .09], "#837caa", "#2a2548", "#c7b9e3");
+      ellipse(context, ...hand, size * .064, size * .064, active ? "#ffce91" : "#d5c4f4", "#413451", 1.0);
+    }
+    const core = at(0, -.68);
+    poly(context, [at(-.13, -.69), at(0, -.84), at(.13, -.69), at(0, -.49)], "#301f47", "#b2a5dd", 1.05);
+    ellipse(context, ...core, size * .057, size * .068, active ? "#ffdfab" : "#e4d7fc");
+    const head = at(0, -1.15);
+    ellipse(context, ...head, size * .33, size * .19, null, "#a99bd4", Math.max(1.2, size * .025));
+    ellipse(context, ...head, size * .192, size * .21, "#181931", "#d6c6ed", Math.max(1.1, size * .033));
+    ellipse(context, ...at(.049, -1.184), size * .126, size * .156, "#282448");
+    for (const [x, y] of [[-.32, -1.16], [.33, -1.20], [.06, -1.45]]) {
+      const tip = at(x, y);
+      const r = size * .055;
+      poly(context, [[tip[0], tip[1] - r * 1.32], [tip[0] + r, tip[1]], [tip[0], tip[1] + r * 1.32],
+        [tip[0] - r, tip[1]]], "#efe0fb");
+    }
+  }
+
   function enemy(context, camera, actor, reduced, pose, palette) {
     const [x, y] = point(camera, actor.x, actor.y);
     const unit = camera.unit;
@@ -3450,6 +3887,10 @@
     const at = (horizontal, vertical) => base(horizontal + fx * lean, vertical + dip);
     contactShadow(context, x, y, size, palette);
     groundRing(context, camera, actor.x, actor.y, boss ? 0.51 : 0.29, "#fa78560e", "#f394756c", 1.1);
+    if (actor.stellar || (boss && palette.landscape === "stars")) {
+      stellarFigure(context, at, pose, actor, size);
+      return;
+    }
     if (actor.shielded) ellipse(context, ...at(0, -0.59), unit * 0.92, unit * 1.27, "#7febff20", "#a1e8f8", 2);
     if (warden && (actor.guarded || pose.guarded > 0.07)) {
       context.save();
@@ -3469,6 +3910,7 @@
   }
 
   function enemyHealthHeight(actor) {
+    if (actor.stellar) return 2.86;
     if (actor.faction === "human") {
       return actor.kind === "boss" ? 2.43 : actor.kind === "runner" ? 1.16 : actor.kind === "warden" ? 1.77 : 1.48;
     }
@@ -3701,7 +4143,8 @@
     }
     const fallback = fallbackThemes[(Math.max(1, state.floor || 1) - 1) % fallbackThemes.length];
     const theme = Object.hasOwn(biomes, state.theme) ? state.theme : fallback;
-    const palette = biomes[theme];
+    const chapter = chapterEnvironments.findIndex(({ through }) => (state.floor || 1) <= through);
+    const palette = environmentalPalettes[theme][chapter];
     const camera = frameCamera(canvas, bounds, state, theme, now, reduced);
     const motion = beginMotionFrame(canvas, state, now, reduced);
     const seconds = reduced ? 0 : now / 1000;
