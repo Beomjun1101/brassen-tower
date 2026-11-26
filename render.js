@@ -82,7 +82,7 @@
 
   function frameCamera(canvas, bounds, state, theme, now, reduced) {
     const camera = cameraFor(bounds.width, bounds.height, state.map, state.player, state.elevation);
-    const story = state.mode === "story" && state.storyPoint;
+    const story = state.mode === "story" && (state.incident?.points.find((entry) => entry.choice && entry.done) ?? state.storyPoint);
     const gate = !reduced && state.mode === "playing" && state.gateMarker?.active && state.gateMarker;
     const key = `${theme}:${state.floor}:${state.map.width}:${state.map.height}:${bounds.width}:${bounds.height}:${Boolean(story)}`;
     if (story) {
@@ -2435,13 +2435,137 @@
     return entry.atExit ? { x: entry.x - 0.6, y: entry.y - 0.95 } : entry;
   }
 
+  const warmIncidentChoices = new Set(["quiet", "reserve", "testimony", "archive", "engineers"]);
+
+  function incidentColor(entry) {
+    if (entry.choice) return warmIncidentChoices.has(entry.choice) ? "#edb573" : "#93dfd0";
+    return entry.done ? "#a7e2ba" : "#f4d393";
+  }
+
+  function cartridge(context, x, y, unit, rotation) {
+    context.save();
+    context.translate(x, y);
+    context.rotate(rotation);
+    const body = [[-.34, -.13], [.21, -.13], [.34, -.06], [.34, .06], [.21, .13], [-.34, .13]];
+    poly(context, body.map(([u, v]) => [u * unit, v * unit]), "#b38b56", "#242a2b", Math.max(1, unit * .048));
+    context.fillStyle = "#38585b";
+    context.fillRect(-.20 * unit, -.10 * unit, .32 * unit, .20 * unit);
+    context.fillStyle = "#b2ede0";
+    context.fillRect(-.16 * unit, -.069 * unit, .24 * unit, .063 * unit);
+    for (const plate of [-.26, .18]) {
+      line(context, [[plate * unit, -.11 * unit], [plate * unit, .11 * unit]], "#e4bd79", Math.max(1, unit * .064));
+    }
+    line(context, [[-.30 * unit, -.098 * unit], [.24 * unit, -.098 * unit]], "#ffe2a7", Math.max(.65, unit * .026));
+    context.restore();
+  }
+
+  function incidentGround(context, camera, state, palette, layer) {
+    for (const entry of state.incident?.points ?? []) {
+      const height = surfaceHeight(state.elevation, entry.x, entry.y);
+      if (layer !== undefined && (height > .04 ? 1 : 0) !== layer) continue;
+      const local = raisedCamera(camera, height);
+      const pressure = entry.device === "pressure";
+      const color = entry.active || entry.done ? incidentColor(entry) : "#797970";
+      const span = pressure ? .90 : .62;
+      const depth = pressure ? .72 : .49;
+      const scale = local.unit;
+      const at = (u, v, z = .03) => point(local, entry.x + u, entry.y + v, z);
+      const plate = (u, v, z) => [at(-u, -v, z), at(u, -v, z), at(u, v, z), at(-u, v, z)];
+      poly(context, plate(span, depth, .018), "#172425e8", color + "a1", Math.max(.82, scale * .036));
+      if (pressure) {
+        const progress = entry.done ? 1 : entry.active ? clamp(state.incident.progress ?? 0, 0, 1) : 0;
+        const lift = .145 - progress * .08;
+        const top = plate(.72, .55, lift);
+        const base = plate(.72, .55, .024);
+        poly(context, [top[1], top[2], base[2], base[1]], "#675245", "#262a2b", .8);
+        poly(context, [top[2], top[3], base[3], base[2]], "#53423b", "#262a2b", .8);
+        poly(context, top, "#393e3e", color, 1.1);
+        for (const side of [-1, 1]) {
+          for (const position of [-.56, -.34, -.12, .10, .32, .54]) {
+            line(context, [at(position, side * .50, lift + .01), at(position + .11, side * .29, lift + .01)],
+              color + (entry.active || entry.done ? "dd" : "89"), Math.max(.85, scale * .045));
+          }
+        }
+        const track = (end) => [at(-.49, -.106, lift), at(end, -.106, lift), at(end, .106, lift), at(-.49, .106, lift)];
+        poly(context, track(.49), "#141e20", "#6c7772", .78);
+        if (progress > .003) poly(context, track(-.49 + .98 * progress), color);
+        for (const u of [-.76, .76]) {
+          ellipse(context, ...at(u, -.62), scale * .065, scale * .03, color);
+        }
+      } else {
+        const marks = [at(-.51, -.30), at(-.51, .30)];
+        if (entry.active || entry.done) {
+          line(context, [at(-.85, -.17), at(-.68, 0), at(-.85, .17)], color, Math.max(1.2, scale * .047));
+        }
+        for (const [x, y] of marks) ellipse(context, x, y, scale * .048, scale * .028, color);
+      }
+    }
+  }
+
+  function incidentApparatus(context, camera, entry, palette, seconds, reduced) {
+    const { x, y, device, active, done } = entry;
+    const unit = camera.unit;
+    const at = (u, v, z = 0) => point(camera, x + u, y + v, z);
+    const color = active || done ? incidentColor(entry) : "#8c8c80";
+    if (device === "cartridge") {
+      const base = rectangle(camera, x - .43, y - .33, .86, .66);
+      poly(context, base, "#263233", palette.capSide, 1.1);
+      const cradle = [at(-.33, -.25, .12), at(.33, -.25, .12), at(.33, .25, .12), at(-.33, .25, .12)];
+      poly(context, cradle, "#364345", palette.inlay, .9);
+      for (const u of [-.27, .27]) line(context, [at(u, -.26, .20), at(u, .26, .20)], "#9b7959", unit * .078);
+      if (active && !done) cartridge(context, ...at(0, 0, .33), unit, -.30);
+      ellipse(context, ...at(.31, .20, .13), unit * .047, unit * .031, color);
+      return;
+    }
+    if (device === "pump") {
+      const running = entry.kind === "switch" ? !done : done;
+      prism(context, camera, x - .51, y - .41, 1.02, .82, .25, "#575143", "#32383b", "#252b31", palette.capSide);
+      for (const side of [-1, 1]) {
+        const elbow = [at(-.52, side * .20, .28), at(-.27, side * .20, .28), at(-.27, side * .20, .69)];
+        line(context, elbow, "#242a2d", unit * .17);
+        line(context, elbow, "#a37a57", unit * .084);
+      }
+      const bottom = at(0, 0, .30);
+      const crown = at(0, 0, .86);
+      const radius = unit * .30;
+      const cap = radius * .38;
+      poly(context, [[crown[0] - radius, crown[1]], [crown[0] + radius, crown[1]],
+        [bottom[0] + radius, bottom[1]], [bottom[0] - radius, bottom[1]]], "#59666a", "#222e33", 1.2);
+      for (const center of [bottom, crown]) {
+        ellipse(context, ...center, radius, cap, "#4b4141", "#b18c61", Math.max(.8, unit * .041));
+      }
+      const socket = at(.10, .22, .58);
+      ellipse(context, ...socket, unit * .145, unit * .12, running ? "#e6b571" : "#212d32", "#b8aa89", 1.2);
+      if (running) ellipse(context, ...socket, unit * .06, unit * .055, "#ffe0a6");
+      const hinge = at(.23, -.21, .63);
+      const lever = at(done ? .40 : .06, -.19, done ? .74 : 1.00);
+      line(context, [hinge, lever], "#241d24", unit * .15);
+      line(context, [hinge, lever], "#c39b70", unit * .078);
+      ellipse(context, ...lever, unit * .080, unit * .069, color, "#3a302d", .85);
+      return;
+    }
+    if (entry.choice) {
+      const warm = warmIncidentChoices.has(entry.choice);
+      const outlet = warm ? .69 : -.69;
+      const trace = [at(-.34, 0, .10), at(-.62, 0, .10), at(-.65, outlet, .07), at(-.96, outlet, .07)];
+      line(context, trace, "#252b2e", unit * .138);
+      line(context, trace, color, unit * (done ? .078 : .040));
+      const terminal = at(-.96, outlet, .07);
+      if (warm) poly(context, [[terminal[0] - unit * .105, terminal[1] + unit * .048],
+        [terminal[0], terminal[1] - unit * .085], [terminal[0] + unit * .105, terminal[1] + unit * .048]], color);
+      else ellipse(context, ...terminal, unit * .092, unit * .071, null, color, Math.max(1, unit * .041));
+    }
+    storyApparatus(context, camera, { ...entry, tint: color, setting: done ? entry.choice ?? "on" : undefined,
+      triggeredAt: done ? 0 : undefined }, palette, seconds, reduced);
+  }
+
   function storyApparatus(context, camera, entry, palette, seconds, reduced) {
     const { unit } = camera;
     const { x, y } = entry;
     const at = (u, v, z = 0) => point(camera, x + u, y + v, z);
-    const device = entry.device ?? entry.scene.device;
-    const lamp = entry.setting ? "#a8f3be" : entry.active ? "#efc486" : "#917a58";
-    const motion = entry.triggeredAt === undefined ? 0 : reduced ? 1 : eased((seconds - entry.triggeredAt) / 0.8);
+    const device = entry.device ?? entry.scene?.device;
+    const lamp = entry.tint ?? (entry.active ? "#efc486" : entry.setting ? "#a8f3be" : "#917a58");
+    const motion = entry.done ? 1 : entry.triggeredAt === undefined ? 0 : reduced ? 1 : eased((seconds - entry.triggeredAt) / 0.8);
     const base = rectangle(camera, x - 0.53, y - 0.43, 1.06, 0.86);
     const top = rectangle(camera, x - 0.48, y - 0.36, 0.96, 0.72, 0.65);
     contactShadow(context, ...at(0, 0), unit * 1.35, palette);
@@ -2512,9 +2636,9 @@
     const exit = entry.kind === "exit";
     const beacon = entry.kind === "beacon";
     const object = entry.type === "station" || entry.type === "story";
-    const color = object ? "#f6d29a" : exit ? "#b9fdd2" : beacon ? "#aaf2de" : "#b2efff";
+    const color = entry.accent ?? (object ? "#f6d29a" : exit ? "#b9fdd2" : beacon ? "#aaf2de" : "#b2efff");
     const label = object ? entry.caption : beacon ? "방어 구역" : "";
-    const [targetX, targetY] = point(camera, entry.x, entry.y, object ? 1.58 : 1.27);
+    const [targetX, targetY] = point(camera, entry.x, entry.y, entry.labelHeight ?? (object ? 1.58 : 1.27));
     const fontSize = clamp(camera.unit * 0.4, 11, 14);
     context.save();
     context.font = `700 ${fontSize}px system-ui, sans-serif`;
@@ -2529,7 +2653,7 @@
       && placed.every((prior) => Math.abs(x - prior.x) >= (labelWidth + prior.width) / 2 + 3
         || Math.abs(candidate - prior.y) >= labelHeight + 3);
     let y = nearY;
-    if (offscreen && !fits(y)) {
+    if ((offscreen || entry.accent) && !fits(y)) {
       const step = labelHeight + 4;
       const candidates = placed.flatMap((_, index) => [nearY + (index + 1) * step, nearY - (index + 1) * step]);
       y = candidates.find(fits) ?? y;
@@ -2542,6 +2666,13 @@
     context.lineWidth = 1;
     context.strokeStyle = color;
     context.stroke();
+    if (entry.holdProgress > 0) {
+      const width = labelWidth - 12;
+      context.fillStyle = color + "42";
+      context.fillRect(x - width / 2, y + labelHeight / 2 - 3, width, 1.7);
+      context.fillStyle = color;
+      context.fillRect(x - width / 2, y + labelHeight / 2 - 3, width * entry.holdProgress, 1.7);
+    }
     context.fillStyle = color;
     if (label) context.fillText(label, x + (offscreen ? 3 : 0), y);
     else {
@@ -2562,7 +2693,13 @@
     const placed = [];
     const stations = (state.stations ?? []).map((station) => ({ ...station, type: "station" }));
     const story = state.storyPoint;
-    if (story?.active) stations.push({ ...story, type: "story", caption: story.prompt ?? story.scene.prompt });
+    if (story?.active) stations.push({ ...story, ...storyDevicePosition(story), type: "story", caption: story.prompt ?? story.scene.prompt });
+    for (const entry of state.incident?.points ?? []) {
+      if (!entry.active || entry.done) continue;
+      stations.push({ ...entry, type: "story", caption: entry.label, accent: incidentColor(entry),
+        labelHeight: entry.device === "pressure" ? .47 : entry.device === "cartridge" ? .78 : 1.55,
+        holdProgress: entry.kind === "hold" ? clamp(state.incident.progress ?? 0, 0, 1) : 0 });
+    }
     for (const entry of [...(state.items ?? []), ...stations]) {
       if (entry.collected || entry.kind === "exit") continue;
       const itemCamera = onSurface(camera, state.elevation, entry);
@@ -2867,7 +3004,7 @@
     line(context, [blade(0.33, 0.024), blade(0.76, 0.028)], "#7eaca3", Math.max(.58, unit * 0.019));
   }
 
-  function player(context, camera, actor, seconds, reduced, pose, palette) {
+  function player(context, camera, actor, seconds, reduced, pose, palette, carryingCartridge) {
     const [x, y] = point(camera, actor.x, actor.y);
     const unit = camera.unit * (camera.width < 500 ? 1.12 : 1);
     const [fx, fy] = unitVector(pose.look);
@@ -2937,7 +3074,12 @@
     ellipse(context, ...hand, unit * 0.08, unit * 0.083, boot[1], "#30282b", Math.max(.75, unit * .017));
 
     const [lampX, lampY] = grip;
+    if (carryingCartridge) cartridge(context, lampX - side * unit * .062, lampY + unit * .097, unit * .92, -side * .32);
     ellipse(context, lampX, lampY, unit * 0.083, unit * 0.076, boot[1], "#332928", .85);
+    if (carryingCartridge) {
+      context.restore();
+      return;
+    }
     line(context, [[lampX, lampY + unit * .033], [lampX, lampY + unit * .139]], "#e2b779", Math.max(.75, unit * .03));
     const globe = (u,v) => [lampX + unit * u, lampY + unit * v];
     poly(context, [globe(-.073,.119), globe(.070,.119), globe(.105,.188), globe(.073,.274), globe(-.073,.274),
@@ -3505,12 +3647,13 @@
           break;
         }
         case "story": storyApparatus(context, local, object, palette, seconds, reduced); break;
+        case "incident": incidentApparatus(context, local, object, palette, seconds, reduced); break;
         case "station": window.TowerShelter.station(context, local, object, brushes); break;
         case "item": item(context, local, object, seconds, palette); break;
         case "enemy":
           if (isInView(local, object, 3.2, 3.6, 1.5)) enemy(context, local, object, reduced, object.pose, palette);
           break;
-        case "player": player(context, local, object, seconds, reduced, object.pose, palette); break;
+        case "player": player(context, local, object, seconds, reduced, object.pose, palette, state.incident?.payload); break;
       }
     }
   }
@@ -3574,9 +3717,15 @@
       ...enemies.map((entry, index) => ({ ...entry, type: "enemy", pose: actorPose(motion, entry, entry.id ?? index) })),
     ];
     if (state.gateMarker) objects.push({ ...state.gateMarker, type: "item", kind: "exit" });
-    if (state.storyPoint) {
+    const incidentPoints = state.incident?.points ?? [];
+    const keepReservoirValve = state.storyPoint && state.incident?.reservoir && !incidentPoints.some((entry) =>
+      Math.hypot(entry.x - state.storyPoint.x, entry.y - state.storyPoint.y) < 1.25);
+    if (state.storyPoint && (!state.incident || keepReservoirValve)) {
       const marker = state.storyPoint;
       objects.push({ ...marker, ...storyDevicePosition(marker), type: "story" });
+    }
+    for (const entry of incidentPoints) {
+      if (entry.device !== "pressure") objects.push({ ...entry, type: "incident" });
     }
     if (state.player) objects.push({ ...state.player, type: "player", pose: actorPose(motion, state.player, "player") });
     const painterDepth = (entry) => entry.x + entry.y + (entry.kind === "exit" ? 0.64 : 0);
@@ -3587,6 +3736,7 @@
     clinicPipes(context, camera, state, palette);
     if (brushes) window.TowerShelter.dress(context, camera, state, brushes);
     paintGateMarkings(context, camera, state, palette, elevation, elevation ? 0 : undefined);
+    incidentGround(context, camera, state, palette, elevation ? 0 : undefined);
     perimeterMotion(context, camera, state, palette, theme, seconds, reduced);
     stageArrival(context, camera, state, palette, theme, reduced);
     let front = objects;
@@ -3610,6 +3760,7 @@
       paintTerraces(context, canvas, camera, state, palette, theme, ratio, playerCover);
       drawTerrain(context, camera, state.terrain, seconds, reduced, elevation, 1);
       paintGateMarkings(context, camera, state, palette, elevation, 1);
+      incidentGround(context, camera, state, palette, 1);
     }
     drawArenaCues(context, camera, state, enemies, elevation, seconds, elevation ? 1 : undefined);
     drawArenaObjects(context, camera, front, state, palette, theme, seconds, reduced, playerHeight, brushes);
@@ -3641,14 +3792,15 @@
     return { x, y };
   }
 
-  function storyDeviceHit(canvas, clientX, clientY, state) {
-    const marker = state.storyPoint;
+  function storyDeviceHit(canvas, clientX, clientY, state, marker = state.storyPoint) {
     const camera = frameCameras.get(canvas)?.camera;
-    if (!marker?.active || !camera) return false;
+    if (!marker?.active || marker.done || !camera || state.revealed === false) return false;
     const bounds = canvas.getBoundingClientRect();
     const device = storyDevicePosition(marker);
-    const [x, y] = point(onSurface(camera, state.elevation, device), device.x, device.y, 0.78);
-    return Math.hypot(clientX - bounds.left - x, clientY - bounds.top - y) <= Math.max(16, camera.unit * 0.53);
+    const height = marker.device === "pressure" ? .09 : marker.device === "cartridge" ? .33 : .78;
+    const [x, y] = point(onSurface(camera, state.elevation, device), device.x, device.y, height);
+    const radius = marker.device === "pressure" ? .82 : .53;
+    return Math.hypot(clientX - bounds.left - x, clientY - bounds.top - y) <= Math.max(16, camera.unit * radius);
   }
 
   window.TowerRenderer = { draw, screenToWorld, storyDeviceHit };

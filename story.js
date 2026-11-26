@@ -6,6 +6,53 @@
   const player = (line) => ({ speaker: "등반가", line, tone: "player", shot: "player" });
   const room = (speaker, line) => ({ speaker, line, tone: "room", shot: "wide" });
 
+  const incidents = {
+    commission: {
+      steps: [
+        { kind: "lift", device: "cartridge", label: "예비 점화기", task: "진료소 난방이 멎었습니다. 배관 옆 예비 점화기를 챙기세요.", done: "점화기를 들었습니다." },
+        { kind: "fit", device: "pump", label: "진료소 보일러", task: "점화기를 보일러에 끼우세요.", done: "보일러가 켜졌습니다. 남은 연료가 타기 시작합니다." },
+      ],
+      task: "보일러가 버티는 동안 어느 회선으로 도움을 요청할까요?",
+      routes: { open: ["radio", "주민 회선 송신"], quiet: ["relay", "정비조 직통 회선 송신"] },
+      result: { open: "주민들이 보호막을 보냈습니다. 수문으로 출발합니다.", quiet: "정비조가 비상 금화를 보냈습니다. 수문으로 출발합니다." },
+    },
+    reservoir: {
+      steps: [
+        { kind: "hold", device: "pressure", label: "압력판 · 2초", task: "온수가 새고 있습니다. 압력판 위에 서서 두 관을 먼저 안정시키세요.", done: "누출이 멎었습니다. 이제 한쪽 밸브를 열 수 있습니다.", time: 2 },
+      ],
+      task: "진료소와 관문 중 온수를 보낼 밸브를 여세요.",
+      routes: { district: ["valve", "진료소 온수 밸브"], reserve: ["valve", "관문 전열 밸브"] },
+      result: { district: "진료소 쪽 관으로 온수가 흐릅니다.", reserve: "온수가 관문 아래 전열관으로 흐릅니다." },
+    },
+    ledger: {
+      steps: [
+        { kind: "switch", device: "pump", label: "기록 소거기 차단", task: "소거기가 작동 중입니다. 전원을 내려 원본을 지키세요.", done: "소거기가 꺼졌습니다. 기록통이 배출됐습니다." },
+        { kind: "lift", device: "cartridge", label: "원본 기록통 회수", task: "소거기 옆에 떨어진 원본 기록통을 회수하세요.", done: "기록통을 회수했습니다. 마지막 복귀 명령은 생산관 우선이었습니다." },
+      ],
+      task: "기록통을 공개 송신기에 넣거나 정비조 보관함에 맡기세요.",
+      routes: { public: ["relay", "공개 송신기"], testimony: ["ledger", "정비조 보관함"] },
+      result: { public: "생산관 우선 명령을 담은 원본이 구역 전체에 공개됐습니다.", testimony: "정비조가 원본을 인수했습니다. 당직자부터 불러 확인합니다." },
+    },
+    relay: {
+      steps: [
+        { kind: "lift", device: "cartridge", label: "교환대 예비 퓨즈", task: "교환대가 끊겼습니다. 예비 퓨즈를 챙기세요.", done: "퓨즈를 들었습니다." },
+        { kind: "fit", device: "relay", label: "교환대 전원 복구", task: "예비 퓨즈를 교환대에 끼우세요.", done: "교환대가 켜졌습니다. 실시간 구조 호출이 들어옵니다." },
+      ],
+      task: "구조 회선을 먼저 연결하거나, 기록을 먼저 보존하세요.",
+      routes: { rescue: ["radio", "구조 회선 연결"], archive: ["ledger", "정비 기록 복사"] },
+      result: { rescue: "구조대가 연결됐습니다. 우회 과정에서 임시 정비 기록이 지워졌습니다.", archive: "정비 절차는 보존됐습니다. 구조 회선은 복사가 끝난 뒤 열립니다." },
+    },
+    key: {
+      steps: [
+        { kind: "switch", device: "pump", label: "자동 차단 회로 해제", task: "생산관으로만 흐르는 기존 회로를 먼저 끊으세요.", done: "기존 회로를 끊었습니다. 압력판에 전원이 들어왔습니다." },
+        { kind: "hold", device: "pressure", label: "인계 압력판 · 1.8초", task: "인계 압력판 위에 서서 배분실의 압력을 맞추세요.", done: "배분실 회로가 열렸습니다. 담당자에게 권한을 보낼 수 있습니다.", time: 1.8 },
+      ],
+      task: "구역 대표 또는 중앙 정비조 인계 장치를 작동시키세요.",
+      routes: { districts: ["relay", "구역 대표에 인계"], engineers: ["terminal", "중앙 정비조에 인계"] },
+      result: { districts: "구역 대표들이 차단 권한을 나눠 가졌습니다.", engineers: "중앙 정비조가 차단 권한과 공동 점검표를 인수했습니다." },
+    },
+  };
+
   const scenes = {
     commission: {
       art: "prologue", chapter: "1막 · 식어가는 하층", title: "새벽까지 온수를",
@@ -110,7 +157,6 @@
     "ledger-lead": () => radio("라온", "장부가 열렸어요. 제 이름부터 찾으세요."),
     "relay-lead": () => radio("야간조", "교환대에 들어가면 녹음과 실시간 통화가 따로 들릴 거예요."),
     "handoff-lead": () => radio("라온", "열쇠를 넘기기 전에 당직자를 정해야 해요."),
-    "gate-gauge": () => radio("라온", "관문이 열렸어요. 양쪽 계량기 중 어디가 올라갔는지 보세요."),
     "return-signal": () => radio("라온", "복귀 회선에 잡음이 줄었어요. 교환대에서 받아보세요."),
     "shift-signal": () => radio("야간조", "옛 근무표를 방금 읽을 수 있게 됐어요."),
     "heating-signal": () => radio("라온", "난방 중계기가 살아났어요. 아래에선 어느 관이 데워졌나 확인해 볼게요."),
@@ -135,38 +181,38 @@
   const interludes = {
     9: {
       art: "pressure", chapter: "9층 · 주철 관문", title: "물이 한 층 더 오른다",
-      device: "valve", prompt: "관문 계량기 확인", cue: "gate-gauge", supply: "reservoir",
+      device: "valve", prompt: "관문 계량기 확인", cue: "iron-gate-open", supply: "reservoir", optional: true,
       beats: (choices) => [cues["iron-gate-open"](choices), radio("라온", "수리조는 복귀 회선을 따라갈게요.")],
     },
     29: {
       art: "pressure", chapter: "29층 · 복귀 회선", title: "첫 통화",
-      device: "relay", prompt: "복귀 회선 듣기", cue: "return-signal",
+      device: "relay", prompt: "복귀 회선 듣기", cue: "return-signal", optional: true,
       beats: () => [cues["return-line-open"](), radio("라온", "압력이 오르면 다시 잠겨요. 조절실로 가요.")],
     },
     35: {
       art: "pressure", chapter: "35층 · 미측량 구역", title: "사람이 남긴 마지막 표지",
-      device: "terminal", prompt: "경계 표지 확인", cue: "frontier",
+      device: "terminal", prompt: "경계 표지 확인", cue: "frontier", optional: true,
       beats: () => [room("개척선 표지", "현장 정비 종료. 상층 원격 운전만 허용."),
         player("사람 발자국은 여기서 끝나는데, 안쪽에선 뭔가 나왔어요.")],
     },
     489: {
       art: "memory", chapter: "489층 · 점검실", title: "명단에 없는 교대",
-      device: "ledger", prompt: "야간 근무표 읽기", cue: "shift-signal",
+      device: "ledger", prompt: "야간 근무표 읽기", cue: "shift-signal", optional: true,
       beats: (choices) => [cues["shift-log"](choices), terminal("하층 당직 메모", "교대 미완료 · 지하 점검 구간 인수 대기")],
     },
     829: {
       art: "memory", chapter: "829층 · 난방 중계기", title: "먼저 데워진 곳",
-      device: "relay", prompt: "난방 중계기 확인", cue: "heating-signal",
+      device: "relay", prompt: "난방 중계기 확인", cue: "heating-signal", optional: true,
       beats: (choices) => [cues["heating-relay-open"](choices), radio("라온", "수리조가 쓰는 계단부터 녹일게요.")],
     },
     1199: {
       art: "heart", chapter: "1199층 · 상층 송수관", title: "시험 공급",
-      device: "valve", prompt: "시험 공급 기록 확인", cue: "test-signal",
+      device: "valve", prompt: "시험 공급 기록 확인", cue: "test-signal", optional: true,
       beats: (choices) => [cues["test-feed"](choices), terminal("하층 시험 일지", "공급 확인 · 비상 차단 담당자 기록")],
     },
     1329: {
       art: "heart", chapter: "1329층 · 자동 차단기", title: "마지막 인계",
-      device: "terminal", prompt: "배분실 회선 받기", cue: "handoff-signal",
+      device: "terminal", prompt: "배분실 회선 받기", cue: "handoff-signal", optional: true,
       beats: () => [terminal("자동 차단기", "정지 확인. 배분실 연결. 하층 유량 0."),
         radio("진료소", "여기서도 바늘을 보고 있어요. 물이 돌면 바로 알려드릴게요.")],
     },
@@ -240,5 +286,5 @@
     };
   }
 
-  window.TowerStory = { scenes, interludes, shelterNotes, epilogue, cues };
+  window.TowerStory = { incidents, scenes, interludes, shelterNotes, epilogue, cues };
 })();

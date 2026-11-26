@@ -361,7 +361,7 @@
     elements["scene-speaker"].hidden = !beat?.speaker;
     setText("scene-speaker", beat?.speaker ?? "");
     shell.dataset.appMode = state.mode;
-    canvas.tabIndex = state.mode === "title" ? -1 : 0;
+    canvas.tabIndex = -1;
     if (state.mode === "title") canvas.setAttribute("aria-hidden", "true");
     else canvas.removeAttribute("aria-hidden");
     elements.overlay.scrollTop = 0;
@@ -410,8 +410,9 @@
     syncMusic();
     setText("live-status", beat ? [beat.speaker, beat.line].filter(Boolean).join(". ") : title);
     const firstOption = elements["overlay-choices"].querySelector("button:not(:disabled)");
-    if (firstOption) firstOption.focus({ preventScroll: true });
-    else if (primary) elements["primary-action"].focus({ preventScroll: true });
+    const focusTarget = firstOption ?? (primary ? elements["primary-action"] : elements.overlay);
+    if (focusTarget === elements.overlay) focusTarget.tabIndex = -1;
+    focusTarget.focus({ preventScroll: true });
   }
 
   function remainingPoints() {
@@ -522,6 +523,7 @@
     renderPack();
     syncMusic();
     setText("live-status", stage.title + ". " + stage.objective);
+    canvas.tabIndex = 0;
     canvas.focus({ preventScroll: true });
   }
 
@@ -633,7 +635,7 @@
     hideRadio();
     renderFloorSteps();
     enterPlayableScene();
-    if (state.storyPoint?.active) showRadio(encounter.scene.cue);
+    if (state.storyPoint?.active && !startIncident(state.storyPoint)) showRadio(encounter.scene.cue);
   }
 
   function hideRadio() {
@@ -651,6 +653,150 @@
     setText("story-radio-line", cue.line);
     audio.deviceSignal("radio");
     radioUntil = performance.now() + Math.max(4100, cue.line.length * 120);
+  }
+
+  function applyStoryChoice(chapter, choice) {
+    if (run.storyChoices[chapter]) return false;
+    const { id, effect } = choice;
+    run.storyChoices[chapter] = id;
+    creditGold(effect.gold);
+    if (effect.xp) awardXp(effect.xp);
+    if (effect.stat) updateProgress(rpg.gainStat(run.progress, effect.stat, effect.amount));
+    run.nextWard += effect.ward ?? 0;
+    run.nextPower += effect.overclock ?? 0;
+    return true;
+  }
+
+  function incidentPositions(anchor, count) {
+    const spacing = 0.52;
+    const origin = { x: anchor.x, y: anchor.y };
+    const reachable = [{ ...origin, col: 0, row: 0 }];
+    const visited = new Set(["0,0"]);
+    const stations = state.stations ?? [];
+    for (let index = 0; index < reachable.length; index++) {
+      const from = reachable[index];
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const col = from.col + dx, row = from.row + dy;
+        const key = col + "," + row;
+        if (Math.abs(col) > 9 || Math.abs(row) > 9 || visited.has(key)) continue;
+        const x = origin.x + col * spacing, y = origin.y + row * spacing;
+        if (!openStep(from, x, y, 0.47)) continue;
+        visited.add(key);
+        reachable.push({ x, y, col, row });
+      }
+    }
+    const positions = [origin];
+    const offsets = [[-2.6, 1.55], [0.75, -2.60], [2.6, 1.55]];
+    const options = reachable.filter((spot) => stations.every((station) => distance(station, spot) > 1.5));
+    for (const [x, y] of offsets.slice(0, count - 1)) {
+      const target = { x: origin.x + x, y: origin.y + y };
+      const nearest = [...options].sort((a, b) => distance(a, target) - distance(b, target));
+      const spot = nearest.find((candidate) => positions.every((position) => distance(candidate, position) >= 2.3))
+        ?? nearest.find((candidate) => positions.every((position) => distance(candidate, position) >= 1.25));
+      if (!spot) return null;
+      positions.push({ x: spot.x, y: spot.y });
+    }
+    return positions;
+  }
+
+  function startIncident(anchor) {
+    const definition = story.incidents[anchor.chapter];
+    if (!definition) return false;
+    const steps = definition.steps;
+    const options = anchor.scene.choices;
+    const positions = incidentPositions(anchor, steps.length + options.length);
+    if (!positions) return false;
+    const points = steps.map(({ done, ...step }, index) => ({
+      ...positions[index], ...step, doneText: done, active: index === 0, done: false,
+    }));
+    options.forEach((choice, index) => {
+      const [device, label] = definition.routes[choice.id];
+      points.push({ ...positions[steps.length + index], device, label, hint: choice.description, kind: "choose",
+        choice: choice.id, active: false, done: false });
+    });
+    anchor.active = false;
+    state.incident = { anchor, points, definition, step: 0, steps: steps.length, progress: 0, payload: false,
+      reservoir: anchor.chapter === "reservoir", complete: false, task: steps[0].task };
+    setText("live-status", state.incident.task);
+    return true;
+  }
+
+  function incidentPointInReach(point, radius = 1.26) {
+    const player = state.player;
+    return point.active && distance(player, point) <= radius && closeReach(player, point) &&
+      isOpen((point.x + player.x) / 2, (point.y + player.y) / 2, 0.13);
+  }
+
+  function completeIncidentStep(point) {
+    const incident = state.incident;
+    point.done = true;
+    point.active = false;
+    point.triggeredAt = performance.now() / 1000;
+    incident.step++;
+    incident.progress = 0;
+    if (incident.step === incident.steps) {
+      for (const branch of incident.points.slice(incident.steps)) branch.active = true;
+      incident.task = incident.definition.task;
+    } else {
+      const next = incident.points[incident.step];
+      next.active = true;
+      incident.task = next.task;
+    }
+    audio.deviceSignal(point.device === "cartridge" ? "terminal" : "valve");
+    addEffect("loot", point, 0.6);
+    notify(point.doneText);
+    setText("live-status", incident.task);
+  }
+
+  function useIncidentPoint(point) {
+    if (!incidentPointInReach(point)) return;
+    const incident = state.incident;
+    if (point.kind === "hold") {
+      notify("압력판 위에 서 있으면 서서히 안정됩니다.", 1400);
+      return;
+    }
+    if (point.kind === "choose") {
+      const anchor = incident.anchor;
+      const choice = anchor.scene.choices.find(({ id }) => id === point.choice);
+      if (!applyStoryChoice(anchor.chapter, choice)) return;
+      for (const entry of incident.points) entry.active = false;
+      point.done = true;
+      point.triggeredAt = performance.now() / 1000;
+      incident.complete = true;
+      incident.payload = false;
+      incident.task = incident.definition.result[point.choice];
+      anchor.setting = point.choice;
+      anchor.triggeredAt = point.triggeredAt;
+      audio.deviceSignal(point.device);
+      addEffect("loot", point, 0.75);
+      notify(incident.task, 2300);
+      setText("live-status", incident.task);
+      if (state.shelter) saveVillage();
+      else incident.leaveAt = state.elapsed + 1.1;
+      return;
+    }
+    if (point.kind === "lift") incident.payload = true;
+    if (point.kind === "fit") incident.payload = false;
+    completeIncidentStep(point);
+  }
+
+  function updateIncident(delta) {
+    const incident = state.incident;
+    if (!incident) return;
+    if (incident.leaveAt !== undefined && state.elapsed >= incident.leaveAt) {
+      incident.leaveAt = undefined;
+      if (incident.anchor.chapter === "commission") enterFloor(1, state.player.hp);
+      else finishFloorRewards();
+      return;
+    }
+    const point = incident.points[incident.step];
+    if (point?.kind !== "hold" || !point.active) return;
+    if (incidentPointInReach(point, 0.66)) {
+      incident.progress = Math.min(1, incident.progress + delta / point.time);
+      if (incident.progress >= 1) completeIncidentStep(point);
+    } else {
+      incident.progress = Math.max(0, incident.progress - delta * 0.45);
+    }
   }
 
   function showScene(point, resume) {
@@ -680,17 +826,11 @@
       state.storyShot = beat?.shot ?? "device";
       panel({ kicker: scene.chapter, title: scene.title, copy: beat?.line ?? scene.choicePrompt, beat, ...controls });
     };
-    const options = (scene.choices ?? []).map(({ id, title, description, effect }) => ({
-      id, title, detail: description,
+    const options = (scene.choices ?? []).map((choice) => ({
+      id: choice.id, title: choice.title, detail: choice.description,
       choose: () => {
-        if (!active() || run.storyChoices[chapter]) return;
-        run.storyChoices[chapter] = id;
-        creditGold(effect.gold);
-        if (effect.xp) awardXp(effect.xp);
-        if (effect.stat) updateProgress(rpg.gainStat(run.progress, effect.stat, effect.amount));
-        run.nextWard += effect.ward ?? 0;
-        run.nextPower += effect.overclock ?? 0;
-        point.setting = id;
+        if (!active() || !applyStoryChoice(chapter, choice)) return;
+        point.setting = choice.id;
         point.triggeredAt = performance.now() / 1000;
         audio.deviceSignal(point.device ?? scene.device);
         const response = scene.response?.(run.storyChoices);
@@ -907,6 +1047,11 @@
       const { x, y, radius } = state.holdZone;
       mapPolygon(context, shape(x - radius / 2, y - radius / 2, radius, radius), "#4cad99", "#9cf7df");
     }
+    for (const marker of state.incident?.points ?? []) {
+      if (!marker.active) continue;
+      const [mx, my] = point(marker.x, marker.y);
+      mapPolygon(context, [[mx, my - 4], [mx + 4, my], [mx, my + 4], [mx - 4, my]], "#edbb79", "#2e261a");
+    }
     const [x, y] = point(state.player.x, state.player.y);
     context.beginPath();
     context.arc(x, y, 3.4, 0, Math.PI * 2);
@@ -966,8 +1111,10 @@
     setText("stage-title", state.revealed ? stage.title : "");
     elements["stage-title"].hidden = !state.revealed;
     const point = state.storyPoint;
+    const incident = state.incident;
     setText("objective", state.revealed
-      ? point?.active && (!point.scene.optional || storyPointInReach(point))
+      ? incident && (!incident.complete || incident.leaveAt !== undefined) ? incident.task
+      : point?.active && (!point.scene.optional || storyPointInReach(point))
         ? (point.prompt ?? point.scene.prompt) + " · " + storyControls : stage.objective
       : "");
     if (minimapSection.hidden !== !state.revealed) minimapSection.hidden = !state.revealed;
@@ -1015,6 +1162,12 @@
       progress = "표식 대상 · " + Math.ceil(target.hp / target.maxHp * 100) + "%";
     }
     if (!state.revealed || state.landing || state.combatComplete) progress = "";
+    if (incident && !incident.complete) {
+      const step = incident.points[incident.step];
+      const nearby = incident.points.find((entry) => entry.hint && incidentPointInReach(entry));
+      progress = nearby?.hint ?? (step?.kind === "hold" && step.active
+        ? "압력 안정 " + Math.floor(incident.progress * 100) + "%" : "");
+    }
     setText("stage-progress", progress);
     updateRunIndicators();
   }
@@ -1458,6 +1611,10 @@
       return;
     }
     if (station.kind === "departure") {
+      if (state.incident && !state.incident.complete) {
+        notify(state.incident.task, 1800);
+        return;
+      }
       if (state.storyPoint?.active && !state.storyPoint.scene.optional) {
         notify(state.storyPoint.scene.prompt + " · 출발 전에 확인하세요.", 1600);
         return;
@@ -1496,6 +1653,12 @@
 
   function interact() {
     if (state.mode !== "playing") return;
+    const active = state.incident?.points.filter((entry) => incidentPointInReach(entry));
+    if (active?.length) {
+      active.sort((a, b) => distance(a, state.player) - distance(b, state.player));
+      useIncidentPoint(active[0]);
+      return;
+    }
     const point = state.storyPoint;
     if (storyPointInReach(point)) {
       useStoryPoint(point);
@@ -1507,7 +1670,8 @@
       return;
     }
     if (state.landing || state.combatComplete) {
-      if (point) notify(point.scene.prompt + " · " + storyControls, 1300);
+      if (state.incident && !state.incident.complete) notify(state.incident.task, 1500);
+      else if (point?.active) notify(point.scene.prompt + " · " + storyControls, 1300);
       return;
     }
     if (!cellGoal && state.kind !== "escape") return;
@@ -2027,6 +2191,7 @@
     for (const effect of state.effects) effect.life -= delta;
     state.effects = state.effects.filter((effect) => effect.life > 0);
     if (state.landing || state.combatComplete) {
+      updateIncident(delta);
       if (state.finishAt != null && state.elapsed >= state.finishAt) finishFloorRewards();
       return;
     }
@@ -2085,7 +2250,10 @@
           marker.setting = run.storyChoices[marker.scene.supply];
           marker.triggeredAt = marker.setting ? 0 : undefined;
         }
-        showRadio(marker.scene.cue);
+        if (!startIncident(marker)) {
+          showRadio(marker.scene.cue);
+          if (marker.scene.optional) state.finishAt = state.elapsed + 2.4;
+        }
       } else {
         state.gateMarker.active = true;
         state.gateMarker.openSince = state.elapsed;
@@ -2361,8 +2529,20 @@
     }
   });
   window.addEventListener("keydown", (event) => {
-    if (state.mode !== "playing" || event.altKey || event.metaKey || event.ctrlKey || !gameKeys.has(event.code)) return;
+    if (event.defaultPrevented || event.altKey || event.metaKey || event.ctrlKey || !gameKeys.has(event.code)) return;
+    if (event.code === "Space") {
+      const button = event.target instanceof HTMLButtonElement ? event.target : null;
+      if (button) {
+        if (!elements.overlay.hidden && elements.overlay.contains(button)) {
+          event.preventDefault();
+          if (!event.repeat && !button.disabled) button.click();
+        }
+        return;
+      }
+    }
+    if (state.mode !== "playing") return;
     event.preventDefault();
+    if (event.code === "Space" && event.repeat) return;
     keys.add(event.code);
     if (event.repeat) return;
     if (event.code === "Space") attack();
@@ -2382,6 +2562,14 @@
     event.preventDefault();
     canvas.focus({ preventScroll: true });
     const aim = renderer.screenToWorld(canvas, event.clientX, event.clientY, state);
+    const targets = state.incident?.points.filter((entry) => entry.active);
+    const target = targets?.find((entry) => renderer.storyDeviceHit(canvas, event.clientX, event.clientY, state, entry))
+      ?? targets?.find((entry) => distance(aim, entry) < 1.1);
+    if (target) {
+      if (incidentPointInReach(target)) useIncidentPoint(target);
+      else notify(target.label + " · " + storyControls, 1300);
+      return;
+    }
     const point = state.storyPoint;
     if (point?.active && (distance(aim, point) < 1.55 ||
         renderer.storyDeviceHit(canvas, event.clientX, event.clientY, state))) {
