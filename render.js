@@ -1487,7 +1487,8 @@
     const depth = actor.x + actor.y;
     const side = actor.x - actor.y;
     const large = actor.kind === "boss" || actor.role === "patient";
-    const width = large ? 2.1 : 1.4;
+    const addedReach = actor.type === "player" ? Math.max(0, (heroWeapons[actor.weapon]?.length ?? 1) - 1) : 0;
+    const width = large ? 2.1 : 1.4 + addedReach * .78;
     const feet = depth * slope - actor.height;
     const masks = [];
     const distance = ([x, y]) => x + y - depth;
@@ -2631,20 +2632,32 @@
   function enemyTelegraph(context, baseCamera, enemy, elevation) {
     if (!(enemy.windup > 0)) return;
     const camera = onSurface(baseCamera, elevation, enemy);
-    if (enemy.kind === "sentry" && Number.isFinite(enemy.aimX) && Number.isFinite(enemy.aimY)) {
+    const aimed = Number.isFinite(enemy.aimX) && Number.isFinite(enemy.aimY);
+    const marksman = enemy.kind === "marksman";
+    if ((enemy.kind === "sentry" || marksman) && aimed) {
       const origin = point(camera, enemy.x, enemy.y, 0.64);
       const targetCamera = raisedCamera(baseCamera, surfaceHeight(elevation, enemy.aimX, enemy.aimY));
       const target = point(targetCamera, enemy.aimX, enemy.aimY, 0.10);
-      line(context, [origin, target], "#ff664c58", Math.max(3, camera.unit * 0.13));
+      const color = marksman ? "#ffd48b" : "#ffb284";
+      line(context, [origin, target], marksman ? "#ff9b4e65" : "#ff664c58", Math.max(3, camera.unit * 0.13));
       context.save();
-      context.setLineDash([6, 4]);
-      line(context, [origin, target], "#ffb284", 1.6);
+      context.setLineDash(marksman ? [10, 3, 3, 4] : [6, 4]);
+      line(context, [origin, target], color, marksman ? 1.95 : 1.6);
       context.restore();
       poly(context, rectangle(targetCamera, enemy.aimX - 0.19, enemy.aimY - 0.19, 0.38, 0.38, 0.10),
-        "#f15a382e", "#ffb284", 1.3);
+        "#f15a382e", color, 1.3);
+      if (marksman) {
+        const [dx, dy] = [target[0] - origin[0], target[1] - origin[1]];
+        const length = Math.hypot(dx, dy) || 1;
+        for (const offset of [0.10, 0.17]) {
+          const x = target[0] - dx * offset, y = target[1] - dy * offset;
+          line(context, [[x - dy * 4.5 / length, y + dx * 4.5 / length],
+            [x + dy * 4.5 / length, y - dx * 4.5 / length]], color, 1.5);
+        }
+      }
       return;
     }
-    if (enemy.kind === "lancer" && Number.isFinite(enemy.aimX) && Number.isFinite(enemy.aimY)) {
+    if (enemy.kind === "lancer" && aimed) {
       const dx = enemy.aimX - enemy.x;
       const dy = enemy.aimY - enemy.y;
       const length = Math.hypot(dx, dy) || 1;
@@ -2660,6 +2673,26 @@
       context.restore();
       return;
     }
+    if (enemy.kind === "skirmisher" && aimed) {
+      const angle = Math.atan2(enemy.aimY - enemy.y, enemy.aimX - enemy.x);
+      const half = Math.acos(.60);
+      const radius = enemy.attackRange || 1.05;
+      const fan = [point(camera, enemy.x, enemy.y, .02)];
+      for (let index = 0; index <= 12; index++) {
+        const direction = angle - half + 2 * half * index / 12;
+        fan.push(point(camera, enemy.x + Math.cos(direction) * radius, enemy.y + Math.sin(direction) * radius, .02));
+      }
+      poly(context, fan, "#f265393d", "#ffad7d", 1.8);
+      line(context, fan.slice(2, -1), "#ffd19a", 2.2);
+      return;
+    }
+    if (enemy.kind === "breaker") {
+      const radius = enemy.attackRange || 2.2;
+      dangerRing(context, camera, enemy.x, enemy.y, radius, "#f0522b42", "#ffaf76", 2.6, true);
+      groundRing(context, camera, enemy.x, enemy.y, radius * .82, null, "#ffc189a8", 1.4);
+      return;
+    }
+    if (enemy.kind === "saboteur") return;
     const boss = enemy.kind === "boss";
     const radius = enemy.attackRange || (boss ? 2.2 : 1.05);
     dangerRing(context, camera, enemy.x, enemy.y, radius, boss ? "#ff58374b" : "#f65d313b",
@@ -2669,10 +2702,24 @@
   }
 
   function bossTargets(context, baseCamera, targets, seconds, elevation) {
-    for (const { x, y, radius, active } of targets ?? []) {
+    for (const { x, y, radius, active, kind } of targets ?? []) {
       const camera = raisedCamera(baseCamera, surfaceHeight(elevation, x, y));
       const charge = (Math.sin(seconds * 17) + 1) * 0.5;
       const size = Math.max(0.15, radius || 0.9);
+      if (kind === "mine") {
+        const color = active ? "#ffc884" : "#d9a879";
+        dangerRing(context, camera, x, y, size, active ? "#eb6e3435" : "#dc974b19", color, active ? 2 : 1.4, !active);
+        const [px, py] = point(camera, x, y, .095);
+        const at = (u, v) => [px + u * camera.unit, py + v * camera.unit];
+        mineCasing(context, at, camera.unit, color, active);
+        continue;
+      }
+      if (kind === "aftershock") {
+        dangerRing(context, camera, x, y, size, active ? "#ff752755" : "#d0754629",
+          active ? "#ffe3b4" : "#f6a770", active ? 2.8 : 2, !active);
+        groundRing(context, camera, x, y, size * (active ? .82 : .64), null, "#ffc098a1", 1.4);
+        continue;
+      }
       const ringColor = active ? "#ffdfae" : "#ff9d66";
       context.save();
       context.globalAlpha = active ? 0.98 : 0.72 + charge * 0.26;
@@ -3361,6 +3408,10 @@
     lancer: [16.0, 0.27, 0.37],
     mortar: [8.8, 0.17, 0.24],
     warden: [9.8, 0.20, 0.27],
+    skirmisher: [21.0, 0.31, 0.54],
+    breaker: [8.2, 0.21, 0.22],
+    marksman: [11.4, 0.20, 0.32],
+    saboteur: [13.5, 0.23, 0.40],
     boss: [10.7, 0.22, 0.19],
   };
   const swingProfiles = [
@@ -3368,6 +3419,25 @@
     { duration: 0.27, coil: 1.32, pass: -1.08, reach: 0.20, cutY: 0.08 },
     { duration: 0.32, coil: -1.64, pass: 0.62, reach: 0.29, cutY: 0.20 },
   ];
+
+  const heroWeapons = {
+    sword: {},
+    hammer: { style: "overhead", length: .90, lift: .71 },
+    rapier: { style: "thrust", length: 1.22 },
+    daggers: { style: "dual", length: .61 },
+    maul: { style: "overhead", length: 1.19, lift: 1, twoHands: true },
+    poleaxe: { style: "overhead", length: 1.34, lift: .79, twoHands: true },
+    sabre: { length: 1.08, sweep: 1.22 },
+    greatsword: { style: "overhead", length: 1.24, lift: .90, twoHands: true },
+    twinblades: { style: "dual", length: .86 },
+    hooks: { style: "dual", length: .73, sweep: 1.18 },
+    staff: { style: "cast", length: 1.20 },
+    orb: { style: "cast", length: .54 },
+    bow: { style: "draw", length: .64, twoHands: true },
+    crossbow: { style: "draw", length: .77, twoHands: true },
+    gauntlets: { style: "fist", length: .41, dual: true },
+    tonfa: { style: "fist", length: .69, dual: true },
+  };
 
   function beginMotionFrame(canvas, state, now, reduced) {
     const previous = motionFrames.get(canvas);
@@ -3395,7 +3465,9 @@
   }
 
   function actorPose(frame, actor, key) {
-    const profile = walkProfiles[key === "player" ? "player" : actor.role ?? actor.kind] ?? walkProfiles.guard;
+    const style = actor.bossProfile?.style;
+    const kind = key === "player" ? "player" : style === "hunter" ? "skirmisher" : actor.role ?? actor.kind;
+    const profile = walkProfiles[kind] ?? walkProfiles.guard;
     const prior = frame.previousPoses.get(key);
     const { step, reduced } = frame;
     const enemyWindup = actor.windup || 0;
@@ -3411,7 +3483,8 @@
       ? { facingX: actor.x - prior.x, facingY: actor.y - prior.y } : actor);
     const moveAngle = Math.atan2(moveY, moveX);
     const travel = prior && !reduced ? turnAngle(prior.travel, moveAngle, step, 18) : moveAngle;
-    const moving = Boolean(actor.moving) && !actor.stalled && !actor.seated && enemyWindup <= 0 && charge <= 0;
+    const stepsIntoStrike = actor.kind === "skirmisher" || (style === "hunter" && actor.bossMove === "pursuit");
+    const moving = Boolean(actor.moving) && !actor.stalled && !actor.seated && (enemyWindup <= 0 || stepsIntoStrike) && charge <= 0;
     const gait = reduced ? 0 : prior
       ? approach(prior.gait, moving ? 1 : 0, step, moving ? 13 : 18)
       : moving ? 0.64 : 0;
@@ -3420,7 +3493,9 @@
     const pitch = enemyWindup > 0 ? (0.21 + 0.79 * eased(1 - enemyWindup / Math.max(peak, 0.001))) : 0;
     const anticipation = reduced ? (enemyWindup > 0 ? 0.63 : 0)
       : !prior ? pitch : approach(prior.anticipation, pitch, step, 27);
-    const releaseAge = (prior?.windup || 0) > 0 && enemyWindup <= 0 && !(actor.flash > 0.13) ? 0
+    const volleyPending = actor.kind === "marksman" && actor.volleyAt != null;
+    const released = (prior?.windup || 0) > 0 && enemyWindup <= 0 && !(actor.flash > 0.13);
+    const releaseAge = released || (prior?.volleyPending && !volleyPending) ? 0
       : Math.min(1, (prior?.releaseAge ?? 1) + step);
     const recoil = Math.max(1 - eased(releaseAge / 0.20), clamp((actor.recover || 0) / 0.20, 0, 1));
     const hurtAge = key === "player" && prior && actor.hp < prior.hp ? 0
@@ -3438,7 +3513,7 @@
     const armSide = clamp(horizontalLook * 2.8 + verticalLook * 0.55, -1, 1);
     const armDepth = verticalLook * 0.071;
     const pose = { x: actor.x, y: actor.y, hp: actor.hp, look, facingRight, armSide, armDepth, travel, gait, cadence, peak, anticipation, windup: enemyWindup,
-      guarded, charge, dashing, releaseAge, recoil: reduced ? 0 : recoil, impact, swingAngle, swingRemaining,
+      guarded, charge, dashing, releaseAge, volleyPending, recoil: reduced ? 0 : recoil, impact, swingAngle, swingRemaining,
       hurtAge, stepLength: profile[1] * gait * 0.72, stride: Math.sin(cadence) * profile[1] * gait * 0.70, lift: profile[2],
       breath: reduced ? 0 : Math.sin(cadence * 0.38 + actor.x * 0.18) * (1 - gait) * 0.027 };
     frame.poses.set(key, pose);
@@ -3525,7 +3600,7 @@
     }
   }
 
-  function swordPose(at, size, armSide, idleAngle, strikeAngle, profile, progress, reduced, carrySwing) {
+  function swordPose(at, size, armSide, idleAngle, strikeAngle, profile, weapon, progress, reduced, carrySwing) {
     const active = progress !== null;
     let sweep = 0;
     let extension = 0;
@@ -3553,21 +3628,41 @@
       extension = profile.reach * 0.69 * settle;
       dip = profile.cutY * settle;
     }
+    sweep *= weapon.sweep ?? 1;
+    if (active && ["thrust", "draw", "fist", "cast"].includes(weapon.style)) {
+      const forward = progress < .37 ? eased((progress - .16) / .21) : 1 - eased((progress - .37) / .54);
+      const pullback = progress < .16 ? eased(progress / .16) : 1 - eased((progress - .16) / .20);
+      const casting = weapon.style === "cast";
+      const holding = weapon.style === "draw";
+      sweep = casting ? sweep * .23 : sweep * .07;
+      extension = reduced ? .30 : forward * (holding ? .34 : .42) - pullback * (holding ? -.11 : .17);
+      dip = casting ? -.30 * (pullback + .42 * forward) : -.055 * forward - (holding ? .14 : 0);
+    } else if (active && weapon.style === "overhead") {
+      const side = Math.sign(armSide) || 1;
+      const lift = progress < .19 ? eased(progress / .19) : 1 - eased((progress - .19) / .22);
+      const fall = progress < .45 ? eased((progress - .26) / .19) : 1 - eased((progress - .45) / .55);
+      if (!reduced) {
+        sweep = -side * lift * (1.12 + weapon.lift * .60) + side * fall * .68 + sweep * .23;
+        dip += fall * .18 - lift * weapon.lift * .60;
+        extension *= .80;
+      }
+    }
     const weight = active ? Math.min(eased(progress / 0.18), eased((1 - progress) / 0.38)) : 0;
     const difference = strikeAngle - idleAngle;
     const angle = idleAngle + Math.atan2(Math.sin(difference), Math.cos(difference)) * weight;
     const [forwardX, forwardY] = unitVector(angle);
     const [edgeX, edgeY] = unitVector(angle + sweep);
     const shoulder = at(armSide * 0.223, -0.762);
-    const target = at(armSide * 0.205 + edgeX * (0.105 + extension * 0.55),
+    const target = at(armSide * (weapon.twoHands ? .14 : .205) + edgeX * (0.105 + extension * (weapon.style ? .69 : .55)),
       -0.485 + forwardY * 0.041 + edgeY * 0.094 + dip * 0.73 + carrySwing * (1 - weight));
     const joints = armJoints(shoulder, target, size, -armSide * 0.76);
     const hand = joints[2];
-    const tip = [hand[0] + edgeX * size * 0.735, hand[1] + edgeY * size * 0.585];
+    const reach = weapon.length ?? 1;
+    const tip = [hand[0] + edgeX * size * 0.735 * reach, hand[1] + edgeY * size * 0.585 * reach];
     return { joints, hand, tip };
   }
 
-  function swordTrail(context, progress, sample) {
+  function swordTrail(context, progress, sample, style) {
     const end = Math.min(progress, 0.62);
     const start = Math.max(0.18, progress - 0.23);
     if (end <= start) return;
@@ -3580,7 +3675,9 @@
     }
     context.save();
     context.globalAlpha *= 0.76 * (1 - eased((progress - 0.53) / 0.27));
-    poly(context, [...outer, ...inner.reverse()], "#80f3c441", "#dcfff5ad", 0.85);
+    if (style === "thrust") line(context, outer, "#dcfff5b5", 1.4);
+    else poly(context, [...outer, ...inner.reverse()], style === "overhead" ? "#ffcf984a" : "#80f3c441",
+      style === "overhead" ? "#ffe6c5b5" : "#dcfff5ad", 0.85);
     context.restore();
   }
 
@@ -3629,19 +3726,108 @@
     line(context, [blade(0.33, 0.024), blade(0.76, 0.028)], "#7eaca3", Math.max(.58, unit * 0.019));
   }
 
+  const heroWeaponEdges = {
+    rapier: [[.15,-.023],[.79,-.019],[1.08,0],[.77,.02],[.15,.024]],
+    daggers: [[.19,-.079],[.52,-.109],[1,-.011],[.57,.078],[.19,.051]],
+    sabre: [[.16,-.046],[.49,-.099],[.78,-.182],[1.02,-.239],[.94,-.102],[.67,.014],[.19,.051]],
+    greatsword: [[.16,-.115],[.79,-.098],[1.09,-.008],[.79,.100],[.16,.109]],
+    twinblades: [[.17,-.051],[.64,-.151],[1.03,-.095],[.78,.015],[.40,.067],[.17,.048]],
+    hooks: [[.18,-.029],[.61,-.061],[.76,-.172],[.65,-.229],[.59,-.208],[.65,-.123],[.49,-.045],[.18,.049]],
+  };
+
+  function heroWeapon(context, name, hand, tip, support, unit, progress) {
+    if (name === "sword") {
+      heroBlade(context, hand, tip, unit);
+      return;
+    }
+    const dx = tip[0] - hand[0], dy = tip[1] - hand[1];
+    const length = Math.hypot(dx, dy) || 1;
+    const at = (u, v = 0) => [hand[0] + dx * u - dy / length * unit * v,
+      hand[1] + dy * u + dx / length * unit * v];
+    const dark = "#2d292e", edge = "#d9b57e", bright = "#f0e1b2";
+    const outline = Math.max(.78, unit * .028);
+    const metal = (shape, fill, border = dark) => poly(context, shape.map(([u, v]) => at(u, v)), fill, border, outline);
+    const draw = (points, color, width) => line(context, points.map(([u, v]) => at(u, v)), color, Math.max(.65, unit * width));
+    const blade = heroWeaponEdges[name];
+    const charge = progress === null ? 0 : Math.sin(Math.PI * Math.min(1, progress / .74));
+    if (blade) {
+      const width = name === "greatsword" ? .16 : name === "daggers" ? .07 : .10;
+      draw([[-.22,0],[.19,0]], "#4b3938", .083);
+      draw([[.13,-width],[.17,width]], edge, .053);
+      if (name === "rapier") {
+        ellipse(context, ...at(.11), unit * .094, unit * .052, "#a98061", bright, outline);
+      }
+      metal(blade, name === "hooks" ? "#9aad9b" : "#c5dbd4");
+      draw([blade[0], blade[1], blade[2]], bright, name === "rapier" ? .046 : .029);
+    } else if (name === "hammer" || name === "maul" || name === "poleaxe") {
+      const wide = name === "maul";
+      draw([[-.28,0],[.92,0]], dark, wide ? .113 : .087);
+      draw([[-.23,-.014],[.89,-.018]], "#bb8e58", .039);
+      if (name === "poleaxe") {
+        metal([[.64,-.055],[.73,-.161],[.83,-.248],[1.08,-.258],[1,-.095],[.89,-.027],
+          [.99,.069],[.79,.104],[.65,.055]], "#859d95");
+        draw([[.75,-.163],[.84,-.219],[1.04,-.234]], bright, .029);
+      } else {
+        const spread = wide ? .235 : .174;
+        metal([[.61,-spread],[.86,-spread],[1.01,-spread*.51],[1.015,spread*.55],
+          [.90,spread],[.64,spread],[.55,spread*.62],[.55,-spread*.62]], wide ? "#717f81" : "#a6977b");
+        draw([[.71,-spread*.88],[.697,spread*.80]], edge, .052);
+        draw([[.897,-spread*.83],[.90,spread*.79]], wide ? "#be8357" : "#d7c497", .032);
+      }
+    } else if (name === "staff" || name === "orb") {
+      if (name === "staff") {
+        draw([[-.37,0],[.88,0]], dark, .092);
+        draw([[-.30,-.019],[.88,-.02]], edge, .035);
+        metal([[.64,-.065],[.83,-.15],[1.06,-.082],[1.08,.081],[.86,.154],[.66,.057]], "#a17f55");
+      }
+      const [x, y] = at(name === "staff" ? .91 : .78);
+      const radius = unit * ((name === "orb" ? .15 : .10) + charge * .036);
+      ellipse(context, x, y, radius, radius, "#78cbd3", "#3d5961", outline);
+      ellipse(context, x - radius * .23, y - radius * .24, radius * .52, radius * .47, "#d3fbf1");
+      if (name === "orb") {
+        ellipse(context, x, y, radius * 1.38, radius * .70, null, "#f7d38ba3", 1.1);
+      }
+    } else if (name === "bow" || name === "crossbow") {
+      const crossbow = name === "crossbow";
+      const arc = crossbow ? [[.29,-.27],[.62,-.176],[.59,0],[.62,.176],[.29,.27]]
+        : [[-.27,-.35],[.00,-.28],[.18,-.17],[.22,0],[.18,.17],[.00,.28],[-.27,.35]];
+      if (crossbow) {
+        metal([[-.39,-.064],[.44,-.058],[.70,-.033],[.70,.058],[.09,.061],[-.33,.107]], "#8e644b");
+        draw([[-.26,-.021],[.61,-.018]], edge, .031);
+      }
+      draw(arc, dark, .09);
+      draw(arc, "#bc8d5a", .045);
+      const pull = support && progress !== null && progress < .37 ? support : null;
+      const nock = pull ?? at(crossbow ? .28 : -.27);
+      line(context, [at(...arc[0]), nock, at(...arc[arc.length - 1])], "#f1dfac", Math.max(.72, unit * .022));
+    } else if (name === "tonfa") {
+      metal([[-.42,-.053],[.58,-.057],[.86,-.030],[.86,.054],[.55,.087],[-.42,.066]], "#936747");
+      draw([[.16,-.162],[.16,.052]], dark, .092);
+      draw([[.24,-.019],[.77,.015]], edge, .036);
+    } else {
+      metal([[-.33,-.134],[.23,-.165],[.61,-.098],[.62,.092],[.26,.164],[-.33,.119]], "#797e70");
+      draw([[.025,-.129],[.07,.122]], edge, .060);
+      draw([[.45,-.093],[.48,.077]], "#b4ddd0", .041);
+    }
+  }
+
   function player(context, camera, actor, seconds, reduced, pose, palette, carryingCartridge, footing) {
     const [x, y] = point(camera, actor.x, actor.y);
     const unit = camera.unit * (camera.width < 500 ? 1.12 : 1);
     const [fx, fy] = unitVector(pose.look);
     const side = pose.facingRight ? 1 : -1;
-    const armSide = pose.armSide;
     const armDepth = pose.armDepth;
     const stride = pose.stride;
+    const weaponName = Object.hasOwn(heroWeapons, actor.weapon) ? actor.weapon : "sword";
+    const weapon = heroWeapons[weaponName];
+    const dual = weapon.style === "dual" || weapon.dual;
     const variant = Number.isInteger(actor.attackVariant) && swingProfiles[actor.attackVariant] ? actor.attackVariant : 0;
+    const armSide = weapon.style === "fist" && variant === 1 ? -pose.armSide : pose.armSide;
     const profile = swingProfiles[variant];
     const length = actor.swingDuration > 0 ? actor.swingDuration : actor.swingLife !== undefined ? profile.duration : 0.20;
     const progress = pose.swingRemaining > 0 ? clamp(1 - pose.swingRemaining / length, 0, 1) : null;
-    const thrust = progress === null || reduced ? 0 : Math.sin(progress * Math.PI) * 0.089;
+    const burst = weapon.style === "thrust" || weapon.style === "fist" ? .17 : .089;
+    const thrust = progress === null || reduced ? 0 : Math.sin(progress * Math.PI) * burst;
     const tuck = pose.dashing * 0.082;
     const flinch = reduced ? 0 : pose.impact;
     const bob = pose.breath - Math.abs(stride) * 0.21 + tuck + flinch * 0.10;
@@ -3664,10 +3850,36 @@
     }
     legStride(context, ground, at, unitVector(pose.travel), pose, unit, "#3d454b", boot[1], 0, true);
 
-    const lampArm = armJoints(at(-armSide * 0.218, -0.775 - armDepth),
-      at(-armSide * 0.33 - stride * 0.16, -0.48 - armDepth + stride * 0.12 - tuck * 0.48), unit, armSide * 0.64);
-    const grip = lampArm[2];
-    paintArm(context, lampArm, unit, cloth, "#182b2f");
+    const idleAngle = pose.look + stride * 0.24;
+    const swordArm = (u, v) => at(u, v + armDepth);
+    const carry = stride * .12 - tuck * .58;
+    const sampleSwing = (phase) => swordPose(swordArm, unit, armSide, idleAngle, pose.swingAngle, profile, weapon, phase, reduced, carry);
+    const { joints, hand, tip } = sampleSwing(progress);
+    const backArm = (u, v) => at(u, v - armDepth);
+    const supportShoulder = backArm(-armSide * .218, -.775);
+    const lampTarget = backArm(-armSide * .33 - stride * .16, -.48 + stride * .12 - tuck * .48);
+    let supportArm;
+    if (dual) {
+      const reverse = { ...profile, coil: -profile.coil * .84, pass: -profile.pass };
+      const offhandPhase = weapon.style === "fist" ? null : progress;
+      const offhand = swordPose(backArm, unit, -armSide, idleAngle - side * .96,
+        pose.swingAngle, reverse, weapon, offhandPhase, reduced, carry);
+      supportArm = offhand.joints;
+      paintArm(context, supportArm, unit, cloth, "#182b2f");
+      heroWeapon(context, weaponName, offhand.hand, offhand.tip, null, unit, progress);
+    } else if (weapon.twoHands) {
+      const length = Math.hypot(tip[0] - hand[0], tip[1] - hand[1]) || 1;
+      const nock = weapon.style === "draw" && progress !== null && progress < .37
+        ? .12 + eased(progress / .24) * .18 : .13;
+      const target = [hand[0] - (tip[0] - hand[0]) * unit * nock / length,
+        hand[1] - (tip[1] - hand[1]) * unit * nock / length];
+      supportArm = armJoints(supportShoulder, target, unit, armSide * .63, .31, .29);
+      paintArm(context, supportArm, unit, cloth, "#182b2f");
+    } else {
+      supportArm = armJoints(supportShoulder, lampTarget, unit, armSide * .64);
+      paintArm(context, supportArm, unit, cloth, "#182b2f");
+    }
+    const grip = dual || weapon.twoHands ? at(-armSide * .269, -.41) : supportArm[2];
     forgedPlate(context, [at(-0.29, -0.80), at(-0.16, -0.92), at(0.17, -0.92), at(0.28, -0.76),
       at(0.22, -0.51), at(0.33, -0.24), at(0.15, -0.165), at(-0.01, -0.252), at(-0.22, -0.18), at(-0.30, -0.35)],
     cloth, palette, unit, 0.28);
@@ -3686,22 +3898,20 @@
     forgedPlate(context, [at(-0.20, -0.926), at(-0.10, -0.94), at(0.05, -0.904), at(0.21, -0.933),
       at(0.20, -0.846), at(0.064, -0.792), at(-0.13, -0.817)], scarf, palette, unit, 0.25);
 
-    const idleAngle = pose.look + stride * 0.24;
-    const swordArm = (u, v) => at(u, v + armDepth);
-    const sampleSwing = (phase) => swordPose(swordArm, unit, armSide, idleAngle, pose.swingAngle, profile, phase, reduced,
-      stride * 0.12 - tuck * 0.58);
-    const { joints, hand, tip } = sampleSwing(progress);
-    if (!reduced && progress !== null) swordTrail(context, progress, sampleSwing);
+    if (!reduced && progress !== null && weapon.style !== "draw" && weapon.style !== "cast") {
+      swordTrail(context, progress, sampleSwing, weapon.style);
+    }
     paintArm(context, joints, unit, brass, "#312b2e");
     const sleeveCap = (u, v) => swordArm(armSide * 0.223 + u, v);
     forgedPlate(context, [sleeveCap(-0.114, -.827), sleeveCap(-0.053, -.872), sleeveCap(0.084, -.856),
       sleeveCap(0.124, -.766), sleeveCap(0.062, -.695), sleeveCap(-0.095, -.71)], brass, palette, unit, .26);
-    heroBlade(context, hand, tip, unit);
+    heroWeapon(context, weaponName, hand, tip, supportArm[2], unit, progress);
     ellipse(context, ...hand, unit * 0.08, unit * 0.083, boot[1], "#30282b", Math.max(.75, unit * .017));
+    if (weapon.twoHands) ellipse(context, ...supportArm[2], unit * .067, unit * .066, boot[1], "#30282b", .76);
 
     const [lampX, lampY] = grip;
     if (carryingCartridge) cartridge(context, lampX - side * unit * .062, lampY + unit * .097, unit * .92, -side * .32);
-    ellipse(context, lampX, lampY, unit * 0.083, unit * 0.076, boot[1], "#332928", .85);
+    if (!dual && !weapon.twoHands) ellipse(context, lampX, lampY, unit * .083, unit * .076, boot[1], "#332928", .85);
     if (carryingCartridge) {
       context.restore();
       return;
@@ -3723,8 +3933,107 @@
     lancer: ["#3d3027", "#9a7949", "#dac08a"],
     mortar: ["#392c35", "#83676a", "#b7a39b"],
     warden: ["#322c46", "#726886", "#b3a9c3"],
+    skirmisher: ["#4b2e2e", "#a76843", "#efb476"],
+    breaker: ["#38272b", "#8c4f45", "#d39571"],
+    marksman: ["#293740", "#58788a", "#acc9ce"],
+    saboteur: ["#363a2a", "#777748", "#cbb675"],
     boss: ["#392b43", "#8a568e", "#c998ca"],
   };
+
+  const specialistArt = {
+    skirmisher: { scale: .89, breadth: .81, coat: ["#39262f", "#936048", "#d7a76b"], height: 1.30 },
+    breaker: { scale: 1.28, breadth: 1.16, coat: ["#302a32", "#6d4c43", "#ca9b7e"], height: 1.88 },
+    marksman: { scale: 1.02, breadth: .86, coat: ["#263641", "#466878", "#a3bfc3"], height: 1.51 },
+    saboteur: { scale: .98, breadth: 1.02, coat: ["#343829", "#646947", "#c7b77d"], height: 1.45 },
+  };
+
+  const bossStyles = {
+    warden: { kit: "breaker", scale: 1.55, height: 2.30, metal: ["#442b27", "#a35e46", "#f0bc79"] },
+    hunter: { kit: "hunter", scale: 1.43, height: 2.05, metal: ["#33263e", "#76567f", "#e7ad9b"] },
+    engine: { kit: "engine", scale: 1.67, height: 2.24, metal: ["#352b31", "#a56643", "#ffb573"] },
+    beast: { scale: 1.76, height: 2.13, metal: ["#44293d", "#895275", "#e4ad91"] },
+    stellar: { scale: 1.74, height: 2.86 },
+  };
+
+  const bossStances = {
+    sweep: [.14, .05],
+    rupture: [.04, .105],
+    barrage: [-.12, .045],
+    pursuit: [.24, .095],
+    crossfire: [-.075, .075],
+    orbit: [-.05, -.065],
+  };
+
+  function mineCasing(context, at, size, color, armed) {
+    const shape = [at(-.21, .015), at(-.12, -.075), at(.11, -.083), at(.218, .009),
+      at(.15, .095), at(-.144, .095)];
+    poly(context, shape, "#66563e", "#242a2b", Math.max(.75, size * .032));
+    poly(context, [at(-.14, -.038), at(.13, -.046), at(.186, .004), at(.10, .041), at(-.113, .039)],
+      armed ? "#93623f" : "#747552", color, Math.max(.6, size * .021));
+    ellipse(context, ...at(.036, -.003), Math.max(1, size * .047), Math.max(.78, size * .028),
+      armed ? "#fff2b5" : "#e8cc88", "#302c2a", .6);
+  }
+
+  function specialistWeapon(context, kit, hand, farHand, pose, facing, size, metal, palette, signature) {
+    const facingSide = pose.facingRight ? 1 : -1;
+    const tilt = facing[1];
+    const wind = pose.anticipation;
+    const follow = pose.recoil;
+    const bladeAt = (grip, angle, side) => {
+      const dx = Math.cos(angle) * side, dy = Math.sin(angle);
+      return (u, v = 0) => [grip[0] + (u * dx - v * dy * side) * size,
+        grip[1] + (u * dy + v * Math.cos(angle)) * size];
+    };
+    if (kit === "skirmisher" || kit === "hunter") {
+      const knife = (grip, angle, side, reach) => {
+        const edge = bladeAt(grip, angle, side);
+        line(context, [edge(-.10), edge(.166)], "#40302f", size * .077);
+        line(context, [edge(.175, -.103), edge(.15, .09)], "#d3a472", size * .045);
+        forgedPlate(context, [edge(.19, -.055), edge(reach * .78, -.11), edge(reach, -.207),
+          edge(reach * .92, .025), edge(reach * .56, .094), edge(.207, .058)],
+        ["#463644", "#c3a58a", "#ffddb2"], palette, size, .14, true);
+        line(context, [edge(.24, -.035), edge(reach * .76, -.069), edge(reach, -.18)], "#ffe6ba", size * .027);
+      };
+      const pursuit = signature === "pursuit";
+      if (kit === "hunter") knife(farHand, .77 + wind * (pursuit ? .62 : .40), -facingSide, .58);
+      knife(hand, .35 + tilt * .35 - wind * (pursuit ? .72 : .91) + follow * .42, facingSide, kit === "hunter" ? .70 : .63);
+    } else if (kit === "breaker") {
+      const sweep = signature === "sweep";
+      const head = bladeAt(hand, .40 + tilt * .14 - wind * (sweep ? 1.30 : 1.85) + follow * (sweep ? .82 : .56), facingSide);
+      line(context, [head(-.37), head(.78)], "#31252a", size * .115);
+      line(context, [head(-.35, -.028), head(.75, -.027)], "#c29a6a", size * .041);
+      forgedPlate(context, [head(.60, -.17), head(.73, -.24), head(.99, -.17), head(1.04, -.042),
+        head(.96, .17), head(.78, .21), head(.62, .132)],
+      ["#493432", "#8f5747", "#e6af7a"], palette, size, .17, true);
+      line(context, [head(.77, -.185), head(.72, .125)], "#e0a371", size * .052);
+      line(context, [head(.945, -.131), head(.89, .124)], "#553835", size * .045);
+      ellipse(context, ...farHand, size * .064, size * .060, metal[1], metal[0], .75);
+    } else if (kit === "marksman") {
+      const barrel = bladeAt(hand, -.15 + tilt * .34 - wind * .12 + follow * .08, facingSide);
+      forgedPlate(context, [barrel(-.41, -.045), barrel(-.02, -.081), barrel(.58, -.065), barrel(.62, .061),
+        barrel(.02, .068), barrel(-.29, .13), barrel(-.44, .081)], ["#292931", "#62534b", "#b99367"], palette, size, .17);
+      for (const side of [-1, 1]) {
+        const offset = side * .045;
+        line(context, [barrel(.23, offset), barrel(.94, offset)], "#212936", size * .075);
+        line(context, [barrel(.25, offset - .012), barrel(.91, offset - .012)], metal[2], size * .023);
+      }
+      ellipse(context, ...barrel(.94), size * .046, size * .095, wind > 0 ? "#ffe2a0" : "#242b35", "#c9af8f", .8);
+      ellipse(context, ...farHand, size * .066, size * .059, metal[1], metal[0], .72);
+    } else if (kit === "saboteur") {
+      const device = (u, v) => [hand[0] + u * size * .83, hand[1] + v * size * .83];
+      mineCasing(context, device, size * .83, wind > 0 ? "#ffe89b" : metal[2], wind > 0);
+    } else {
+      for (const grip of [farHand, hand]) {
+        const glove = (u, v) => [grip[0] + (u + facingSide * .09) * size, grip[1] + v * size];
+        forgedPlate(context, [glove(-.16, -.105), glove(.16, -.13), glove(.19, .06), glove(.098, .129),
+          glove(-.123, .13), glove(-.185, .023)], metal, palette, size, .23, true);
+        for (const nub of [-.068, .055]) {
+          line(context, [glove(nub, -.081), glove(nub + .008, .062)], wind > 0 ? "#ffd28d" : "#e18b55", size * .034);
+        }
+      }
+    }
+    ellipse(context, ...hand, size * .063, size * .055, metal[1], metal[0], .75);
+  }
 
   function forgedPlate(context, points, metal, palette, size, radius = 0.18, inked = false) {
     const left = Math.min(...points.map(([x]) => x));
@@ -3808,35 +4117,55 @@
     ellipse(context, lens[0] - size * 0.032, lens[1] - size * 0.011, size * 0.026, size * 0.012, "#ffe7b0");
   }
 
-  function compressionGuard(context, at, actor, pose, size, metal, palette, facing) {
+  function compressionGuard(context, at, actor, pose, size, metal, palette, facing, kit) {
     const [fx, fy] = facing;
     const boss = actor.kind === "boss";
     const runner = actor.kind === "runner";
     const lancer = actor.kind === "lancer";
     const warden = actor.kind === "warden";
-    const human = actor.faction === "human";
-    const ranged = human && (actor.kind === "sentry" || actor.kind === "mortar");
+    const human = actor.faction === "human" && kit !== "engine";
+    const ranged = kit === "marksman" || (human && (actor.kind === "sentry" || actor.kind === "mortar"));
+    const agile = kit === "skirmisher" || kit === "hunter";
+    const specialization = specialistArt[kit === "hunter" ? "skirmisher" : kit];
     const side = pose.facingRight ? 1 : -1;
     const armSide = pose.armSide;
     const armDepth = pose.armDepth;
     const weaponSide = clamp(fx * 2.8, -1, 1);
-    const breadth = boss ? 1.19 : runner ? 0.82 : warden ? 1.08 : 1;
+    const breadth = specialization?.breadth ?? (boss ? 1.19 : runner ? 0.82 : warden ? 1.08 : 1);
     const chest = (x, y) => at(x * breadth + fx * (0.077 * Math.max(0, -y - 0.48)), y);
     const wind = pose.anticipation;
     const follow = Math.max(pose.charge * 0.74, pose.recoil * 0.86);
     const folding = warden ? pose.guarded * 0.21 : 0;
-    const wristX = armSide * (0.38 + follow * 0.17 - wind * 0.08) + pose.stride * 0.15;
-    const wristY = -0.48 + armDepth + fy * 0.083 - wind * 0.24 + follow * 0.072 - folding;
+    const wristX = armSide * (0.38 + follow * (agile ? .24 : .17) - wind * 0.08) + pose.stride * 0.15;
+    const wristY = -0.48 + armDepth + fy * 0.083 - wind * (kit === "breaker" ? .40 : .24)
+      + follow * 0.072 - folding + (kit === "saboteur" ? wind * .21 : 0);
     const nearArm = armJoints(chest(armSide * 0.258, -0.742 + armDepth),
       at(wristX, ranged ? wristY - 0.105 : wristY), size, -armSide * 0.74, 0.248, 0.23);
     const hand = nearArm[2];
     const gunAngle = -0.14 + fy * 0.24 - wind * 0.09 + pose.recoil * 0.09;
     const gunPoint = (distance) => [hand[0] + distance * weaponSide * size, hand[1] + distance * gunAngle * size];
-    const farTarget = ranged ? gunPoint(-0.26) :
+    const farTarget = ranged ? gunPoint(-0.26) : kit === "breaker" ?
+      [hand[0] - side * size * .10, hand[1] + size * (.09 + wind * .04)] :
       at(-armSide * (0.33 - follow * 0.09) - pose.stride * 0.14, -0.45 - armDepth - wind * 0.10);
     const farArm = armJoints(chest(-armSide * 0.235, -0.74 - armDepth), farTarget, size, armSide * 0.69);
-    const coat = human ? ["#3c3036", runner ? "#886749" : warden ? "#665675" : "#805644", "#bb936d"]
+    const coat = human ? specialization?.coat ?? ["#3c3036", runner ? "#886749" : warden ? "#665675" : "#805644", "#bb936d"]
       : [metal[0], metal[0], metal[1]];
+    if (kit === "saboteur") {
+      const pack = (u, v) => chest(-side * (.31 + u), v);
+      forgedPlate(context, [pack(-.14, -.76), pack(-.08, -1.00), pack(.22, -.995), pack(.30, -.82),
+        pack(.24, -.43), pack(-.12, -.44)], ["#373327", "#78734b", "#d3b579"], palette, size, .21, true);
+      for (const u of [.05, .22]) {
+        line(context, [pack(u, -.92), pack(u, -.56)], "#333d31", size * .122);
+        line(context, [pack(u, -.87), pack(u, -.63)], u > .1 ? "#bfa663" : "#a9ae6b", size * .072);
+      }
+      line(context, [pack(-.055, -.72), pack(.23, -.72)], "#e1c18b", size * .040);
+    }
+    if (agile) {
+      const clothHang = pose.stride * .36 + wind * .07;
+      forgedPlate(context, [chest(-side * .20, -.88), chest(-side * .44, -.77 + clothHang),
+        chest(-side * .60, -.53 + clothHang), chest(-side * .41, -.58 + clothHang), chest(-side * .26, -.73)],
+      [coat[0], kit === "hunter" ? metal[1] : "#c48047", metal[2]], palette, size, .18, true);
+    }
     paintArm(context, farArm, size, coat, "#1b1820");
     forgedPlate(context, [chest(-0.24, -0.60), chest(0.24, -0.60), chest(0.27, -0.39),
       chest(0.13, human ? -0.24 + pose.stride * 0.26 : -0.29),
@@ -3866,11 +4195,18 @@
     }
 
     const brow = (x, y) => chest(x + fx * (0.044 + follow * 0.04),
-      y + (runner ? 0.075 : 0) + fy * 0.031);
+      y + (runner || agile ? 0.075 : 0) + fy * 0.031);
     if (human) {
       const skin = actor.id % 3 === 1 ? ["#6b4844", "#ba8d69", "#dfb886"] : ["#784c44", "#bc855f", "#e3b48b"];
       const face = (x, y) => brow(x * side, -1.076 + y);
-      miniatureFace(context, face, size, palette, { skin, crown: runner ? coat : metal, hood: runner, mask: ranged || runner });
+      miniatureFace(context, face, size, palette, {
+        skin, crown: runner ? coat : metal, hood: runner || kit === "hunter", mask: ranged || runner || agile,
+      });
+      if (kit === "marksman") {
+        line(context, [face(-.25, -.06), face(.21, -.08), face(.29, -.045)], metal[2], size * .035);
+      } else if (kit === "breaker") {
+        line(context, [face(-.24, .015), face(-.36, .16), face(-.18, .22)], metal[2], size * .062);
+      }
     } else {
       forgedPlate(context, [brow(-0.205, -0.99), brow(-0.128, -1.16), brow(0.092, -1.186),
         brow(0.194, -1.08), brow(0.225, -0.941), brow(0.124, -0.833), brow(-0.137, -0.86)],
@@ -3889,7 +4225,9 @@
     forgedPlate(context, [pauldron(-0.115, -0.80), pauldron(-0.071, -0.866), pauldron(0.071, -0.863),
       pauldron(0.129, -0.758), pauldron(0.071, -0.695), pauldron(-0.101, -0.707)],
       metal, palette, size, 0.28);
-    if (lancer) {
+    if (kit) {
+      specialistWeapon(context, kit, hand, farArm[2], pose, facing, size, metal, palette, actor.bossMove);
+    } else if (lancer) {
       const roll = 0.14 + fy * 0.39 - wind * 0.23 + pose.charge * 0.16;
       const blade = (distance, width = 0) =>
         [hand[0] + weaponSide * distance * size, hand[1] + (distance * roll + width) * size];
@@ -3937,31 +4275,46 @@
     lancer: ["#45352a", "#947745", "#d2ad79"],
     mortar: ["#422f3c", "#8a626b", "#b88490"],
     warden: ["#352d47", "#756387", "#b2a0bc"],
+    skirmisher: ["#493036", "#9b5b55", "#eea484"],
+    breaker: ["#402d33", "#a26457", "#dfa98a"],
+    marksman: ["#2e354b", "#637e98", "#b5bacb"],
+    saboteur: ["#303d34", "#798052", "#c8bb76"],
     boss: ["#352438", "#895986", "#d69abd"],
   };
 
-  function burrowCreature(context, base, at, actor, pose, size, skin, palette, facing) {
+  function burrowCreature(context, base, at, actor, pose, size, skin, palette, facing, kit) {
     const [fx, fy] = facing;
     const side = pose.facingRight ? 1 : -1;
     const boss = actor.kind === "boss";
-    const runner = actor.kind === "runner";
+    const skirmisher = kit === "skirmisher" || kit === "hunter";
+    const breaker = kit === "breaker";
+    const marksman = kit === "marksman";
+    const saboteur = kit === "saboteur";
+    const runner = actor.kind === "runner" || skirmisher;
     const lancer = actor.kind === "lancer";
     const warden = actor.kind === "warden";
     const mortar = actor.kind === "mortar";
     const sentry = actor.kind === "sentry";
-    const low = runner || mortar || warden || sentry;
-    const bodyWide = boss ? 1.11 : low ? 1.19 : 0.98;
+    const low = runner || mortar || warden || sentry || marksman || saboteur;
+    const bodyWide = breaker ? 1.30 : boss ? 1.11 : low ? 1.19 : 0.98;
     const bodyDip = low ? (runner ? 0.17 : 0.09) : 0;
     const body = (x, y) => at(side * x * bodyWide, y + bodyDip);
     const fore = pose.anticipation;
     const thrust = pose.recoil * 0.15 + pose.charge * 0.27;
     if (!sentry) {
       const tailRoot = body(-0.30, -0.59);
-      const tailBend = body(-0.65, -0.51 - pose.stride * 0.26);
-      const tailTip = body(runner ? -1.07 : -0.90, -0.63 + pose.stride * 0.40 + fore * 0.12);
+      const tailBend = body(-0.65, -0.51 - pose.stride * 0.26 - (breaker ? fore * .33 : 0));
+      const tailTip = body(runner ? -1.07 : -0.90, -0.63 + pose.stride * 0.40
+        + (breaker ? -.76 * fore + .31 * pose.recoil : fore * .12));
       line(context, [tailRoot, tailBend, tailTip], skin[0], size * 0.136);
       line(context, [tailRoot, tailBend, tailTip], skin[1], size * 0.078);
       line(context, [tailBend, tailTip], skin[2] + "a9", size * 0.033);
+      if (breaker) {
+        const club = (u, v) => [tailTip[0] + u * size * side, tailTip[1] + v * size];
+        forgedPlate(context, [club(-.25, -.12), club(-.11, -.25), club(.06, -.20), club(.18, -.095),
+          club(.12, .16), club(-.07, .23), club(-.23, .135)], skin, palette, size, .21, true);
+        line(context, [club(-.15, -.22), club(-.08, -.08), club(-.22, .10)], "#f4bd8b", size * .031);
+      }
     }
     const paw = (leg, depth) => {
       const legPhase = fraction(pose.cadence / tau + (leg < 0 ? 0.5 : 0) + depth * 0.24);
@@ -4000,12 +4353,14 @@
         body(0.08, -0.93), body(0.25, -0.75), body(0.09, -0.64), body(-0.21, -0.60)],
       [skin[0], skin[1], ridge], palette, size, 0.27, true);
       line(context, [body(-0.27, -0.79), body(-0.14, -0.83), body(-0.01, -0.78)], ridge + "be", size * 0.042);
-    } else if (mortar) {
+    } else if (mortar || saboteur) {
       const color = actor.windup > 0 ? "#e09365" : skin[1];
-      for (const [u,v,ratio] of [[-.25,-.91,.63],[.065,-.86,.58],[-.10,-.95,1]]) {
+      const sacs = saboteur ? [[-.42, -.83, .83], [-.17, -.84, .72], [-.32, -1, 1.03]]
+        : [[-.25, -.91, .63], [.065, -.86, .58], [-.10, -.95, 1]];
+      for (const [u,v,ratio] of sacs) {
         const sac = body(u, v - fore * 0.12 + pose.recoil * 0.15);
         ellipse(context, ...sac, size * (0.16 + fore * 0.065) * ratio, size * 0.141 * ratio,
-          color, skin[0], Math.max(.8, size * 0.039));
+          saboteur ? "#aba35c" : color, skin[0], Math.max(.8, size * 0.039));
         ellipse(context, sac[0] - size * 0.050 * ratio, sac[1] - size * 0.051 * ratio,
           size * 0.061 * ratio, size * 0.032 * ratio, "#ffd4a7ae");
       }
@@ -4013,13 +4368,19 @@
       line(context, [body(-0.31, -0.70), body(-0.16, -0.76), body(0.02, -0.75)],
         skin[2] + "ad", Math.max(0.7, size * 0.037));
     }
-    if (!low) {
+    if (!low || skirmisher) {
       const forearm = armJoints(body(0.16, -0.69), body(0.42 + thrust, -0.34 - fore * 0.25),
         size, -side * 0.68, 0.26, 0.235);
       paintArm(context, forearm, size, skin, "#281e29");
       const forelimb = forearm[2];
       line(context, [forelimb, [forelimb[0] + side * size * 0.105, forelimb[1] + size * 0.05]],
         "#d1b192", size * 0.034);
+      if (skirmisher) {
+        const claw = (u, v) => [forelimb[0] + side * u * size, forelimb[1] + (v - fore * u * .20) * size];
+        forgedPlate(context, [claw(-.035, -.065), claw(.23, -.15), claw(.41, -.266),
+          claw(.35, -.054), claw(.17, .061), claw(-.052, .062)],
+        ["#513442", "#ad7264", "#ffd3a0"], palette, size, .10, true);
+      }
     }
 
     const rise = sentry ? -0.15 : runner ? 0.065 : boss ? -0.045 : 0;
@@ -4037,6 +4398,14 @@
       head(0.04, -0.69 + jaw), head(-0.095, -0.73)], skin, palette, size, 0.32, true);
     line(context, [head(0.26, -0.826), head(0.13, -0.800 + jaw * 0.22), head(0.022, -0.772 + jaw * 0.46)],
       "#291e29", size * (sentry ? 0.071 : 0.045));
+    if (marksman) {
+      for (const lift of [-.048, .050]) {
+        forgedPlate(context, [head(.127, -.89 + lift), head(.39, -.949 + lift), head(.71 - pose.recoil * .13, -.915 + lift),
+          head(.51, -.864 + lift), head(.191, -.82 + lift)], skin, palette, size, .13, true);
+      }
+      ellipse(context, ...head(.399, -.938), size * .043, size * .052,
+        actor.windup > 0 ? "#ffdc93" : "#7badba", "#403441", .78);
+    }
     const eyes = sentry ? [[-.061,-.956,.044],[.045,-.979,.057],[.157,-.947,.037]] : [[.093,-.949,.055]];
     for (const [u,v,radius] of eyes) {
       const eye = head(u,v);
@@ -4055,7 +4424,8 @@
 
   function stellarFigure(context, at, pose, actor, size) {
     const active = actor.windup > 0;
-    const flare = .10 + pose.anticipation * .16;
+    const orbiting = actor.bossMove === "orbit";
+    const flare = .10 + pose.anticipation * (orbiting ? .28 : .16);
     const shade = context.createLinearGradient(...at(-.40, -1.15), ...at(.45, -.18));
     shade.addColorStop(0, "#baacdc");
     shade.addColorStop(.38, "#716d9a");
@@ -4075,7 +4445,8 @@
     poly(context, [at(-.13, -.69), at(0, -.84), at(.13, -.69), at(0, -.49)], "#301f47", "#b2a5dd", 1.05);
     ellipse(context, ...core, size * .057, size * .068, active ? "#ffdfab" : "#e4d7fc");
     const head = at(0, -1.15);
-    ellipse(context, ...head, size * .33, size * .19, null, "#a99bd4", Math.max(1.2, size * .025));
+    ellipse(context, ...head, size * (.33 + (orbiting ? pose.anticipation * .13 : 0)),
+      size * .19, null, "#a99bd4", Math.max(1.2, size * .025));
     ellipse(context, ...head, size * .192, size * .21, "#181931", "#d6c6ed", Math.max(1.1, size * .033));
     ellipse(context, ...at(.049, -1.184), size * .126, size * .156, "#282448");
     for (const [x, y] of [[-.32, -1.16], [.33, -1.20], [.06, -1.45]]) {
@@ -4094,23 +4465,35 @@
     const warden = actor.kind === "warden";
     const mortar = actor.kind === "mortar";
     const gunner = actor.kind === "sentry" || mortar;
-    const size = unit * (boss ? 1.74 : runner ? 0.82 : warden ? 1.22 : 1);
-    const creature = actor.faction === "creature";
+    const bossStyle = boss ? actor.bossProfile?.style : undefined;
+    const profile = bossStyles[bossStyle];
+    const specialty = specialistArt[actor.kind];
+    const kit = profile?.kit ?? (specialty ? actor.kind : undefined);
+    const size = unit * (profile?.scale ?? specialty?.scale ?? (boss ? 1.74 : runner ? 0.82 : warden ? 1.22 : 1));
+    const creature = bossStyle === "beast" || (actor.faction === "creature" && bossStyle !== "engine");
     const skins = creature ? creatureSkins : guardianMetals;
-    const metal = actor.flash > 0.08 ? ["#4d4046", "#c4a39b", "#fce8d4"] : skins[actor.kind] ?? skins.guard;
+    const armor = profile?.metal ?? skins[actor.kind] ?? skins.guard;
+    const accent = actor.bossProfile?.accent;
+    const colored = profile && typeof accent === "string" && /^#[0-9a-f]{6}$/i.test(accent)
+      ? [armor[0], armor[1], accent] : armor;
+    const metal = actor.flash > 0.08 ? ["#4d4046", "#c4a39b", "#fce8d4"] : colored;
     const facing = unitVector(pose.look);
     const [fx] = facing;
     const impact = reduced ? 0 : pose.impact;
-    const lean = pose.recoil * (gunner ? -0.10 : 0.14) + pose.charge * 0.18
-      - pose.anticipation * 0.09 - impact * 0.079 + (runner ? pose.gait * 0.14 : 0);
-    const dip = pose.breath - Math.abs(pose.stride) * (runner ? 0.25 : 0.13)
-      + pose.anticipation * (mortar || runner ? 0.105 : 0.062) + pose.charge * 0.09;
+    const quick = runner || kit === "skirmisher" || kit === "hunter";
+    const ranged = gunner || kit === "marksman" || kit === "engine";
+    const action = boss ? bossStances[actor.bossMove] : undefined;
+    const force = pose.anticipation * .72 + pose.recoil * .54;
+    const lean = pose.recoil * (ranged ? -0.10 : 0.14) + pose.charge * 0.18
+      - pose.anticipation * 0.09 - impact * 0.079 + (quick ? pose.gait * 0.14 : 0) + (action?.[0] ?? 0) * force;
+    const dip = pose.breath - Math.abs(pose.stride) * (quick ? 0.25 : 0.13)
+      + pose.anticipation * (mortar || quick ? 0.105 : 0.062) + pose.charge * 0.09 + (action?.[1] ?? 0) * force;
     const base = (horizontal, vertical) => [x + horizontal * size, y + vertical * size];
     const ground = (horizontal, vertical) => [x + horizontal * size, y + vertical * size - footing * unit];
     const at = (horizontal, vertical) => base(horizontal + fx * lean, vertical + dip);
     contactShadow(context, x, y - footing * unit, size, palette);
     groundRing(context, raisedCamera(camera, footing), actor.x, actor.y, boss ? 0.51 : 0.29, "#fa78560e", "#f394756c", 1.1);
-    if (actor.stellar || (boss && palette.landscape === "stars")) {
+    if (actor.stellar || bossStyle === "stellar" || (boss && palette.landscape === "stars")) {
       stellarFigure(context, at, pose, actor, size);
       return;
     }
@@ -4123,17 +4506,21 @@
       context.restore();
     }
     if (creature) {
-      burrowCreature(context, ground, at, actor, pose, size, metal, palette, facing);
+      burrowCreature(context, ground, at, actor, pose, size, metal, palette, facing, kit);
       return;
     }
     legStride(context, ground, at, pose.charge > 0 ? facing : unitVector(pose.travel),
       pose, size, metal[0], metal[1], pose.charge * 0.15, actor.faction === "human");
     if (gunner && actor.faction !== "human") pressureGunner(context, at, facing, actor, pose, size, metal, palette);
-    else compressionGuard(context, at, actor, pose, size, metal, palette, facing);
+    else compressionGuard(context, at, actor, pose, size, metal, palette, facing, kit);
   }
 
   function enemyHealthHeight(actor) {
     if (actor.stellar) return 2.86;
+    const profile = actor.kind === "boss" && bossStyles[actor.bossProfile?.style];
+    if (profile) return profile.height;
+    const specialty = specialistArt[actor.kind];
+    if (specialty) return specialty.height - (actor.faction === "creature" ? .16 : 0);
     if (actor.faction === "human") {
       return actor.kind === "boss" ? 2.43 : actor.kind === "runner" ? 1.16 : actor.kind === "warden" ? 1.77 : 1.48;
     }
@@ -4214,6 +4601,29 @@
     ellipse(context, x, y, radius, radius, "#fff1cb", "#ff9557", 1.2);
   }
 
+  function heroProjectile(context, camera, entry, reduced, elevation) {
+    if (entry.life <= 0) return;
+    const z = Number.isFinite(entry.absoluteZ) ? entry.absoluteZ : surfaceHeight(elevation, entry.x, entry.y) + .56;
+    const tip = point(camera, entry.x, entry.y, z);
+    const delta = point(camera, entry.x - (entry.vx || 0), entry.y - (entry.vy || 0), z - (entry.vz || 0));
+    const length = Math.hypot(tip[0] - delta[0], tip[1] - delta[1]) || 1;
+    const dx = (tip[0] - delta[0]) / length, dy = (tip[1] - delta[1]) / length;
+    const unit = camera.unit;
+    const head = (back, side = 0) => [tip[0] - dx * unit * back - dy * unit * side,
+      tip[1] - dy * unit * back + dx * unit * side];
+    if (entry.kind === "arrow") {
+      line(context, [head(.52), tip], "#2c302e", Math.max(1.8, unit * .091));
+      line(context, [head(.50), head(.08)], "#caad78", Math.max(1.0, unit * .045));
+      poly(context, [head(.45, -.074), head(.31, -.015), head(.45, .074), head(.51)], "#9cd4bc");
+      poly(context, [tip, head(.135, .049), head(.096), head(.135, -.049)], "#f4ecd4", "#4e5b54", .62);
+    } else if (entry.kind === "spell") {
+      const radius = Math.max(2.5, unit * .095);
+      if (!reduced) line(context, [head(.41), tip], "#72e0ff76", radius * 1.36);
+      ellipse(context, ...tip, radius * 1.55, radius * 1.43, "#7fe0ff73");
+      ellipse(context, ...tip, radius, radius, "#d6fff2", "#6fc8e4", 1.1);
+    }
+  }
+
   function rewardEffect(context, camera, entry, alpha) {
     const progress = 1 - alpha;
     const level = entry.kind === "level";
@@ -4264,6 +4674,14 @@
       line(context, arc, "#d8fff0", Math.max(1.6, unit * 0.069));
     } else if (entry.kind === "dash") {
       groundRing(context, camera, entry.x, entry.y, 0.35 + (1 - alpha) * 0.4, "#9feac624", "#b8ffdb", 1.2);
+    } else if (entry.kind === "parry") {
+      const radius = reduced ? .67 : .44 + (1 - alpha) * .55;
+      groundRing(context, camera, entry.x, entry.y, radius, "#8fe6ff27", "#c9f5ff", 2.15);
+      const [px, py] = point(camera, entry.x, entry.y, .68);
+      for (const angle of [-Math.PI * .72, -.88, .55, 2.36]) {
+        const at = (u) => [px + Math.cos(angle) * unit * u, py + Math.sin(angle) * unit * u * .79];
+        line(context, [at(radius * .52), at(radius * .96)], "#80ddff", 1.65);
+      }
     } else if (entry.kind === "danger") {
       groundRing(context, camera, entry.x, entry.y, 0.6 + (1 - alpha) * 0.67, "#f8905a40", "#ffad85", 1.9);
     } else if (entry.kind === "level" || entry.kind === "loot") {
@@ -4360,6 +4778,7 @@
     }
     const bounds = scenery.map((object) => {
       if (object.type === "station") {
+        if (object.kind === "workbench") return centeredBounds({ ...object, w: 1.22, h: .70 });
         const footprint = state.obstacles.find((wall) => wall.shelterDecor && wall.x === object.x && wall.y === object.y);
         return centeredBounds(footprint ?? { ...object, w: 1.31, h: object.kind === "departure" ? .30 : .70 });
       }
@@ -4409,7 +4828,9 @@
     bossTargets(context, camera, targets, seconds, elevation);
     bossTargets(context, camera, shells, seconds, elevation);
     for (const enemy of enemies) {
-      if (layer === undefined || (enemy.kind === "sentry" ? layer === 1 : matches(enemy))) {
+      if (enemy.kind === "boss" && enemy.bossMove && state.bossTargets?.length) continue;
+      const crossTier = enemy.kind === "sentry" || enemy.kind === "marksman";
+      if (layer === undefined || (crossTier ? layer === 1 : matches(enemy))) {
         enemyTelegraph(context, camera, enemy, elevation);
       }
     }
@@ -4520,6 +4941,7 @@
     drawArenaObjects(context, camera, orderedScenery, state, palette, theme, seconds, reduced, brushes);
     drawArenaObjects(context, camera, actors, state, palette, theme, seconds, reduced, brushes);
     for (const entry of state.projectiles ?? []) projectile(context, camera, entry, reduced, elevation);
+    for (const entry of state.playerProjectiles ?? []) heroProjectile(context, camera, entry, reduced, elevation);
     for (const entry of visibleEnemies) {
       context.save();
       clipActorOcclusion(context, camera, entry.occlusionMasks);

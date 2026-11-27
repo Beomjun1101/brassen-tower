@@ -2,6 +2,7 @@
   "use strict";
 
   const workbenchSize = { w: 1.22, h: 0.70 };
+  const workbenchClearance = 0.32;
 
   const settlements = [
     { title: "환수 물가 마을", theme: "sluice", fixture: "tank", width: 15, height: 11, cloth: "#487973", trim: "#e3bd86", layout: "well" },
@@ -79,7 +80,8 @@
   function addVillageServices(room, floor) {
     const { width, height, spawn, storySocket, stations, obstacles, inhabited, layout, cloth, trim } = room;
     const { x, y } = stations.find(({ kind }) => kind === "workbench");
-    obstacles.push({ x, y, ...workbenchSize, shelterDecor: true });
+    obstacles.push({ x, y, w: workbenchSize.w + workbenchClearance * 2,
+      h: workbenchSize.h + workbenchClearance * 2, shelterDecor: true });
     const services = [
       { kind: "board", caption: "게시판", u: .25, v: .66, w: 1.02, h: .35 },
       { kind: "shop", caption: "상점", u: .65, v: .39, w: 1.48, h: .88 },
@@ -733,6 +735,8 @@
     const ridge = 1.91;
     const face = (u, z) => p(u, .536, z);
     const flank = (v, z) => p(.824, v, z);
+    art.poly(context, art.rectangle(camera, x - .91, y - .56, 2.10, 1.34, .019), "#24282277");
+    art.poly(context, art.rectangle(camera, x - .94, y - .60, 1.96, 1.24, .024), "#181d1e85");
     box(context, camera, art, x, y, 1.85, 1.16, .16, "#706251", "#453d36", "#af9876", outline);
     box(context, camera, art, x, y, 1.64, 1.06, 1.115, "#9b8165", "#665a48", "#a99674", outline, .16);
     opaqueFace(context, art, [face(-.82, 1.265), face(0, ridge), face(.82, 1.265)], "#a28b6e");
@@ -773,7 +777,8 @@
       lamp(context, camera, art, x + axis, y + .541, .65, "#ffd496", .34);
     }
 
-    const roof = (u, v) => p(u, v, ridge - (ridge - eave) * Math.abs(u) / .917);
+    const roofHeight = (u) => ridge - (ridge - eave) * Math.abs(u) / .917;
+    const roof = (u, v, lift = 0) => p(u, v, roofHeight(u) + lift);
     const rearRidge = roof(0, -.58), frontRidge = roof(0, .58);
     const rearLeft = roof(-.917, -.58), frontLeft = roof(-.917, .58);
     const rearRight = roof(.917, -.58), frontRight = roof(.917, .58);
@@ -789,8 +794,20 @@
     const towerX = -.43;
     const towerY = -.27;
     const towerFront = (u, z) => p(u, towerY + .279, z);
-    box(context, camera, art, x + towerX, y + towerY, .72, .60, .16, "#807052", "#574c3a", "#bc9e66", outline, 1.53);
-    box(context, camera, art, x + towerX, y + towerY, .62, .55, .86, "#997d58", "#60503a", "#c3a36c", outline, 1.66);
+    const left = towerX - .31, right = towerX + .31;
+    const back = towerY - .275, front = towerY + .275;
+    art.poly(context, [roof(left - .085, back - .020, .004), roof(right + .038, back - .020, .004),
+      roof(right + .056, front + .10, .004), roof(left - .128, front + .12, .004)], "#1d302a6d");
+    opaqueFace(context, art, [roof(left - .058, back - .023, .012), roof(right + .050, back - .023, .012),
+      roof(right + .050, front + .055, .012), roof(left - .058, front + .055, .012)], "#877750", "#485246", .8);
+    const shaft = [[left, back], [right, back], [right, front], [left, front]];
+    const seat = shaft.map(([u, v]) => roof(u, v, .014));
+    const lintel = shaft.map(([u, v]) => p(u, v, 2.515));
+    opaqueFace(context, art, [seat[1], seat[2], lintel[2], lintel[1]], "#60503a", outline, .95);
+    opaqueFace(context, art, [seat[2], seat[3], lintel[3], lintel[2]], "#997d58", outline, .95);
+    opaqueFace(context, art, lintel, "#c3a36c", outline, .95);
+    art.line(context, [roof(left, front + .002, .064), roof(right, front + .002, .064),
+      roof(right + .002, back, .064)], "#bb9b6e", .9);
     art.poly(context, chapelArch(towerFront, towerX, .203, 1.99, 2.252, 2.442), "#212a29", "#e2bf7d", 1.3);
     art.line(context, [towerFront(towerX - .11, 2.356), towerFront(towerX + .11, 2.356)], "#aa8b56", 1.35);
     art.poly(context, [towerFront(towerX - .074, 2.32), towerFront(towerX + .074, 2.32),

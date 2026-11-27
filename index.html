@@ -17,6 +17,7 @@
     <script src="map-planner.js" defer></script>
     <script src="floor-graph.js" defer></script>
     <script src="admin.js" defer></script>
+    <script src="pursuit.js" defer></script>
     <script src="game.js" defer></script>
   </head>
   <body>
@@ -105,8 +106,17 @@
                   <h2 id="overlay-title">Brassen Tower</h2>
                 </div>
                 <p id="overlay-copy" class="overlay-copy">전투를 돌파하며 탑을 오르는 액션 로그라이크</p>
-                <section id="build-editor" class="build-editor" aria-label="초기 능력치 배분" hidden>
-                  <div class="build-budget"><span>남은 점수</span><output id="build-points" aria-live="polite">5</output></div>
+                <section id="build-editor" class="build-editor" aria-label="초기 능력치와 난이도" hidden>
+                  <div class="build-settings">
+                    <label class="build-difficulty" for="run-difficulty">난이도
+                      <select id="run-difficulty">
+                        <option value="easy" selected>쉬움</option>
+                        <option value="normal">보통</option>
+                        <option value="hard">어려움</option>
+                      </select>
+                    </label>
+                    <div class="build-budget"><span>남은 점수</span><output id="build-points" aria-live="polite">5</output></div>
+                  </div>
                   <div id="build-stats" class="build-stats"></div>
                 </section>
                 <div id="overlay-choices" class="overlay-choices"></div>
@@ -135,7 +145,6 @@
                 </section>
                 <div class="overlay-actions">
                   <button id="back-to-title" class="secondary-action" type="button">타이틀로</button>
-                  <button id="skip-gear" class="secondary-action" type="button">이번 보상 건너뛰기</button>
                   <button id="primary-action" class="primary-action" type="button" hidden>등반 시작</button>
                 </div>
               </div>
@@ -147,8 +156,12 @@
               <div><dt>이동</dt><dd><kbd>WASD</kbd><kbd>↑↓←→</kbd></dd></div>
               <div><dt>공격</dt><dd><kbd>Space</kbd><kbd>클릭</kbd></dd></div>
               <div class="dash-readout">
-                <dt>회피</dt>
+                <dt>대쉬</dt>
                 <dd><kbd>Shift</kbd><output id="dash-state" data-ready="true">준비</output></dd>
+              </div>
+              <div class="parry-readout">
+                <dt>패링</dt>
+                <dd><kbd>F</kbd><output id="parry-state" data-ready="true" data-state="ready" aria-live="off">준비</output></dd>
               </div>
               <div><dt>상호작용</dt><dd><kbd>E</kbd></dd></div>
             </dl>
@@ -163,7 +176,8 @@
             </div>
             <div class="touch-actions" role="group" aria-label="행동">
               <button type="button" data-action="interact">상호작용</button>
-              <button type="button" data-action="dash">회피</button>
+              <button type="button" data-action="dash">대쉬</button>
+              <button type="button" data-action="parry">패링</button>
               <button type="button" data-action="attack">공격</button>
             </div>
           </div>

@@ -132,18 +132,71 @@
     1199: { title: "상층 송수관", bossName: "수맥 거수", objective: "송수관을 감싼 수맥 거수를 쓰러뜨리세요." },
     1329: { title: "최종 제어실", bossName: "배관의 거수", objective: "최종 제어실에 뿌리내린 거수를 쓰러뜨리세요." },
   };
-  const standardBoss = { title: "심층 관문", bossName: "껍질거수", objective: "껍질거수를 쓰러뜨려 다음 관문으로 향하세요." };
+  const standardBoss = { title: "심층 관문", objective: "관문을 지키는 수호자를 쓰러뜨리세요." };
+  const bossStyles = [
+    { style: "warden", accent: "#dec58d", names: ["주철갑 파수꾼", "격벽 방패수", "심층 집행자"],
+      opening: "sweep" },
+    { style: "hunter", accent: "#ed946d", names: ["도금 사냥꾼", "추격하는 갈퀴뿔", "광맥의 포식자"],
+      opening: "pursuit" },
+    { style: "engine", accent: "#88c9dd", names: ["역류 장치", "삼중 압축기", "열압 펌프 거수"],
+      opening: "barrage" },
+    { style: "beast", accent: "#a9bd85", names: ["갈라진 껍질거수", "배관을 씹는 거수", "격벽에 뿌리내린 짐승"],
+      opening: "rupture" },
+  ];
+  const bossMoves = ["sweep", "rupture", "barrage", "pursuit", "crossfire", "orbit"];
+
+  function bossSequence(opening, rank) {
+    const remaining = bossMoves.filter((move) => move !== opening);
+    const sequence = [opening];
+    // Each floor within a boss style has its own three consecutive permutation ranks.
+    while (remaining.length) {
+      const index = rank % remaining.length;
+      rank = Math.floor(rank / remaining.length);
+      sequence.push(remaining.splice(index, 1)[0]);
+    }
+    return sequence;
+  }
+
+  function profileForBoss(floor, theme, macro, placement, minor) {
+    if (floor === floorCount) {
+      return { id: "stellar-1332", style: "stellar", sequence: ["orbit", "crossfire", "rupture"],
+        accent: "#e4d1ff", timing: 1, size: 1 };
+    }
+    const ordinal = Math.floor(floor / 10);
+    const { style, accent, names, opening } = bossStyles[ordinal % bossStyles.length];
+    const early = floor <= 19;
+    const environment = ["sluice", "relay", "forge"].indexOf(theme);
+    const group = Math.floor(ordinal / bossStyles.length);
+    const pattern = (group + macro + placement * 2 + minor + environment) % names.length;
+    const timing = early ? 1 : [1.06, 1, 0.94][(ordinal + macro + minor) % 3];
+    const size = early ? 1 : [0.92, 1, 1.08][(ordinal + placement + minor) % 3];
+    const sequence = floor === 9 ? [opening, "rupture", pattern === 1 ? "orbit" : "crossfire"]
+      : floor === 19 ? [opening, pattern === 1 ? "crossfire" : "barrage", "orbit"]
+      : bossSequence(opening, group * names.length + pattern);
+    return { id: `${style}-${floor}-${theme}-${macro}-${placement}-${minor}`, style, accent,
+      sequence, timing, size, name: names[pattern] };
+  }
+
   const rosterNames = {
-    human: { guard: "경비병", runner: "추격꾼", sentry: "보초 사수", lancer: "장창병", mortar: "탄 투척병", warden: "방패병" },
-    machine: { guard: "차단기", runner: "순찰기", sentry: "자동 포탑", lancer: "압착기", mortar: "분사기", warden: "방벽 장치" },
-    creature: { guard: "철각충", runner: "물갈퀴 짐승", sentry: "독침거미", lancer: "갈퀴뿔", mortar: "포자주머니", warden: "방패등" },
+    human: { guard: "경비병", runner: "추격꾼", sentry: "보초 사수", lancer: "장창병", mortar: "탄 투척병", warden: "방패병",
+      skirmisher: "유격병", breaker: "파쇄병", marksman: "저격병", saboteur: "공작병" },
+    machine: { guard: "차단기", runner: "순찰기", sentry: "자동 포탑", lancer: "압착기", mortar: "분사기", warden: "방벽 장치",
+      skirmisher: "측방 순찰기", breaker: "충격 파쇄기", marksman: "정밀 포탑", saboteur: "교란 장치" },
+    creature: { guard: "철각충", runner: "물갈퀴 짐승", sentry: "독침거미", lancer: "갈퀴뿔", mortar: "포자주머니", warden: "방패등",
+      skirmisher: "틈새발톱", breaker: "격벽파쇄수", marksman: "장침거미", saboteur: "덫주머니" },
+  };
+  const creatureSpecialists = {
+    sluice: { skirmisher: "물살발톱", breaker: "수로 갑각수", marksman: "수침거미", saboteur: "진흙덫충" },
+    relay: { skirmisher: "전선발톱", breaker: "철심파쇄수", marksman: "방전가시수", saboteur: "도체덫충" },
+    forge: { skirmisher: "잿발톱", breaker: "용암등 파쇄수", marksman: "불침거미", saboteur: "불씨주머니" },
   };
 
-  function combatant(floor, kind, index, signal) {
+  function combatant(floor, kind, index, signal, theme) {
     const native = floor < frontierFloor ? "human" : "creature";
     const machine = kind !== "boss" && !isBossFloor(floor) && index === 1 && (floor + signal) % 4 === 0;
     const faction = machine ? "machine" : native;
-    return { faction, name: rosterNames[faction][kind] };
+    const regionalName = faction === "creature" ? creatureSpecialists[theme]?.[kind] : undefined;
+    return { faction, name: regionalName ?? rosterNames[faction][kind] };
   }
   const finalTrial = {
     title: "별불 배분실",
@@ -175,7 +228,7 @@
     clearGoldBonus: (value) => `통과 금화 ${signedRouteValue(value)}`,
     clearXpBonus: (value) => `통과 경험치 ${signedRouteValue(value)}`,
     enemyDamageMultiplier: (value) => `적 공격력 ${routePercent(value)}`,
-    dashCooldownMultiplier: (value) => `회피 재사용 ${routePercent(value)}`,
+    dashCooldownMultiplier: (value) => `대쉬 재사용 ${routePercent(value)}`,
     speedMultiplier: (value) => `이동 속도 ${routePercent(value)}`,
     attackCooldownMultiplier: (value) => `공격 간격 ${routePercent(value)}`,
     damageReductionBonus: (value) => `피해 감소 ${signedRouteValue(value * 100)}%p`,
@@ -185,7 +238,7 @@
     entryGold: (value) => `입장 금화 ${signedRouteValue(value)}`,
     entryXp: (value) => `입장 경험치 ${signedRouteValue(value)}`,
     guardBreakBonus: (value) => `장갑 관통 ${signedRouteValue(value * 100)}%p`,
-    dashStrikeBonus: (value) => `회피 후 피해 ${signedRouteValue(value)}`,
+    dashStrikeBonus: (value) => `대쉬 후 피해 ${signedRouteValue(value)}`,
   };
   function buildRoute(id, label, description, effects, regions) {
     const detail = Object.entries(effects).map(([key, value]) => routeDetail[key](value)).join(" · ");
@@ -227,7 +280,7 @@
       id: "service-rail",
       label: "점검 레일",
       description: "균형 보조 장치를 조정하고 위층으로 오릅니다.",
-      detail: "다음 층 회피 재사용 시간 −28%",
+      detail: "다음 층 대쉬 재사용 시간 −28%",
       effects: { dashCooldownMultiplier: 0.72 },
       regions: ["service", "transmission"],
     },
@@ -275,7 +328,7 @@
       { attackRangeBonus: 0.34, attackCooldownMultiplier: 1.08 }, ["service", "furnace"]),
     buildRoute("edge-grind", "쐐기 연마로", "단단한 표면에 맞춰 날을 세웁니다.",
       { guardBreakBonus: 0.23, damageBonus: 4 }, ["furnace", "pressure"]),
-    buildRoute("counter-spring", "탄성 반격로", "회피 장치에 반동 스프링을 겁니다.",
+    buildRoute("counter-spring", "탄성 반격로", "대쉬 장치에 반동 스프링을 겁니다.",
       { dashStrikeBonus: 12, dashCooldownMultiplier: 0.90 }, ["service", "transmission"]),
     buildRoute("shock-pad", "완충 격벽로", "충격을 흘리는 패드를 붙입니다.",
       { damageReductionBonus: 0.08, ward: 8 }, ["pressure", "distribution"]),
@@ -309,7 +362,7 @@
       { speedMultiplier: 1.16, enemyDamageMultiplier: 1.14 }, ["transmission", "service"]),
     buildRoute("unsafe-override", "잠금 해제 우회로", "적과 무기에 전력이 함께 들어갑니다.",
       { damageBonus: 22, enemyDamageMultiplier: 1.22 }, ["pressure", "furnace"]),
-    buildRoute("spring-transfer", "고속 전환 레일", "좁은 회전에 맞춰 회피 장치를 당깁니다.",
+    buildRoute("spring-transfer", "고속 전환 레일", "좁은 회전에 맞춰 대쉬 장치를 당깁니다.",
       { dashCooldownMultiplier: 0.60, speedMultiplier: 0.92, ward: 14 }, ["service", "transmission"]),
     buildRoute("tunnel-lit", "투광기 통로", "밝아진 길에서 긴 자루를 다룹니다.",
       { attackRangeBonus: 0.29, speedMultiplier: 1.08 }, ["lower-drainage", "distribution"]),
@@ -1203,6 +1256,31 @@
     return { enemies, elites, wave, detail };
   }
 
+  const specialistUnlocks = { skirmisher: 2, breaker: 4, marksman: 6, saboteur: 11 };
+  const specialistFormations = {
+    sluice: ["skirmisher", "saboteur", "breaker", "marksman"],
+    relay: ["marksman", "saboteur", "skirmisher", "breaker"],
+    forge: ["breaker", "skirmisher", "marksman", "saboteur"],
+  };
+
+  function mixCombatRoster(changes, floor, theme, macro, placement, minor) {
+    const eligible = specialistFormations[theme].filter((kind) => specialistUnlocks[kind] <= floor);
+    const introduction = eligible.find((kind) => specialistUnlocks[kind] === floor);
+    // Reuse the floor rolls so enemy specialties do not consume another draw or shift the map dice.
+    const signature = (Math.imul(floor, 0x45d9f3b) ^ Math.imul(macro, 0x119de1f3) ^ (placement << 8) ^ minor) >>> 0;
+    const specialist = introduction ?? (signature % 4 === 0 ? eligible[(signature >>> 16) % eligible.length] : eligible[0]);
+    const support = eligible.filter((kind) => kind !== specialist);
+    const supportAt = (index) => support[((signature >>> 10) + index) % support.length];
+    changes.enemies[3 + (signature & 1)] = specialist;
+    if (floor >= 6) changes.enemies[5] = supportAt(0);
+    if (floor >= 11 || (floor >= 4 && minor >= 3)) {
+      changes.wave[minor % 3] = supportAt(floor >= 11 ? 1 : 0);
+    }
+    if (floor >= frontierFloor && macro >= 4) changes.wave[(minor + 1) % 3] = supportAt(2);
+    const name = floor < frontierFloor ? rosterNames.human[specialist] : creatureSpecialists[theme][specialist];
+    changes.detail = name + " 편성 · " + changes.detail;
+  }
+
   function promoteEnemy(kind, floor, macro, index) {
     if (floor >= 9 && kind === "guard" && index === 0) return "warden";
     if (floor >= 7 && kind === "guard" && index === 3 && macro % 2 === 1) return "mortar";
@@ -1268,16 +1346,19 @@
     const layout = layouts[placement - 1];
     const profile = routeProfiles[placement - 1];
     const foldY = (y) => layout.fold === 1 ? y : height - y;
-    const spawnEnemy = (kind, [x, y], elite = false, index = 0) => ({
-      x, y: foldY(y), kind, elite, ...combatant(floor, kind, index, macro),
-    });
-    const changes = floorChanges(stage, variation, minor, floor);
     const gold = template.baseGold + 3 * (minor - 1);
     const distributionFloor = stage === 1;
     const hasDivider = geometry === 1;
     const fixedTheme = ordinaryCombat ? undefined : sites[floor]?.theme;
     const theme = opening?.theme ?? fixedTheme ?? rolledDestination?.[0]
       ?? (hasDivider ? regionSpec.dividerTheme : regionSpec.theme);
+    const bossProfile = bossTrial ? profileForBoss(floor, theme, macro, placement, minor) : null;
+    const bossName = authoredBoss?.bossName ?? bossProfile?.name;
+    const spawnEnemy = (kind, [x, y], elite = false, index = 0) => ({
+      x, y: foldY(y), kind, elite, ...combatant(floor, kind, index, macro, theme),
+    });
+    const changes = floorChanges(stage, variation, minor, floor);
+    if (stage === 0 && floor >= specialistUnlocks.skirmisher) mixCombatRoster(changes, floor, theme, macro, placement, minor);
     const transmission = theme === "relay" && region.id === "transmission" && !consequence?.dry;
     const waterMap = theme === "sluice" || transmission;
     const dryRoom = !waterMap && !bossTrial && !final && floor !== 2 ? dryProfiles[placement - 1] : null;
@@ -1357,7 +1438,8 @@
       floorPlan: final ? null : { id: waterMap ? waterway ?? "straight" : structure.id, title: layoutTitle },
       title,
       objective,
-      bossName: bossTrial?.bossName,
+      bossName,
+      bossProfile,
       final,
       width,
       height,
@@ -1400,7 +1482,7 @@
         const enemy = spawnEnemy(enemyKind, position, changes.elites.has(index), index);
         if (entranceScout) enemy.engaged = true;
         if (gateGuard) enemy.gateGuard = true;
-        if (kind === "boss" && bossTrial) enemy.name = bossTrial.bossName;
+        if (kind === "boss" && bossTrial) enemy.name = bossName;
         if (stage === 4 && index === 0) {
           enemy.target = true;
           if (consequence?.targetName) enemy.name = consequence.targetName;

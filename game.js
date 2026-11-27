@@ -16,9 +16,9 @@
     "stage-progress", "stage-title", "threat-label", "notification", "live-status", "overlay",
     "overlay-kicker", "overlay-title", "overlay-copy", "overlay-choices",
     "primary-action", "entry-continue", "touch-controls", "hero-label", "level-value", "xp-label", "xp-fill", "gear-list",
-    "game-stage", "floor-steps", "hazard-label", "timer-label", "dash-state", "minimap",
+    "game-stage", "floor-steps", "hazard-label", "timer-label", "dash-state", "parry-state", "minimap",
     "gear-compare", "compare-equipped", "compare-candidate", "compare-stats", "compare-detail",
-    "build-editor", "build-points", "build-stats", "skip-gear",
+    "build-editor", "build-points", "build-stats", "run-difficulty",
     "pack-panel", "pack-list", "pack-count", "compare-heading", "compare-candidate-label",
     "audio-toggle", "music-track", "back-to-title", "region-label",
     "elevation-label", "elevation-legend",
@@ -27,9 +27,16 @@
 
   const playerRadius = 0.29;
   const challengeGold = 12;
+  const parryWindow = 0.125;
+  const failedParryCooldown = 5;
   const motionPreference = window.matchMedia?.("(prefers-reduced-motion: reduce)");
   const dieRebounds = [0.38, 0.49, 0.61, 0.73];
   const checkpointKey = "brass-spire-campaign-v1";
+  const seenTutorials = new Set();
+  const tutorials = {
+    1: { title: "첫 전투", copy: "WASD 또는 방향키로 움직이고, 스페이스바를 한 번씩 누르거나 클릭해 공격합니다.\nShift로 대쉬하고, 적의 공격이 닿는 순간 F로 패링하세요.\n터치 화면에서는 아래 조작 버튼을 쓰세요. 적을 모두 쓰러뜨리면 보상 하나를 고릅니다." },
+    5: { title: "첫 쉼터", copy: "시설 가까이에서 E를 누르거나 시설을 클릭하세요.\n게시판에서 의뢰를 받고, 상점에서 물건을 사고팔 수 있습니다. 가방 속 아이템은 클릭하면 바로 사용하거나 장착합니다.\n정비가 끝나면 ‘위층으로’ 표지로 가세요." },
+  };
   const swingDurations = [0.24, 0.27, 0.32];
   const terrainCycles = {
     conduit: { period: 5.4, warningAt: 3.25, activeAt: 4.25, stopsAt: 5.15, damage: 12 },
@@ -37,6 +44,11 @@
   };
   const entrance = { width: 34, height: 26, spawn: { x: 4, y: 13 }, enemies: [], obstacles: [], items: [] };
   const previewFloorLimit = 20;
+  const difficulties = {
+    easy: { name: "쉬움", health: 1, damage: 1, speed: 1, interval: 1, windup: 1, shots: 2, mines: 2, bossExtra: 0 },
+    normal: { name: "보통", health: 1.20, damage: 1.12, speed: 1.04, interval: .93, windup: .98, shots: 2, mines: 3, bossExtra: 1 },
+    hard: { name: "어려움", health: 1.45, damage: 1.28, speed: 1.09, interval: .85, windup: .94, shots: 3, mines: 3, bossExtra: 2 },
+  };
   const enemyTypes = {
     guard: { hp: 84, speed: 2.57, damage: 24, range: 1.95, windup: 0.56, cooldown: 0.65, radius: 0.32 },
     runner: { hp: 54, speed: 3.47, damage: 19, range: 1.55, windup: 0.46, cooldown: 0.56, radius: 0.27 },
@@ -44,13 +56,39 @@
     lancer: { hp: 72, speed: 2.70, damage: 27, range: 4.7, windup: 0.69, cooldown: 1.13, radius: 0.31 },
     mortar: { hp: 78, speed: 1.55, damage: 30, range: 8.9, windup: 0.94, cooldown: 1.69, radius: 0.38 },
     warden: { hp: 111, speed: 2.10, damage: 28, range: 2.12, windup: 0.69, cooldown: 0.92, radius: 0.43 },
+    skirmisher: { hp: 63, speed: 3.21, damage: 21, range: 2.05, windup: 0.58, cooldown: 0.84, radius: 0.30 },
+    breaker: { hp: 97, speed: 1.91, damage: 30, range: 2.72, windup: 1.04, cooldown: 1.43, radius: 0.39 },
+    marksman: { hp: 57, speed: 1.62, damage: 19, range: 8.10, windup: 0.74, cooldown: 1.39, radius: 0.34 },
+    saboteur: { hp: 72, speed: 2.06, damage: 24, range: 5.85, windup: 0.72, cooldown: 1.71, radius: 0.35 },
     boss: { hp: 405, speed: 2.24, damage: 34, range: 2.78, windup: 0.83, cooldown: 0.92, radius: 0.58 },
+  };
+  const bossPacing = {
+    warden: { speed: .82, pause: 1.35 }, hunter: { speed: 1.25, pause: .94 },
+    engine: { speed: .94, pause: 1.16 }, beast: { speed: 1.10, pause: 1.05 },
+  };
+  const playerWeapons = {
+    sword: { reach: 1.8, angle: .38 },
+    hammer: { reach: 1.65, angle: .36, interval: 1.30, impact: .53, stagger: .20 },
+    rapier: { reach: 2.28, angle: .73, impact: .33, step: .17, power: .96 },
+    daggers: { reach: 1.26, angle: .54, impact: .27, step: .12, power: .92 },
+    maul: { reach: 1.76, angle: .36, interval: 1.49, impact: .62, stagger: .30, power: 1.15 },
+    poleaxe: { reach: 2.58, angle: .65, interval: 1.28, impact: .48, stagger: .16 },
+    sabre: { reach: 2.11, angle: .18, power: .97 },
+    greatsword: { reach: 2.35, angle: .44, interval: 1.36, impact: .56, pierce: .17, power: 1.07 },
+    twinblades: { reach: 1.42, angle: .55, step: .23, impact: .28, power: .89 },
+    hooks: { reach: 1.62, angle: .56, impact: .39, counter: .22, power: .92 },
+    staff: { reach: 6.7, interval: 1.87, minimum: .32, swing: .39, impact: .55, projectile: "spell", speed: 9.5, power: .82 },
+    orb: { reach: 7.15, interval: 1.98, minimum: .34, swing: .43, impact: .55, projectile: "spell", speed: 10, pierce: .13, power: .81 },
+    bow: { reach: 6.05, interval: 1.62, minimum: .27, swing: .35, impact: .51, projectile: "arrow", speed: 13.5, power: .86 },
+    crossbow: { reach: 6.55, interval: 1.80, minimum: .29, swing: .36, impact: .43, projectile: "arrow", speed: 15, pierce: .10, power: .86 },
+    gauntlets: { reach: .95, angle: .58, impact: .24, step: .10, stagger: .12, power: .94 },
+    tonfa: { reach: 1.12, angle: .46, impact: .30, step: .13, stagger: .18, power: .92 },
   };
   const movement = {
     up: ["KeyW", "ArrowUp"], down: ["KeyS", "ArrowDown"],
     left: ["KeyA", "ArrowLeft"], right: ["KeyD", "ArrowRight"],
   };
-  const gameKeys = new Set([...Object.values(movement).flat(), "Space", "ShiftLeft", "ShiftRight", "KeyE"]);
+  const gameKeys = new Set([...Object.values(movement).flat(), "Space", "ShiftLeft", "ShiftRight", "KeyE", "KeyF"]);
   const keys = new Set();
   const touchPointers = new Map();
   let attackPointer = null;
@@ -93,6 +131,14 @@
   function direction(x, y) {
     const size = Math.hypot(x, y);
     return size > 0.001 ? { x: x / size, y: y / size } : null;
+  }
+
+  function normalizeDifficulty(value) {
+    return Object.hasOwn(difficulties, value) ? value : "easy";
+  }
+
+  function difficultyRules() {
+    return difficulties[run?.difficulty] ?? difficulties.easy;
   }
 
   function isOpen(x, y, radius) {
@@ -141,8 +187,10 @@
   function createPlayer(health, stats, spawn) {
     return {
       ...spawn, hp: health, maxHp: stats.maxHp, facingX: 1, facingY: 0,
+      weapon: village.weaponFor(run?.classId).id,
       velocityX: 0, velocityY: 0,
       attackFlash: 0, invulnerable: 0, dashFlash: 0, attackCooldown: 0,
+      parryExpiresAt: null, parryReadyAt: 0, pendingHits: [],
       attackVariant: 2, swingLife: 0, nextComboUntil: 0,
       dashCooldown: 0, dashRemaining: 0, dashX: 0, dashY: 0, dashStrikeUntil: 0,
     };
@@ -150,12 +198,14 @@
 
   function createEnemy(enemy, index, floor = state.floor, damageMultiplier = 1) {
     const base = enemyTypes[enemy.kind];
+    const difficulty = difficultyRules();
     const depth = Math.max(0, floor - 3);
     const creature = enemy.faction === "creature";
-    const hp = Math.round(base.hp * (1 + depth * 0.064) * (enemy.elite ? 1.24 : 1));
+    const hp = Math.round(base.hp * (1 + depth * 0.064) * (enemy.elite ? 1.24 : 1) * difficulty.health);
     return {
       ...enemy, id: index, hp, maxHp: hp, windup: 0, attackRange: base.range,
-      damage: Math.round(((base.damage + (enemy.elite ? 3 : 0)) * (1 + depth * 0.040) + (creature ? 3 : 0)) * damageMultiplier),
+      damage: Math.round(((base.damage + (enemy.elite ? 3 : 0)) * (1 + depth * 0.040) + (creature ? 3 : 0))
+        * damageMultiplier * difficulty.damage),
       guarded: enemy.kind === "warden", marked: Boolean(enemy.target),
       stellar: floor === content.floorCount && enemy.kind === "boss",
       flash: 0, cooldown: (floor === 1 ? 0.83 : 0.66) + index % 4 * 0.13,
@@ -169,9 +219,10 @@
       : rpg.createProgress(adminRun ? undefined : allocation);
     const classId = survivor?.classId ?? null;
     const stats = village.applyClass(rpg.getStats(progress), classId);
+    const difficulty = normalizeDifficulty(survivor?.difficulty ?? (adminRun ? "easy" : elements["run-difficulty"].value));
     return { random: randomFrom(seeds[0]), floorSeeds: seeds.slice(1), gold: survivor?.gold ?? 0, seconds: 0, cleared: 0,
       rewards: survivor?.rewards ?? [], totalClears: survivor?.totalClears ?? 0, nextRewardId: survivor?.nextRewardId ?? 0,
-      trials: [], progress, stats, classId, quests: [], villageVisits: {}, nextWard: 0, nextPower: 0 };
+      trials: [], progress, stats, classId, difficulty, quests: [], villageVisits: {}, nextWard: 0, nextPower: 0 };
   }
 
   function newRun(jumpFloor) {
@@ -189,13 +240,15 @@
       facility: data.facility ?? null,
       elevation: data.elevation ?? null,
       player: createPlayer(health, run?.stats ?? previewStats, data.spawn),
-      enemies: data.enemies.map((enemy, index) => createEnemy(enemy, index, number, damageMultiplier)),
+      enemies: data.enemies.map((enemy, index) => createEnemy(enemy.kind === "boss" ? { ...enemy, bossProfile: data.bossProfile } : enemy,
+        index, number, damageMultiplier)),
       obstacles: data.obstacles,
       terrain: (data.terrain ?? []).map((surface) => ({ ...surface, status: "idle" })),
       items: data.items.map((item) => ({ ...item, collected: false, active: item.kind !== "exit" })),
-      hazard: data.hazard, hazardTiles: [], bossTargets: [], bossShockCooldown: 0, projectiles: [],
+      hazard: data.hazard, hazardTiles: [], bossTargets: [], bossShockCooldown: 0, projectiles: [], playerProjectiles: [],
       timeLimit: data.timeLimit, alarm: false, patrolsArrived: false, hitCount: 0,
-      bossPhaseTwo: false, bossOverdrive: false, overdriveReleased: false, shockBursts: 0, shockHits: 0,
+      bossPhaseTwo: false, bossFirstRelease: false, bossOverdrive: false, overdriveReleased: false,
+      bossSignatureIndex: 0, shockBursts: 0, shockHits: 0,
       mortarTargets: [],
       ward: 0, overclock: 0,
       wave: 1, waveArrival: 0, effects: [], cameraShake: 0, cameraShakeEnabled: !reducedMotion,
@@ -268,7 +321,7 @@
         }
       }
       const { storyChoices, scenesSeen, localPlans, ...runData } = saved.run;
-      run = { ...runData,
+      run = { ...runData, difficulty: normalizeDifficulty(runData.difficulty),
         classId: saved.run.classId ?? null, quests: village.migrateQuests(saved.run.quests), villageVisits: saved.run.villageVisits ?? {},
         random: randomFrom(saved.randomSeed), stats: village.applyClass(rpg.getStats(saved.run.progress), saved.run.classId) };
       renderGear();
@@ -299,7 +352,7 @@
         trackName = audio.cue(boss ? "boss" : state.theme, { theme: state.theme, floor: state.floor, foes: roster.join("/"), phase });
       }
     } else {
-      const menus = { title: "title", menu: "title", rolling: "entry", shelter: "shelter",
+      const menus = { title: "title", menu: "title", rolling: "entry", shelter: "shelter", tutorial: state.shelter ? "shelter" : "entry",
         gear: "reward", branch: "reward", defeat: "defeat", victory: "victory" };
       trackName = audio.cue(menus[state.mode]);
     }
@@ -390,7 +443,7 @@
     const checkpoint = menu ? readCheckpoint() : null;
     const options = [];
     if (checkpoint) options.push({
-      id: "resume", title: "이어하기", description: checkpoint.floor + "층 입장부터",
+      id: "resume", title: "이어하기", description: checkpoint.floor + "층 입장부터 · " + difficulties[normalizeDifficulty(checkpoint.run.difficulty)].name,
       choose: () => { if (!restoreCheckpoint(checkpoint)) setupBuild(); },
     });
     if (menu) options.push({
@@ -427,6 +480,7 @@
     rpg.removeGear(rpg.createProgress(), new Set());
     stage = null;
     allocation = Object.fromEntries(rpg.attributes.map(({ id }) => [id, 0]));
+    elements["run-difficulty"].value = "easy";
     state = viewFloor(1, entrance, previewStats.maxHp, "menu");
     notify(null);
     renderGear();
@@ -570,11 +624,29 @@
     if (clearGoldBonus) messages.push("통과 보상 금화 +" + goldText(clearGoldBonus));
     if (clearXpBonus) messages.push("통과 보상 XP +" + clearXpBonus);
     if (dashCooldownMultiplier) {
-      messages.push("회피 재사용 시간 " + (dashCooldownMultiplier < 1 ? "단축" : "증가"));
+      messages.push("대쉬 재사용 시간 " + (dashCooldownMultiplier < 1 ? "단축" : "증가"));
     }
     if (state.ward) messages.push("보호막 " + state.ward);
     if (state.overclock) messages.push("공급품 공격력 +" + state.overclock);
     notify(messages.join(" · "));
+    showTutorial();
+  }
+
+  function showTutorial() {
+    const floor = state.floor;
+    const tutorial = tutorials[floor];
+    if (adminRun || !tutorial || seenTutorials.has(floor)) return;
+    const key = "brassen-tutorial-" + floor;
+    try {
+      if (localStorage.getItem(key)) return;
+    } catch {}
+    state.mode = "tutorial";
+    notify(null);
+    panel({ ...tutorial, kicker: floor + "층 · 안내", primary: "확인", activate: () => {
+      seenTutorials.add(floor);
+      try { localStorage.setItem(key, "1"); } catch {}
+      enterPlayableScene();
+    } });
   }
 
   function openShelter(floor, health) {
@@ -595,6 +667,7 @@
     renderFloorSteps();
     enterPlayableScene();
     syncHUD();
+    showTutorial();
   }
 
   function livingEnemies() {
@@ -713,7 +786,7 @@
       }
       const size = enemy.kind === "boss" || enemy.marked ? 4 : 2;
       mapPolygon(context, [[x, y - size - 1], [x + size, y + size], [x - size, y + size]],
-        enemy.marked ? "#ffd482" : ["sentry", "mortar"].includes(enemy.kind) ? "#ef9af0" : "#f08c75");
+        enemy.marked ? "#ffd482" : ["sentry", "marksman", "mortar", "saboteur"].includes(enemy.kind) ? "#ef9af0" : "#f08c75");
     }
     for (const item of state.items) {
       if (item.collected) continue;
@@ -772,6 +845,12 @@
     const remaining = state.player.dashCooldown;
     elements["dash-state"].dataset.ready = String(remaining <= 0);
     setText("dash-state", remaining > 0 ? (Math.ceil(remaining * 10) / 10).toFixed(1) + "초" : "준비");
+    const parryRemaining = state.player.parryReadyAt - state.elapsed;
+    const parryState = parryRemaining > 0 ? "cooldown" : state.player.parryExpiresAt !== null ? "active" : "ready";
+    elements["parry-state"].dataset.state = parryState;
+    elements["parry-state"].dataset.ready = String(parryState === "ready");
+    setText("parry-state", parryState === "cooldown" ? (Math.ceil(parryRemaining * 10) / 10).toFixed(1) + "초"
+      : parryState === "active" ? "시도" : "준비");
   }
 
   function syncHUD() {
@@ -909,7 +988,7 @@
   function useOwnedReward(entry) {
     if (!packAvailable() || !run.rewards.includes(entry)) return;
     if (entry.kind === "gear") {
-      updateProgress(rpg.equip(run.progress, entry.item.id));
+      updateProgress(rpg.equip(run.progress, entry.item.id), true);
       renderGear();
     } else if (entry.kind === "supply") {
       const { gold, heal, xp, ward, overclock } = entry.item.effects;
@@ -931,17 +1010,22 @@
   }
 
   function packAvailable() {
-    return ["gear", "branch"].includes(state.mode) || (state.mode === "playing" && state.shelter);
+    return ["gear", "branch", "playing"].includes(state.mode);
   }
 
-  function updateProgress(progress) {
+  function currentClassStats(progress) {
+    return village.applyClass(rpg.getStats(progress), run.classId);
+  }
+
+  function updateProgress(progress, keepHealth = false) {
     const player = state.player;
-    const stats = village.applyClass(rpg.getStats(progress), run.classId);
-    const health = player.hp + stats.maxHp - player.maxHp;
+    const stats = currentClassStats(progress);
+    const health = keepHealth ? player.hp : player.hp + stats.maxHp - player.maxHp;
     run.progress = progress;
     run.stats = stats;
     player.maxHp = stats.maxHp;
     player.hp = player.hp > 0 ? Math.max(1, Math.min(stats.maxHp, health)) : 0;
+    player.weapon = village.weaponFor(run.classId).id;
   }
 
   function awardXp(amount) {
@@ -1010,30 +1094,79 @@
     actor.facingY = aim.y;
   }
 
-  function enemiesInReach(range) {
+  function enemiesInReach(range, ranged = false) {
     const player = state.player;
     return livingEnemies()
       .filter((enemy) => distance(player, enemy) <= range + enemyTypes[enemy.kind].radius &&
-        closeReach(player, enemy) && hasLineOfSight(player, enemy))
+        (ranged || closeReach(player, enemy)) && hasLineOfSight(player, enemy, ranged))
       .sort((a, b) => distance(player, a) - distance(player, b));
   }
 
   function attack() {
     const player = state.player;
     if (state.mode !== "playing" || state.shelter || state.combatComplete ||
-        player.attackCooldown > 0 || player.pendingStrike || player.dashRemaining > 0) return;
+        player.attackCooldown > 0.000001 || player.pendingStrike || player.dashRemaining > 0) return;
     const route = state.routeEffects ?? {};
-    const range = (run.stats.attackRange + (route.attackRangeBonus ?? 0)) * (state.hazard === "mist" ? 0.85 : 1);
-    const target = enemiesInReach(range)[0];
+    const weapon = playerWeapons[player.weapon] ?? playerWeapons.sword;
+    const ranged = Boolean(weapon.projectile);
+    const reach = weapon.reach + run.stats.attackRange - 1.8 + (route.attackRangeBonus ?? 0);
+    const range = Math.max(.75, Math.min(ranged ? 8.6 : 3.15, reach)) * (state.hazard === "mist" ? 0.85 : 1);
+    const target = enemiesInReach(range, ranged)[0];
     if (target) setFacing(player, direction(target.x - player.x, target.y - player.y));
-    player.attackCooldown = Math.max(0.12, run.stats.attackCooldown * (route.attackCooldownMultiplier ?? 1));
+    player.attackCooldown = Math.max(weapon.minimum ?? 0,
+      rpg.attackInterval(run.stats, (route.attackCooldownMultiplier ?? 1) * (weapon.interval ?? 1)));
     player.attackVariant = state.elapsed < player.nextComboUntil ? (player.attackVariant + 1) % 3 : 0;
     player.nextComboUntil = state.elapsed + 0.62;
-    player.swingDuration = Math.min(swingDurations[player.attackVariant], player.attackCooldown + 0.04);
+    player.swingDuration = Math.min(weapon.swing ?? swingDurations[player.attackVariant], player.attackCooldown + 0.04);
     player.swingLife = player.swingDuration;
     player.attackFlash = player.swingDuration;
-    player.pendingStrike = { at: state.elapsed + player.swingDuration * 0.37, range,
-      x: player.facingX, y: player.facingY };
+    player.pendingStrike = { at: state.elapsed + player.swingDuration * (weapon.impact ?? .37), range, weapon,
+      x: player.facingX, y: player.facingY, altitude: target ? elevationAt(target) : elevationAt(player),
+      targetDistance: target ? distance(player, target) : range };
+  }
+
+  function applyPlayerStrike(enemy, weapon, aim) {
+    const player = state.player;
+    let healthLimit = 0;
+    if (enemy.kind === "boss") {
+      if (!state.bossFirstRelease) healthLimit = Math.floor(enemy.maxHp / 2);
+      else if (!state.overdriveReleased) healthLimit = Math.floor(enemy.maxHp * 0.27);
+    }
+    if (enemy.hp <= healthLimit) return false;
+    const route = state.routeEffects ?? {};
+    const workshopPower = run.rewards.filter((entry) => entry.kind === "upgrade").length * 6;
+    const damage = (run.stats.damage + (route.damageBonus ?? 0) + state.overclock + workshopPower) * (weapon.power ?? 1);
+    const dashDamage = state.elapsed < player.dashStrikeUntil ? run.stats.dashStrike + (route.dashStrikeBonus ?? 0) : 0;
+    player.dashStrikeUntil = 0;
+    const finishing = enemy.hp <= enemy.maxHp * 0.30 ? run.stats.finishingDamage : 0;
+    const counter = state.elapsed < (player.counterUntil ?? 0) ? damage * (weapon.counter ?? 0) : 0;
+    player.counterUntil = 0;
+    const frontal = !aim || aim.x * enemy.facingX + aim.y * enemy.facingY <= -0.38;
+    const guardBreak = Math.min(1, run.stats.guardBreak + (route.guardBreakBonus ?? 0) + (weapon.pierce ?? 0));
+    const armor = enemy.guarded && frontal ? 0.26 + 0.74 * guardBreak : 1;
+    enemy.hp = Math.max(healthLimit, enemy.hp - Math.max(1, Math.round((damage + dashDamage + finishing + counter) * armor)));
+    enemy.flash = 0.16;
+    if (weapon.stagger && enemy.kind !== "boss" && !enemy.guarded) {
+      enemy.windup = 0;
+      enemy.chargeTime = 0;
+      enemy.recover = Math.max(enemy.recover ?? 0, weapon.stagger);
+      enemy.cooldown = Math.max(enemy.cooldown, weapon.stagger);
+    }
+    if (!reducedMotion && player.attackVariant === 2) state.cameraShake = Math.max(state.cameraShake, 0.12);
+    addEffect(armor < 0.50 ? "charge" : "hit", enemy, 0.28);
+    if (!enemy.hp) {
+      enemy.windup = 0;
+      addEffect("fall", enemy, 0.42);
+      if (enemy.elite || enemy.kind === "boss") addEffect("loot", enemy, 0.52);
+      awardXp(rpg.killXp(enemy));
+      trackQuests({ type: "kill", kind: enemy.kind, faction: enemy.faction, elite: enemy.elite });
+      const healOnKill = run.stats.healOnKill + (route.healOnKillBonus ?? 0);
+      if (healOnKill > 0 && player.hp < player.maxHp) {
+        player.hp = Math.min(player.maxHp, player.hp + healOnKill);
+        addEffect("pickup", player, 0.28);
+      }
+    }
+    return true;
   }
 
   function advanceStrike() {
@@ -1041,44 +1174,51 @@
     const strike = player.pendingStrike;
     if (!strike || strike.at > state.elapsed) return;
     player.pendingStrike = undefined;
-    const route = state.routeEffects ?? {};
-    const workshopPower = run.rewards.filter((entry) => entry.kind === "upgrade").length * 6;
-    const damage = run.stats.damage + (route.damageBonus ?? 0) + state.overclock + workshopPower;
-    const dashStrike = run.stats.dashStrike + (route.dashStrikeBonus ?? 0);
-    const guardBreak = Math.min(1, run.stats.guardBreak + (route.guardBreakBonus ?? 0));
-    const healOnKill = run.stats.healOnKill + (route.healOnKillBonus ?? 0);
+    const { weapon } = strike;
+    if (weapon.projectile) {
+      const speed = weapon.speed;
+      const height = elevationAt(player);
+      const rise = (strike.altitude - height) / Math.max(0.5, strike.targetDistance);
+      state.playerProjectiles.push({ kind: weapon.projectile, weapon, x: player.x, y: player.y, absoluteZ: height + .58,
+        vx: strike.x * speed, vy: strike.y * speed, vz: rise * speed, life: strike.range / speed });
+      return;
+    }
+    const step = Math.min(weapon.step ?? 0, Math.max(0, strike.targetDistance - .56));
+    if (step > 0) move(player, strike.x * step, strike.y * step, playerRadius);
     for (const enemy of enemiesInReach(strike.range)) {
       const aim = direction(enemy.x - player.x, enemy.y - player.y);
       const dot = aim ? aim.x * strike.x + aim.y * strike.y : 1;
-      if (dot < 0.38) continue;
-      let healthLimit = 0;
-      if (enemy.kind === "boss") {
-        if (state.shockBursts === 0) healthLimit = Math.floor(enemy.maxHp / 2);
-        else if (!state.overdriveReleased) healthLimit = Math.floor(enemy.maxHp * 0.27);
-      }
-      if (enemy.hp <= healthLimit) continue;
-      const dashDamage = state.elapsed < player.dashStrikeUntil ? dashStrike : 0;
-      player.dashStrikeUntil = 0;
-      const finishing = enemy.hp <= enemy.maxHp * 0.30 ? run.stats.finishingDamage : 0;
-      const frontal = !aim || aim.x * enemy.facingX + aim.y * enemy.facingY <= -0.38;
-      const armor = enemy.guarded && frontal ? 0.26 + 0.74 * guardBreak : 1;
-      enemy.hp = Math.max(healthLimit, enemy.hp - Math.max(1, Math.round((damage + dashDamage + finishing) * armor)));
-      enemy.flash = 0.16;
-      if (!reducedMotion && player.attackVariant === 2) state.cameraShake = Math.max(state.cameraShake, 0.12);
-      addEffect(armor < 0.50 ? "charge" : "hit", enemy, 0.28);
-      if (!enemy.hp) {
-        enemy.windup = 0;
-        addEffect("fall", enemy, 0.42);
-        if (enemy.elite || enemy.kind === "boss") addEffect("loot", enemy, 0.52);
-        awardXp(rpg.killXp(enemy));
-        trackQuests({ type: "kill", kind: enemy.kind, faction: enemy.faction, elite: enemy.elite });
-        if (healOnKill > 0 && player.hp < player.maxHp) {
-          player.hp = Math.min(player.maxHp, player.hp + healOnKill);
-          addEffect("pickup", player, 0.28);
+      if (dot >= weapon.angle && applyPlayerStrike(enemy, weapon, aim)) return;
+    }
+  }
+
+  function advancePlayerProjectiles(delta) {
+    if (!state.playerProjectiles.length) return;
+    const enemies = livingEnemies();
+    for (const bolt of state.playerProjectiles) {
+      const travel = Math.min(delta, bolt.life);
+      const segments = Math.ceil(travel * bolt.weapon.speed / .16);
+      const step = travel / Math.max(1, segments);
+      bolt.life -= travel;
+      for (let index = 0; index < segments; index++) {
+        bolt.x += bolt.vx * step;
+        bolt.y += bolt.vy * step;
+        bolt.absoluteZ += bolt.vz * step;
+        if (!isOpen(bolt.x, bolt.y, .12) || elevationAt(bolt) + .12 >= bolt.absoluteZ) {
+          bolt.life = 0;
+          break;
+        }
+        const enemy = enemies.find((entry) => entry.hp > 0 &&
+          distance(entry, bolt) <= enemyTypes[entry.kind].radius + .12 &&
+          Math.abs(bolt.absoluteZ - elevationAt(entry) - .58) <= .47);
+        if (enemy) {
+          applyPlayerStrike(enemy, bolt.weapon, direction(bolt.vx, bolt.vy));
+          bolt.life = 0;
+          break;
         }
       }
-      return;
     }
+    state.playerProjectiles = state.playerProjectiles.filter((bolt) => bolt.life > 0);
   }
 
   function dash() {
@@ -1237,7 +1377,7 @@
         const sold = visit.purchases.includes(id);
         const gear = item.kind === "gear" ? rpg.rewardGear(item) : null;
         const detail = gear
-          ? rpg.compareGear(run.progress, gear.id).changes
+          ? rpg.compareGear(run.progress, gear.id, currentClassStats).changes
             .map(({ key, label, delta }) => label + " " + statValue(key, delta, true)).join(" · ")
           : describeSupply(item);
         return { id: "buy-" + id, title: item.title, description: sold ? "품절" : detail || "장착 능력치 동일",
@@ -1259,7 +1399,8 @@
           run.rewards = run.rewards.filter((reward) => reward !== entry);
           if (entry.kind === "gear") {
             const owned = new Set(run.rewards.filter((reward) => reward.kind === "gear").map((reward) => reward.item.id));
-            updateProgress(rpg.removeGear(run.progress, owned));
+            updateProgress(rpg.removeGear(run.progress, owned), true);
+            renderGear();
           }
           creditGold(price);
           saveVillage();
@@ -1281,7 +1422,8 @@
   function villageShrine() {
     const visit = visitDetails();
     const jobs = village.classOptions(state.floor, run.classId).map((job) => ({
-      id: "class-" + job.id, title: job.title, description: job.description, detail: job.detail,
+      id: "class-" + job.id, title: job.title, description: job.description,
+      detail: [village.weaponFor(job.id).label, village.weaponFor(job.id).attackLabel, job.detail].join(" · "),
       choose: () => {
         if (!village.classOptions(state.floor, run.classId).some(({ id }) => id === job.id)) return;
         run.classId = job.id;
@@ -1300,11 +1442,24 @@
         villagePanel(event?.title ?? "고요한 신전", event?.description ?? "촛불이 잠깐 흔들립니다.", [], villageShrine);
       } });
     const job = village.classById(run.classId);
-    villagePanel(state.floor === 10 ? "성당" : "신전", job ? "현재 직업 · " + job.title : "", jobs);
+    const weapon = village.weaponFor(run.classId);
+    villagePanel(state.floor === 10 ? "성당" : "신전",
+      job ? "현재 직업 · " + job.title + "\n무기 · " + weapon.label + " · " + weapon.attackLabel : "", jobs);
+  }
+
+  function stationInReach(station) {
+    if (!station) return false;
+    const player = state.player;
+    const bench = station.kind === "workbench" && state.obstacles.find((entry) => entry.shelterDecor &&
+      entry.x === station.x && entry.y === station.y);
+    if (!bench) return distance(player, station) <= 1.32;
+    const gapX = Math.max(0, Math.abs(player.x - bench.x) - bench.w / 2);
+    const gapY = Math.max(0, Math.abs(player.y - bench.y) - bench.h / 2);
+    return Math.hypot(gapX, gapY) <= 0.63;
   }
 
   function useShelterStation(station) {
-    if (!station || distance(state.player, station) > 1.32) {
+    if (!stationInReach(station)) {
       notify("표시된 시설에 다가가 상호작용하세요.", 1300);
       return;
     }
@@ -1355,13 +1510,60 @@
 
   function interact() {
     if (state.mode !== "playing" || !state.shelter) return;
-    const station = state.stations.find((entry) => distance(state.player, entry) <= 1.32);
+    const station = state.stations.filter(stationInReach)
+      .sort((a, b) => distance(state.player, a) - distance(state.player, b))[0];
     if (station) useShelterStation(station);
   }
 
-  function damagePlayer(amount) {
+  function completeParry() {
+    state.player.parryExpiresAt = null;
+    if (state.player.weapon === "hooks") state.player.counterUntil = state.elapsed + .75;
+    addEffect("parry", state.player, .40);
+    notify("패링 성공", 900);
+  }
+
+  function parry() {
+    const player = state.player;
+    const now = state.elapsed + Math.min(1 / 30, Math.max(0, performance.now() - previousTime) / 1000);
+    if (state.mode !== "playing" || state.shelter || state.combatComplete || player.hp <= 0 ||
+        player.parryExpiresAt !== null || player.parryReadyAt > now) return;
+    const hit = player.pendingHits.findIndex((entry) => entry.contactCount === state.hitCount && now <= entry.deadline);
+    if (hit !== -1) {
+      player.pendingHits.splice(hit, 1);
+      completeParry();
+      return;
+    }
+    player.parryExpiresAt = now + parryWindow;
+  }
+
+  function receiveEnemyHit(damage, shock = false) {
     const player = state.player;
     if (player.invulnerable > 0 || player.hp <= 0) return false;
+    if (player.parryExpiresAt !== null && state.elapsed <= player.parryExpiresAt) {
+      completeParry();
+    } else {
+      // Keep contact reversible only for the late half of the parry window.
+      player.pendingHits.push({ damage, shock, contactCount: state.hitCount, deadline: state.elapsed + parryWindow });
+    }
+    return true;
+  }
+
+  function resolveParry() {
+    const player = state.player;
+    if (player.parryExpiresAt !== null && state.elapsed > player.parryExpiresAt) {
+      player.parryReadyAt = player.parryExpiresAt + failedParryCooldown;
+      player.parryExpiresAt = null;
+      notify("패링 실패 · 5초 후 다시 시도할 수 있습니다.", 1400);
+    }
+    while (player.pendingHits.length && state.elapsed > player.pendingHits[0].deadline) {
+      const hit = player.pendingHits.shift();
+      if (hit.contactCount === state.hitCount && damagePlayer(hit.damage, true) && hit.shock) state.shockHits++;
+    }
+  }
+
+  function damagePlayer(amount, contactConfirmed = false) {
+    const player = state.player;
+    if ((!contactConfirmed && player.invulnerable > 0) || player.hp <= 0) return false;
     const reduction = Math.min(0.70, run.stats.damageReduction + (state.routeEffects?.damageReductionBonus ?? 0));
     const damage = Math.max(1, Math.round(amount * (1 - reduction)));
     const blocked = Math.min(state.ward, damage);
@@ -1369,93 +1571,10 @@
     player.hp = Math.max(0, player.hp - (damage - blocked));
     if (state.kind === "combat" && state.hitCount === 0) notify("무피격 보너스 종료", 1000);
     state.hitCount++;
-    player.invulnerable = 0.56;
+    player.invulnerable = Math.max(player.invulnerable, 0.56);
     state.cameraShake = Math.max(state.cameraShake, 0.19);
     addEffect("hit", player, 0.35);
     return true;
-  }
-
-  function choosePursuit(enemy, aim, radius) {
-    const detour = enemy.blockedFor > 0.45 && pursuitWaypoint(enemy);
-    if (detour) aim = direction(detour.x - enemy.x, detour.y - enemy.y) || aim;
-    if (openStep(enemy, enemy.x + aim.x * 0.37, enemy.y + aim.y * 0.37, radius)) {
-      enemy.steering = 0;
-      return aim;
-    }
-    const angle = Math.atan2(aim.y, aim.x);
-    const bias = enemy.steering || (enemy.id % 2 ? 1 : -1);
-    for (const rotation of [bias * 0.70, bias * 1.40, bias * 2.10, -bias * 0.70, -bias * 1.40, -bias * 2.10]) {
-      const x = Math.cos(angle + rotation);
-      const y = Math.sin(angle + rotation);
-      if (!openStep(enemy, enemy.x + x * 0.37, enemy.y + y * 0.37, radius)) continue;
-      enemy.steering = Math.sign(rotation);
-      return { x, y };
-    }
-    return aim;
-  }
-
-  function pursuitWaypoint(enemy) {
-    const unit = 0.8;
-    if (!state.navigation) {
-      const columns = Math.floor(state.map.width / unit);
-      const rows = Math.floor(state.map.height / unit);
-      const points = Array.from({ length: columns * rows }, (_, index) => ({
-        x: (index % columns + 0.5) * unit,
-        y: (Math.floor(index / columns) + 0.5) * unit,
-      }));
-      const open = points.map(({ x, y }) => walkable(x, y, 0.55));
-      const links = points.map((point, index) => {
-        if (!open[index]) return [];
-        const column = index % columns;
-        const candidates = [index - columns, index + columns];
-        if (column > 0) candidates.push(index - 1);
-        if (column < columns - 1) candidates.push(index + 1);
-        return candidates.filter((neighbor) => {
-          if (!open[neighbor]) return false;
-          const { x, y } = points[neighbor];
-          return walkable((point.x + x) / 2, (point.y + y) / 2, 0.55) &&
-            content.canTraverse(state.elevation, point.x, point.y, x, y);
-        });
-      });
-      state.navigation = { columns, points, open, links };
-    }
-    const navigation = state.navigation;
-    const { points, open, columns } = navigation;
-    const closest = (actor) => {
-      let best = -1;
-      let gap = 1.5;
-      for (let y = Math.floor(actor.y / unit) - 1; y <= Math.floor(actor.y / unit) + 1; y++) {
-        for (let x = Math.floor(actor.x / unit) - 1; x <= Math.floor(actor.x / unit) + 1; x++) {
-          const index = y * columns + x;
-          if (x < 0 || x >= columns || !open[index]) continue;
-          const point = points[index];
-          const offset = distance(actor, point);
-          if (offset >= gap || !openStep(actor, point.x, point.y, playerRadius)) continue;
-          best = index;
-          gap = offset;
-        }
-      }
-      return best;
-    };
-    const goal = closest(state.player);
-    const origin = closest(enemy);
-    if (goal < 0 || origin < 0 || goal === origin) return null;
-    if (goal !== navigation.goal) {
-      const next = new Int16Array(points.length).fill(-1);
-      const queue = [goal];
-      next[goal] = goal;
-      for (let index = 0; index < queue.length; index++) {
-        const node = queue[index];
-        for (const neighbor of navigation.links[node]) {
-          if (next[neighbor] >= 0) continue;
-          next[neighbor] = node;
-          queue.push(neighbor);
-        }
-      }
-      navigation.goal = goal;
-      navigation.next = next;
-    }
-    return points[navigation.next[origin]];
   }
 
   function hasLineOfSight(from, to, raisedShot = false) {
@@ -1482,6 +1601,15 @@
       absoluteZ: altitude + 0.56 + rise * 0.34, vz: rise * velocity,
       vx: aim.x * velocity, vy: aim.y * velocity, radius: 0.14, damage, life: 1.35,
     });
+  }
+
+  function fireAimedBolt(enemy, spread = 0) {
+    const target = { x: enemy.aimX, y: enemy.aimY };
+    const aim = direction(target.x - enemy.x, target.y - enemy.y);
+    if (!aim) return;
+    const angle = Math.atan2(aim.y, aim.x) + spread;
+    fireBolt(enemy, enemy.damage, { x: Math.cos(angle), y: Math.sin(angle) }, target);
+    addEffect("charge", enemy, 0.23);
   }
 
   function contains(surface, actor) {
@@ -1517,7 +1645,7 @@
     enemy.moving = true;
     if (!enemy.chargeHit && distance(enemy, state.player) < 0.75 && closeReach(enemy, state.player)) {
       enemy.chargeHit = true;
-      damagePlayer(enemy.damage);
+      receiveEnemyHit(enemy.damage);
     }
   }
 
@@ -1534,15 +1662,39 @@
     }
   }
 
+  function layMines(enemy, player) {
+    const aim = inputDirection() || direction(player.x - enemy.x, player.y - enemy.y);
+    const placements = [player];
+    if (aim) {
+      placements.push({ x: player.x + aim.x * 2.25, y: player.y + aim.y * 2.25 });
+      if (difficultyRules().mines > 2) placements.push({ x: player.x - aim.y * 1.7, y: player.y + aim.x * 1.7 });
+    }
+    for (const [index, { x, y }] of placements.entries()) {
+      if (!walkable(x, y, 0.38) || !withinTier({ x, y }, player) || !hasLineOfSight(enemy, { x, y })) continue;
+      state.mortarTargets.push({ x, y, kind: "mine", radius: 0.93, remaining: 0.74 + index * 0.19,
+        active: false, damage: enemy.damage });
+    }
+  }
+
   function updateMortars(delta) {
     for (const marker of state.mortarTargets) {
       marker.remaining -= delta;
+      if (marker.kind === "mine") {
+        marker.active = marker.remaining <= 0;
+        if (marker.active && marker.remaining > -2.4 && distance(marker, state.player) <= marker.radius &&
+            withinTier(marker, state.player) && hasLineOfSight(marker, state.player) && receiveEnemyHit(marker.damage)) {
+          marker.remaining = -2.4;
+          addEffect("danger", marker, .25);
+        }
+        continue;
+      }
       if (marker.remaining > 0 || marker.active) continue;
       marker.active = true;
       state.cameraShake = Math.max(state.cameraShake, 0.15);
-      if (distance(marker, state.player) <= marker.radius + playerRadius * 0.4 && withinTier(marker, state.player)) damagePlayer(marker.damage);
+      if (distance(marker, state.player) <= marker.radius + playerRadius * 0.4 && withinTier(marker, state.player) &&
+          (marker.kind !== "aftershock" || hasLineOfSight(marker, state.player))) receiveEnemyHit(marker.damage);
     }
-    state.mortarTargets = state.mortarTargets.filter((marker) => marker.remaining > -0.30);
+    state.mortarTargets = state.mortarTargets.filter((marker) => marker.remaining > (marker.kind === "mine" ? -2.4 : -0.30));
   }
 
   function updateBolts(delta) {
@@ -1563,7 +1715,7 @@
       bolt.absoluteZ = z;
       if (distance(bolt, player) <= playerRadius + bolt.radius && Math.abs(z - elevationAt(player) - 0.56) <= 0.32) {
         bolt.life = 0;
-        damagePlayer(bolt.damage);
+        receiveEnemyHit(bolt.damage);
       }
     }
     state.projectiles = state.projectiles.filter((bolt) => bolt.life > 0);
@@ -1572,11 +1724,17 @@
   function updateEnemy(enemy, allies, delta) {
     const player = state.player;
     const type = enemyTypes[enemy.kind];
-    const ranged = enemy.kind === "sentry";
+    const difficulty = difficultyRules();
+    const marksman = enemy.kind === "marksman";
+    const saboteur = enemy.kind === "saboteur";
+    const skirmisher = enemy.kind === "skirmisher";
+    const breaker = enemy.kind === "breaker";
+    const ranged = enemy.kind === "sentry" || marksman;
     const runner = enemy.kind === "runner";
     const mortar = enemy.kind === "mortar";
     const lancer = enemy.kind === "lancer";
     const boss = enemy.kind === "boss";
+    const signatureBoss = boss && enemy.bossProfile && !enemy.stellar;
     const creature = enemy.faction === "creature";
     const enraged = boss && enemy.hp <= enemy.maxHp / 2;
     const pressured = state.alarm || (state.hazard === "pressure" && state.elapsed >= 20);
@@ -1587,22 +1745,50 @@
     enemy.attackRange = type.range + (enraged ? 0.22 : 0);
     enemy.guarded = enemy.kind === "warden" && enemy.windup <= 0 && enemy.recover <= 0;
 
+    if (enemy.volleyAt != null && state.elapsed >= enemy.volleyAt) {
+      const side = (enemy.id + enemy.volleyShots) % 2 ? 1 : -1;
+      fireAimedBolt(enemy, side * 0.085);
+      enemy.volleyShots--;
+      enemy.volleyAt = enemy.volleyShots > 0 ? state.elapsed + 0.24 : undefined;
+    }
+
+    if (signatureBoss && state.bossTargets.length) {
+      enemy.windup = Math.max(0, enemy.windup - delta);
+      if (enemy.bossMove === "pursuit" && enemy.windup > 0 && enemy.windup < 0.48) {
+        const lunge = direction(enemy.aimX - enemy.x, enemy.aimY - enemy.y);
+        if (lunge && distance(enemy, { x: enemy.aimX, y: enemy.aimY }) > 0.76) {
+          enemy.moving = move(enemy, lunge.x * delta * 5.1, lunge.y * delta * 5.1, type.radius);
+        }
+      }
+      return;
+    }
+
     if (enemy.chargeTime > 0) {
       advanceLancer(enemy, delta);
       return;
     }
 
     if (enemy.windup > 0) {
+      if (skirmisher && enemy.windup > type.windup * 0.59) {
+        const step = delta * (enemy.id % 2 ? 2.3 : -2.3);
+        enemy.moving = move(enemy, -enemy.facingY * step, enemy.facingX * step, type.radius);
+      }
       enemy.windup = Math.max(0, enemy.windup - delta);
       if (enemy.windup === 0) {
-        enemy.recover = boss || mortar || enemy.kind === "warden" ? 0.40 : 0.28;
+        enemy.recover = breaker ? 0.62 : boss || mortar || enemy.kind === "warden" ? 0.40 : 0.28;
         if (ranged) {
-          const target = { x: enemy.aimX, y: enemy.aimY };
-          fireBolt(enemy, enemy.damage, direction(target.x - enemy.x, target.y - enemy.y), target);
-          addEffect("charge", enemy, 0.23);
+          fireAimedBolt(enemy);
+          if (marksman) {
+            enemy.volleyShots = difficulty.shots - 1;
+            enemy.volleyAt = state.elapsed + 0.24;
+          }
           return;
         }
         if (mortar) return;
+        if (saboteur) {
+          layMines(enemy, { x: enemy.aimX, y: enemy.aimY });
+          return;
+        }
         if (lancer) {
           enemy.chargeTime = Math.min(0.46, distance(enemy, { x: enemy.aimX, y: enemy.aimY }) / 10);
           enemy.chargeHit = false;
@@ -1610,8 +1796,13 @@
           return;
         }
         addEffect("danger", enemy, boss ? 0.40 : 0.24);
-        if (distance(enemy, player) <= enemy.attackRange && closeReach(enemy, player) && hasLineOfSight(enemy, player)) {
-          damagePlayer(enemy.damage + (enraged ? 4 : 0));
+        const line = skirmisher ? direction(enemy.aimX - enemy.x, enemy.aimY - enemy.y) : null;
+        const toward = line && direction(player.x - enemy.x, player.y - enemy.y);
+        if (breaker) state.mortarTargets.push({ x: enemy.x, y: enemy.y, radius: 3.04, kind: "aftershock",
+          remaining: 0.70, damage: Math.round(enemy.damage * 0.64), active: false });
+        if ((!toward || line.x * toward.x + line.y * toward.y >= 0.60) && distance(enemy, player) <= enemy.attackRange &&
+            closeReach(enemy, player) && hasLineOfSight(enemy, player)) {
+          receiveEnemyHit(enemy.damage + (enraged ? 4 : 0));
         }
       }
       return;
@@ -1620,7 +1811,7 @@
     const gap = distance(enemy, player);
     const aim = direction(player.x - enemy.x, player.y - enemy.y);
     const sight = ranged ? (gap < type.range * 1.10 && hasLineOfSight(enemy, player, true))
-      : lancer ? (gap < type.range * 1.10 && hasLineOfSight(enemy, player) && closeReach(enemy, player))
+      : lancer || saboteur ? (gap < type.range * 1.10 && hasLineOfSight(enemy, player) && closeReach(enemy, player))
       : mortar || closeReach(enemy, player);
     const detection = 10.5 + (creature ? 1.65 : 0);
     const heardCombat = gap < detection + 3 && allies.some((ally) => ally !== enemy
@@ -1629,17 +1820,17 @@
       enemy.engaged = true;
     }
     setFacing(enemy, aim);
-    if (sight && gap <= enemy.attackRange * 0.94 && enemy.cooldown <= 0
+    if (!signatureBoss && sight && gap <= enemy.attackRange * 0.94 && enemy.cooldown <= 0
         && (ranged || mortar || lancer || hasLineOfSight(enemy, player))) {
-      const windup = type.windup * (enraged ? 0.86 : 1);
+      const windup = type.windup * difficulty.windup * (enraged ? 0.86 : 1);
       const nearbyWindup = !ranged && !mortar && !lancer && !boss && allies.some((ally) => ally !== enemy
         && Math.abs(ally.windup - windup) < 0.14 && distance(ally, player) < 2.4);
       if (nearbyWindup) return;
       enemy.windup = windup;
-      enemy.cooldown = windup + Math.max(0.38, type.cooldown * (pressured ? 0.77 : 1)
+      enemy.cooldown = windup + Math.max(0.38, type.cooldown * difficulty.interval * (pressured ? 0.77 : 1)
         * (creature ? 0.88 : 1) * (enraged ? 0.83 : 1));
       enemy.guarded = false;
-      if (ranged) {
+      if (ranged || skirmisher || saboteur) {
         enemy.aimX = player.x;
         enemy.aimY = player.y;
       }
@@ -1651,10 +1842,11 @@
       if (mortar) mortarSalvo(enemy, player);
       return;
     }
-    const pursue = !sight || gap > (ranged || mortar ? type.range * 0.86 : Math.min(enemy.attackRange * 0.76, 1.42));
-    const retreat = (ranged || mortar) && sight && gap < (ranged ? 3.2 : 2.75);
+    const pursue = !sight || gap > (ranged || mortar || saboteur ? type.range * 0.86 : Math.min(enemy.attackRange * 0.76, 1.42));
+    const retreat = (ranged || mortar || saboteur) && sight && gap < (ranged ? 3.2 : 2.75);
     if (aim && enemy.engaged && (pursue || retreat)) {
-      const speed = type.speed + (creature ? (runner ? 0.33 : 0.24) : 0);
+      const bossSpeed = signatureBoss ? (bossPacing[enemy.bossProfile.style]?.speed ?? 1) : 1;
+      const speed = (type.speed + (creature ? (runner ? 0.33 : 0.24) : 0)) * bossSpeed * difficulty.speed;
       const step = speed * (enraged ? 1.23 : 1) * (pressured ? 1.22 : 1) *
         (enemy.recover > 0 ? 0.56 : 1) * delta;
       let x = retreat ? -aim.x : aim.x;
@@ -1674,10 +1866,9 @@
           y += (enemy.y - ally.y) * weight;
         }
       }
-      const along = openStep(enemy, enemy.x + x * 0.54, enemy.y + y * 0.54, type.radius);
-      if (!retreat) enemy.blockedFor = along ? Math.max(0, (enemy.blockedFor ?? 0) - delta * 0.6) : (enemy.blockedFor ?? 0) + delta;
-      const steering = retreat ? direction(x, y) || aim : choosePursuit(enemy, direction(x, y) || aim, type.radius);
-      enemy.moving = move(enemy, steering.x * step, steering.y * step, type.radius);
+      const desired = direction(x, y) || aim;
+      const steering = retreat ? desired : window.TowerPursuit.direction(enemy, desired, type.radius, { state, walkable, openStep });
+      if (steering) enemy.moving = move(enemy, steering.x * step, steering.y * step, type.radius);
     }
   }
 
@@ -1717,16 +1908,66 @@
     syncMusic();
   }
 
+  function startBossSignature(boss, player, mark, technique) {
+    const { timing = 1, size = 1 } = boss.bossProfile;
+    const difficulty = difficultyRules();
+    state.bossSignatureIndex++;
+    const facing = direction(player.x - boss.x, player.y - boss.y) || { x: 1, y: 0 };
+    const side = state.bossSignatureIndex % 2 ? 1 : -1;
+    const at = (origin, along, across, radius, delay) => mark(origin.x + along * facing.x - across * facing.y,
+      origin.y + along * facing.y + across * facing.x, radius * size, delay * timing * difficulty.windup);
+    const shot = (remaining, count, angle) => ({ ...at(boss, 0, 0, .92, remaining), volley: true, count, angle });
+    let targets;
+    switch (technique) {
+      case "sweep":
+        targets = [-1.75, -.60, .60, 1.75].map((offset, index) => at(boss, 2.05, offset * side, 1.17, .92 + index * .11));
+        targets.push(at(boss, .55, 0, 1.16, .90));
+        break;
+      case "rupture":
+        targets = [at(boss, 0, 0, 2.55, .84), at(boss, 0, 0, 3.58, 1.60)];
+        break;
+      case "barrage":
+        targets = [at(player, -1.7, .64 * side, 1.03, .93), at(player, 0, 0, 1.24, 1.16),
+          at(player, 1.7, -.64 * side, 1.03, 1.37), shot(1.27, 6, state.bossSignatureIndex * .36)];
+        break;
+      case "pursuit":
+        targets = [at(player, 0, 0, 1.44, .96), at(player, 1.62, .82 * side, 1.18, 1.37)];
+        break;
+      case "crossfire":
+        targets = [at(player, -2.18, 0, 1.13, 1.02), at(player, 2.18, 0, 1.13, 1.02),
+          at(player, 0, -2.18, 1.13, 1.27), at(player, 0, 2.18, 1.13, 1.27), shot(1.33, 8, state.bossSignatureIndex * .48)];
+        break;
+      default:
+        targets = Array.from({ length: 6 }, (_, index) => {
+          const angle = Math.PI * index / 3 + state.bossSignatureIndex * .32;
+          return at(player, Math.cos(angle) * 2.75, Math.sin(angle) * 2.75, 1.04, .86 + (index % 2) * .35);
+        });
+        break;
+    }
+    if (state.bossOverdrive) targets.push(at(player, .8, .8 * side, 1.12, 1.64));
+    for (let followup = 0; followup < difficulty.bossExtra; followup++) {
+      targets.push(at(player, 1.15 + followup * 1.35, side * (followup ? -1.55 : 1.55), 1.17, 1.76 + followup * .25));
+    }
+    state.bossTargets = targets;
+    boss.bossMove = technique;
+    boss.windup = Math.min(...targets.map(({ remaining }) => remaining));
+    boss.aimX = targets[0].x;
+    boss.aimY = targets[0].y;
+    setFacing(boss, facing);
+  }
+
   function updateBossShock(boss, delta) {
-    if (!boss || boss.hp <= 0 || boss.hp > boss.maxHp / 2) return;
+    if (!boss || boss.hp <= 0) return;
+    const signature = boss.bossProfile?.sequence?.length && !boss.stellar;
+    if (!signature && boss.hp > boss.maxHp / 2) return;
     const player = state.player;
     const deep = state.floor >= content.frontierFloor;
-    if (!state.bossPhaseTwo) {
+    if (!state.bossPhaseTwo && boss.hp <= boss.maxHp / 2) {
       state.bossPhaseTwo = true;
       boss.shielded = true;
       state.bossShockCooldown = 0.15;
       notify(stage.final ? "별무리가 모입니다 · 빛이 닿기 전에 표식 밖으로 피하세요." :
-        "수호자 폭주 · 바닥 표식 밖으로 피하세요.");
+        (stage.bossName ?? "수호자") + "의 다음 기술 · 바닥 표식 밖으로 피하세요.");
       syncMusic();
     }
     if (!state.bossOverdrive && boss.hp <= boss.maxHp * 0.27) {
@@ -1741,14 +1982,16 @@
         target.remaining -= delta;
         if (target.remaining > 0 || target.active) continue;
         target.active = true;
+        if (target.phase >= 2) state.bossFirstRelease = true;
         if (target.overdrive) state.overdriveReleased = true;
-        if (!state.bossOverdrive || state.overdriveReleased) boss.shielded = false;
+        boss.shielded = state.bossOverdrive ? !state.overdriveReleased : state.bossPhaseTwo && !state.bossFirstRelease;
         state.shockBursts++;
         state.cameraShake = Math.max(state.cameraShake, 0.19);
         const damage = Math.min(Math.round(player.maxHp * 0.32), Math.round(boss.damage * (deep ? 0.77 : 0.70)));
-        if (distance(target, player) <= target.radius && withinTier(target, player) && damagePlayer(damage)) state.shockHits++;
+        if (distance(target, player) <= target.radius && withinTier(target, player) &&
+            (!signature || hasLineOfSight(target, player))) receiveEnemyHit(damage, true);
         if (target.volley) {
-          const count = deep ? 12 : 8;
+          const count = target.count ?? (deep ? 12 : 8);
           for (let index = 0; index < count; index++) {
             const angle = 2 * Math.PI * index / count + target.angle;
             fireBolt(boss, Math.round(boss.damage * 0.56), { x: Math.cos(angle), y: Math.sin(angle) });
@@ -1758,22 +2001,32 @@
       }
       state.bossTargets = state.bossTargets.filter((target) => target.remaining > -0.32);
       if (!state.bossTargets.length) {
-        state.bossShockCooldown = deep ? 0.95 : 1.22;
+        boss.recover = .38;
+        const pacing = signature ? (bossPacing[boss.bossProfile.style]?.pause ?? 1.12) : 1.22;
+        state.bossShockCooldown = pacing * (deep ? .78 : 1) * difficultyRules().interval;
         if (state.bossOverdrive) state.bossShockCooldown = state.overdriveReleased ? (deep ? 0.56 : 0.72) : 0.15;
       }
       return;
     }
     state.bossShockCooldown -= delta;
     if (state.bossShockCooldown > 0) return;
-    const aim = inputDirection() || direction(player.x - boss.x, player.y - boss.y) || { x: 1, y: 0 };
     const targetAt = (x, y, radius, remaining) => ({
       x: Math.max(0.6, Math.min(state.map.width - 0.6, x)),
       y: Math.max(0.6, Math.min(state.map.height - 0.6, y)),
       radius, remaining, active: false, overdrive: state.bossOverdrive,
+      phase: state.bossOverdrive ? 3 : state.bossPhaseTwo ? 2 : 1,
     });
+    if (signature) {
+      const { sequence } = boss.bossProfile;
+      const technique = sequence[state.bossSignatureIndex % sequence.length];
+      const reach = technique === "sweep" || technique === "rupture" ? 4.3 : 8.6;
+      if (!state.bossPhaseTwo && distance(boss, player) > reach) return;
+      startBossSignature(boss, player, targetAt, technique);
+      return;
+    }
     if (stage.final) {
       const rotation = state.shockBursts * 0.19;
-      const count = state.bossOverdrive ? 6 : 4;
+      const count = (state.bossOverdrive ? 6 : 4) + difficultyRules().bossExtra;
       const center = targetAt(player.x, player.y, 1.45, 0.90);
       const volley = { ...targetAt(boss.x, boss.y, 1.12, 1.48), volley: true, angle: rotation };
       state.bossTargets = [center, volley];
@@ -1786,6 +2039,7 @@
       boss.cooldown = Math.max(boss.cooldown, 1.5);
       return;
     }
+    const aim = inputDirection() || direction(player.x - boss.x, player.y - boss.y) || { x: 1, y: 0 };
     state.bossTargets = [targetAt(player.x, player.y, deep ? 1.78 : 1.68, 0.84)];
     if (state.floor >= 19 || state.bossOverdrive) {
       const volley = targetAt(boss.x, boss.y, 1.05, 1.11);
@@ -1830,6 +2084,11 @@
     for (const timer of ["attackCooldown", "attackFlash", "swingLife", "dashCooldown", "dashFlash", "invulnerable"]) {
       player[timer] = Math.max(0, player[timer] - delta);
     }
+    resolveParry();
+    if (player.hp === 0) {
+      endRun(false);
+      return;
+    }
     const walking = stairDirection(player, inputDirection());
     player.moving = false;
     if (player.dashRemaining > 0) {
@@ -1852,7 +2111,8 @@
     if (state.shelter) return;
 
     advanceStrike();
-    if (attackPointer !== null || keys.has("Space") || [...touchPointers.values()].includes("attack")) attack();
+    advancePlayerProjectiles(delta);
+    if (attackPointer !== null || [...touchPointers.values()].includes("attack")) attack();
 
     updateAlarm();
     updateCombatWave(livingEnemies().length);
@@ -1860,7 +2120,7 @@
     const boss = state.enemies.find((enemy) => enemy.kind === "boss");
     const combatCleared = state.kind === "combat" && !alive.length && (state.wave > 1 || !stage.wave.length);
     if (combatCleared || (boss && boss.hp === 0)) {
-      finishFloor();
+      if (!player.pendingHits.length) finishFloor();
       return;
     }
 
@@ -1879,6 +2139,7 @@
   function finishFloor() {
     state.combatComplete = true;
     state.projectiles = [];
+    state.playerProjectiles = [];
     state.mortarTargets = [];
     state.bossTargets = [];
     state.hazardTiles = [];
@@ -1956,13 +2217,13 @@
     let detail = item.description;
     if (item.kind === "gear") {
       const gear = rpg.rewardGear(item);
-      const comparison = rpg.compareGear(run.progress, gear.id);
+      const comparison = rpg.compareGear(run.progress, gear.id, currentClassStats);
       changes = comparison.changes;
       equipped = comparison.replaced?.title || "빈 슬롯";
     } else if (item.kind === "stat") {
-      changes = rpg.compareStats(run.progress, rpg.gainStat(run.progress, item.stat, item.amount));
+      changes = rpg.compareStats(run.progress, rpg.gainStat(run.progress, item.stat, item.amount), currentClassStats);
     } else {
-      detail = describeSupply(item) + " · 정비 중 가방에서 사용";
+      detail = describeSupply(item) + " · 가방에서 클릭해 사용";
     }
     setText("compare-equipped", equipped);
     setText("compare-candidate", item.title);
@@ -1976,7 +2237,7 @@
       if (item.kind === "gear") {
         const gear = rpg.rewardGear(item);
         recordReward("gear", gear);
-        updateProgress(rpg.equip(run.progress, gear.id));
+        updateProgress(rpg.equip(run.progress, gear.id), true);
         run.pendingGear = item.title;
         renderGear();
       } else if (item.kind === "stat") {
@@ -2150,9 +2411,6 @@
   elements["back-to-title"].addEventListener("click", () => {
     if (state.mode === "menu") setupTitle(true);
   });
-  elements["skip-gear"].addEventListener("click", () => {
-    if (state.mode === "gear") chooseRoute();
-  });
   elements["build-stats"].addEventListener("click", (event) => {
     const step = event.target.closest("button[data-stat]");
     if (!step || state.mode !== "menu" || step.disabled) return;
@@ -2182,12 +2440,15 @@
     }
     if (state.mode !== "playing") return;
     event.preventDefault();
-    if (event.code === "Space" && event.repeat) return;
+    if (event.code === "Space") {
+      if (!event.repeat) attack();
+      return;
+    }
     keys.add(event.code);
     if (event.repeat) return;
-    if (event.code === "Space") attack();
     if (event.code.startsWith("Shift")) dash();
     if (event.code === "KeyE") interact();
+    if (event.code === "KeyF") parry();
   });
   window.addEventListener("keyup", (event) => keys.delete(event.code));
   window.addEventListener("blur", clearInput);
@@ -2243,6 +2504,7 @@
     }
     if (button.dataset.action === "dash") dash();
     if (button.dataset.action === "interact") interact();
+    if (button.dataset.action === "parry") parry();
   });
   elements["touch-controls"].addEventListener("lostpointercapture", releasePointer);
   elements["touch-controls"].addEventListener("click", (event) => {
@@ -2251,6 +2513,7 @@
     if (actionName === "attack") attack();
     if (actionName === "dash") dash();
     if (actionName === "interact") interact();
+    if (actionName === "parry") parry();
   });
 
   const previewStats = rpg.getStats(rpg.createProgress());

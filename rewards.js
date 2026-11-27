@@ -50,11 +50,11 @@
     ["running-drill", "보폭 훈련", "common", "speed", 0.2],
     ["footwork-drill", "거리 재기", "common", "attackRange", 0.14],
     ["rhythm-drill", "타격 박자", "common", "attackCooldown", -0.018],
-    ["dodge-drill", "회피 동작 교정", "common", "dashCooldown", -0.05],
+    ["dodge-drill", "대쉬 동작 교정", "common", "dashCooldown", -0.05],
     ["bracing-drill", "충격 흘리기", "common", "damageReduction", 0.045],
     ["first-aid-drill", "야전 응급처치", "common", "healOnKill", 2],
     ["piercing-drill", "장갑 틈 찾기", "rare", "guardBreak", 0.16],
-    ["slip-drill", "회피 타이밍 훈련", "rare", "dashGrace", 0.05],
+    ["slip-drill", "대쉬 타이밍 훈련", "rare", "dashGrace", 0.05],
   ];
 
   const supplies = [
@@ -74,13 +74,13 @@
     speed: "이동 속도",
     attackRange: "공격 거리",
     attackCooldown: "공격 간격",
-    dashCooldown: "회피 재사용",
+    dashCooldown: "대쉬 재사용",
     damageReduction: "피해 감소",
     healOnKill: "처치 시 회복",
-    dashStrike: "회피 후 추가 피해",
+    dashStrike: "대쉬 후 추가 피해",
     guardBreak: "장갑 관통",
     finishingDamage: "마무리 피해",
-    dashGrace: "회피 무적 시간",
+    dashGrace: "대쉬 무적 시간",
   };
   const supplyLabels = {
     gold: "금화",

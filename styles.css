@@ -269,6 +269,10 @@ button:disabled { cursor: default; }
 .entry-continue:is(:hover, :focus-visible) { background: #3d3529; }
 .entry-continue kbd { margin-left: 6px; }
 @media (pointer: coarse) { .entry-continue kbd { display: none; } }
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 390px) {
+  .entry-continue { bottom: max(12%, calc(6% + 391px - 100svh)); }
+  .game-stage[data-mode="menu"] { height: max(182px, calc(100svh - 151px)); }
+}
 .combat-hotbar {
   display: flex;
   align-items: center;
@@ -295,7 +299,7 @@ kbd {
   white-space: nowrap;
 }
 
-#dash-state {
+:is(#dash-state, #parry-state) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -304,9 +308,10 @@ kbd {
   font: 770 .73rem/1 var(--mono);
   white-space: nowrap;
 }
-#dash-state::before { width: 5px; height: 5px; border-radius: 50%; background: currentColor; content: ""; }
-#dash-state[data-ready="true"], #dash-state[data-state="ready"] { color: var(--patina); }
-#dash-state[data-ready="true"]::before { animation: dash-ready 260ms ease-out both; }
+:is(#dash-state, #parry-state)::before { width: 5px; height: 5px; border-radius: 50%; background: currentColor; content: ""; }
+:is(#dash-state, #parry-state):is([data-ready="true"], [data-state="ready"]) { color: var(--patina); }
+:is(#dash-state, #parry-state)[data-ready="true"]::before { animation: dash-ready 260ms ease-out both; }
+#parry-state[data-state="active"] { color: #bce6f6; }
 @keyframes dash-ready {
   from { transform: scale(1.7); box-shadow: 0 0 6px var(--patina); }
   to { transform: scale(1); box-shadow: none; }
@@ -731,16 +736,32 @@ kbd {
 }
 
 .build-editor { margin-top: 12px; }
-.build-budget {
+.build-settings {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 3px 6px;
+  gap: 4px 8px;
+  padding: 0 5px 5px;
   border-bottom: 1px solid #9c8556;
+}
+.build-difficulty, .build-budget {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: #d9cfb9;
   font-size: .77rem;
   font-weight: 720;
+  white-space: nowrap;
+}
+#run-difficulty {
+  min-height: 38px;
+  padding-inline: 6px;
+  border: 1px solid #819a85;
+  border-radius: 3px;
+  background: #263b30;
+  color: var(--text);
+  font: inherit;
+  font-size: 1rem;
 }
 
 #build-points { color: var(--brass); font: 800 .98rem/1.1 var(--mono); font-variant-numeric: tabular-nums; }
@@ -789,7 +810,7 @@ kbd {
 }
 
 .overlay-panel:has(.build-editor:not([hidden])) .primary-action { margin-top: 0; }
-#back-to-title, #skip-gear { display: none; }
+#back-to-title { display: none; }
 .overlay[data-mode="menu"] #back-to-title {
   display: inline-flex;
   align-items: center;
@@ -804,23 +825,6 @@ kbd {
   line-height: 1.25;
 }
 .overlay[data-mode="menu"] #back-to-title:hover { border-color: #7c8d7e; color: #fff4dd; }
-.overlay[data-mode="gear"] #skip-gear {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 39px;
-  padding: 6px 8px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: #d4dfd1;
-  font-size: .79rem;
-  font-weight: 720;
-  line-height: 1.25;
-  text-align: center;
-  word-break: keep-all;
-  transition: border-color 130ms ease, color 130ms ease;
-}
-.overlay[data-mode="gear"] #skip-gear:hover { border-color: #7c8d7e; color: #fff4dd; }
 .route-choice {
   display: grid;
   align-content: start;
@@ -1103,7 +1107,7 @@ kbd {
 @media (pointer: coarse), (max-width: 600px) {
   .combat-hotbar { justify-content: flex-end; min-height: 22px; padding: 0 3px; }
   .control-list { justify-content: flex-end; gap: 0; }
-  .control-list > div:not(.dash-readout), .dash-readout kbd {
+  .control-list > div:not(.dash-readout, .parry-readout), :is(.dash-readout, .parry-readout) kbd {
     position: absolute;
     width: 1px;
     min-width: 0;
@@ -1112,7 +1116,7 @@ kbd {
     overflow: hidden;
     clip-path: inset(50%);
   }
-  .control-list > .dash-readout { padding: 2px 3px; border-left: 0; }
+  .control-list > :is(.dash-readout, .parry-readout) { padding: 2px 3px; border-left: 0; }
   .touch-controls {
     display: flex;
     justify-content: space-between;
@@ -1145,7 +1149,11 @@ kbd {
   }
   .touch-movement button { padding: 0; font-size: 1.09rem; }
   .touch-controls [data-action="attack"] { border-color: #caab75; background: #493e26; color: #f9deb2; }
-  .game-layout:has(#dash-state[data-ready="false"]) [data-action="dash"] { border-color: #b99f75; background: #3b3629; color: #ead2aa; }
+  .game-layout:has(#dash-state[data-ready="false"]) [data-action="dash"],
+  .game-layout:has(#parry-state[data-state="cooldown"]) [data-action="parry"] {
+    border-color: #b99f75; background: #3b3629; color: #ead2aa;
+  }
+  .game-layout:has(#parry-state[data-state="active"]) [data-action="parry"] { border-color: #bce6f6; }
   .touch-controls button:active, .touch-controls button.pressed {
     translate: 0 2px;
     box-shadow: 0 0 #122019;
@@ -1156,8 +1164,9 @@ kbd {
 }
 
 @media (max-width: 440px) {
-  .game-stage { height: clamp(253px, calc(100svh - 294px), 590px); }
-  .game-layout:has(.elevation-label:not([hidden])) .game-stage { height: clamp(253px, calc(100svh - 346px), 590px); }
+  .game-stage { --touch-row-space: 0px; height: clamp(253px, calc(100svh - 294px - var(--touch-row-space)), 590px); }
+  .game-stage[data-mode="playing"] { --touch-row-space: 10px; }
+  .game-layout:has(.elevation-label:not([hidden])) .game-stage { height: clamp(253px, calc(100svh - 346px - var(--touch-row-space)), 590px); }
   .hero-identity { gap: 2px 4px; }
   .gold-line span { font-size: 0; }
   .overlay-choices:not(:empty) { grid-template-columns: 1fr; }
@@ -1207,8 +1216,9 @@ kbd {
 }
 
 @media (max-width: 320px) {
-  .game-stage { height: clamp(253px, calc(100svh - 319px), 565px); }
-  .game-layout:has(.elevation-label:not([hidden])) .game-stage { height: clamp(253px, calc(100svh - 370px), 565px); }
+  .game-stage { height: clamp(253px, calc(100svh - 319px - var(--touch-row-space)), 565px); }
+  .game-stage[data-mode="playing"] { --touch-row-space: 32px; }
+  .game-layout:has(.elevation-label:not([hidden])) .game-stage { height: clamp(253px, calc(100svh - 370px - var(--touch-row-space)), 565px); }
   .overlay[data-mode="gear"] { scroll-padding-block-end: 78px; }
 }
 

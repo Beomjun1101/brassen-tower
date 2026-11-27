@@ -7,7 +7,7 @@
     { id: "vitality", title: "체력", effect: "최대 체력 +9" },
     { id: "wisdom", title: "지혜", effect: "획득 경험치 +10%" },
     { id: "luck", title: "행운", effect: "층 통과 금화 +2" },
-    { id: "agility", title: "민첩", effect: "이동 +0.18칸/초 · 회피 충전 −0.045초" },
+    { id: "agility", title: "민첩", effect: "이동 +0.18칸/초 · 대쉬 재사용 −0.045초" },
   ];
 
   const slots = [
@@ -24,18 +24,22 @@
     speed: "이동 속도",
     attackRange: "공격 거리",
     attackCooldown: "공격 간격",
-    dashCooldown: "회피 재사용",
+    dashCooldown: "대쉬 재사용",
     damageReduction: "피해 감소",
     healOnKill: "처치 시 회복",
-    dashStrike: "회피 후 추가 피해",
+    dashStrike: "대쉬 후 추가 피해",
     guardBreak: "장갑 관통",
     finishingDamage: "마무리 피해",
-    dashGrace: "회피 무적 시간",
+    dashGrace: "대쉬 무적 시간",
   };
   const lowerIsBetter = new Set(["attackCooldown", "dashCooldown"]);
+  const baseAttackInterval = 0.20;
 
   const levelThresholds = [0, 50, 100, 175, 265, 395, 555, 755, 1000, 1300, 1665, 2110];
-  const enemyExperience = { guard: 14, runner: 11, sentry: 16, lancer: 19, mortar: 22, warden: 24, boss: 62 };
+  const enemyExperience = {
+    guard: 14, runner: 11, sentry: 16, lancer: 19, mortar: 22, warden: 24, boss: 62,
+    skirmisher: 16, breaker: 23, marksman: 20, saboteur: 23,
+  };
   function levelThreshold(level) {
     if (level <= levelThresholds.length) return levelThresholds[level - 1];
     const excess = level - levelThresholds.length;
@@ -164,7 +168,7 @@
     const luck = points("luck");
     const agility = points("agility");
     const stats = { maxHp: 106 + vitality * 9, damage: 27 + strength * 4, speed: 3.75 + agility * 0.18,
-      attackCooldown: 0.31, dashCooldown: 0.80 - agility * 0.045, xpBonus: wisdom * 0.10, goldOnClear: luck * 2,
+      attackCooldown: baseAttackInterval, dashCooldown: 0.80 - agility * 0.045, xpBonus: wisdom * 0.10, goldOnClear: luck * 2,
       attackRange: 1.8, damageReduction: 0, healOnKill: 0, dashStrike: 0,
       guardBreak: 0, finishingDamage: 0, dashGrace: 0 };
     for (const [key, value] of Object.entries(progress.earned)) stats[key] += value;
@@ -179,25 +183,31 @@
     return stats;
   }
 
-  function compareStats(progress, candidate) {
-    const before = getStats(progress);
-    const after = getStats(candidate);
+  function attackInterval(stats, routeMultiplier = 1) {
+    return Math.max(baseAttackInterval, stats.attackCooldown * routeMultiplier);
+  }
+
+  function compareStats(progress, candidate, resolveStats = getStats) {
+    const before = resolveStats(progress);
+    const after = resolveStats(candidate);
     return Object.entries(statLabels).flatMap(([key, label]) => {
-      const delta = Number((after[key] - before[key]).toFixed(4));
-      return delta ? [{ key, label, before: before[key], after: after[key], delta,
+      const previous = key === "attackCooldown" ? attackInterval(before) : before[key];
+      const current = key === "attackCooldown" ? attackInterval(after) : after[key];
+      const delta = Number((current - previous).toFixed(4));
+      return delta ? [{ key, label, before: previous, after: current, delta,
         improved: lowerIsBetter.has(key) ? delta < 0 : delta > 0 }] : [];
     });
   }
 
-  function compareGear(progress, gearId) {
+  function compareGear(progress, gearId, resolveStats) {
     const item = gearById.get(gearId);
     if (!item) return null;
     const currentItem = equippedBySlot(progress).get(item.slot);
     const replaced = currentItem?.id !== gearId ? currentItem ?? null : null;
-    return { item, replaced, changes: compareStats(progress, equip(progress, gearId)) };
+    return { item, replaced, changes: compareStats(progress, equip(progress, gearId), resolveStats) };
   }
 
   window.TowerRpg = { startingPoints, attributes, slots, createProgress, gainXp, levelAttributeGains, killXp, getLevelStatus,
-    rewardChoices, rewardGear, removeGear, equippedBySlot, equip, getStats, compareGear, compareStats,
+    rewardChoices, rewardGear, removeGear, equippedBySlot, equip, getStats, attackInterval, compareGear, compareStats,
     gainStat, retainEarnedStats };
 })();
