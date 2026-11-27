@@ -23,7 +23,7 @@
     "audio-toggle", "music-track", "back-to-title", "region-label",
     "elevation-label", "elevation-legend",
     "status-dialog", "status-trigger", "status-close", "status-summary", "status-gear", "status-stats", "status-quests",
-    "pause-dialog", "pause-trigger", "pause-resume", "pause-exit",
+    "pause-dialog", "pause-trigger", "pause-resume", "pause-exit", "pause-save-error",
   ].map((id) => [id, document.getElementById(id)]));
   const minimapSection = elements.minimap.closest(".map-section");
 
@@ -272,6 +272,7 @@
     stage = content.createFloor(number, randomFrom(floorSeed), "combat", {}, { seed: floorSeed });
     const routeEffects = content.routes.find(({ id }) => id === routeId)?.effects ?? {};
     state = viewFloor(number, stage, health, "playing", routeEffects.enemyDamageMultiplier);
+    state.routeId = routeId;
     state.routeEffects = routeEffects;
     state.ward = run.nextWard + (routeEffects.ward ?? 0);
     state.overclock = run.nextPower;
@@ -293,14 +294,15 @@
     syncHUD();
   }
 
-  function saveCheckpoint(floor, health, route) {
-    if (adminRun) return;
+  function saveCheckpoint(floor, health, route, scene) {
+    if (adminRun) return false;
     const { random, stats, floorSeeds, ...data } = run;
     try {
-      localStorage.setItem(checkpointKey, JSON.stringify({ floor, health, route, randomSeed: random.snapshot(),
+      localStorage.setItem(checkpointKey, JSON.stringify({ floor, health, route, randomSeed: random.snapshot(), scene,
         run: { ...data, floorSeeds: [...floorSeeds] } }));
+      return true;
     } catch {
-      // Browser privacy and storage settings can make checkpointing unavailable.
+      return false;
     }
   }
 
@@ -313,6 +315,48 @@
     } catch {
       return null;
     }
+  }
+
+  function hasSavedScene(saved) {
+    const scene = saved.scene;
+    const snapshot = scene?.state;
+    return scene?.version === 1 && snapshot?.floor === saved.floor &&
+      scene.stage?.width > 0 && scene.stage?.height > 0 && snapshot.map?.width > 0 && snapshot.map?.height > 0 &&
+      dialogModes.has(snapshot.mode) && Number.isFinite(snapshot.player?.x) && Number.isFinite(snapshot.player?.y) &&
+      Number.isFinite(snapshot.player?.hp) && Array.isArray(snapshot.enemies) &&
+      (snapshot.mode !== "rolling" || (Array.isArray(snapshot.entryRolls) && ["throw", "settle", "open"].includes(snapshot.entryPhase))) &&
+      (snapshot.mode !== "gear" || snapshot.rewardOffer?.candidates?.length > 0) &&
+      (snapshot.mode !== "branch" || (Array.isArray(snapshot.branchOffers) && snapshot.branchOffers.length > 0 &&
+        snapshot.branchOffers.every((id) => content.routes.some((route) => route.id === id))));
+  }
+
+  function restoreScene({ stage: savedStage, state: savedState }) {
+    clearInput();
+    elements["entry-continue"].hidden = true;
+    notify(null);
+    stage = savedStage;
+    state = savedState;
+    state.cameraShakeEnabled = !reducedMotion;
+    renderFloorSteps();
+    switch (state.mode) {
+      case "rolling":
+        presentEntry();
+        break;
+      case "gear":
+        presentReward(state.rewardOffer, run.selectedReward?.id);
+        break;
+      case "branch":
+        chooseRoute(state.branchOffers);
+        break;
+      case "tutorial":
+        enterPlayableScene();
+        showTutorial();
+        break;
+      default:
+        enterPlayableScene();
+        break;
+    }
+    syncHUD();
   }
 
   function restoreCheckpoint(saved) {
@@ -329,8 +373,12 @@
         classId: saved.run.classId ?? null, quests: village.migrateQuests(saved.run.quests), villageVisits: saved.run.villageVisits ?? {},
         random: randomFrom(saved.randomSeed), stats: village.applyClass(rpg.getStats(saved.run.progress), saved.run.classId) };
       renderGear();
-      const health = Math.min(run.stats.maxHp, Math.max(1, saved.health ?? run.stats.maxHp));
-      enterFloor(saved.floor, health, saved.route);
+      if (hasSavedScene(saved)) {
+        restoreScene(saved.scene);
+      } else {
+        const health = Math.min(run.stats.maxHp, Math.max(1, saved.health ?? run.stats.maxHp));
+        enterFloor(saved.floor, health, saved.route);
+      }
       return true;
     } catch {
       return false;
@@ -435,7 +483,12 @@
     if (!canOpenRunDialog() || hasRunDialog()) return;
     dialogFocus.set(dialog, document.activeElement);
     clearInput();
-    if (dialog === elements["status-dialog"]) renderStatusDialog();
+    if (dialog === elements["status-dialog"]) {
+      renderStatusDialog();
+    } else {
+      elements["pause-save-error"].hidden = true;
+      setText("pause-exit", adminRun ? "나가기" : "저장하고 나가기");
+    }
     dialog.showModal();
   }
 
@@ -525,7 +578,8 @@
     const checkpoint = menu ? readCheckpoint() : null;
     const options = [];
     if (checkpoint) options.push({
-      id: "resume", title: "이어하기", description: checkpoint.floor + "층 입장부터 · " + difficulties[normalizeDifficulty(checkpoint.run.difficulty)].name,
+      id: "resume", title: "이어하기", description: checkpoint.floor + (hasSavedScene(checkpoint) ? "층 저장 지점 · " : "층 입장부터 · ") +
+        difficulties[normalizeDifficulty(checkpoint.run.difficulty)].name,
       choose: () => { if (!restoreCheckpoint(checkpoint)) setupBuild(); },
     });
     if (menu) options.push({
@@ -613,6 +667,7 @@
     renderPack();
     syncMusic();
     setText("live-status", stage.title + ". " + stage.objective);
+    canvas.removeAttribute("aria-hidden");
     canvas.tabIndex = 0;
     canvas.focus({ preventScroll: true });
   }
@@ -631,6 +686,10 @@
     state.mode = "rolling";
     state.entryRolls = stage.rolls;
     setEntryTiming();
+    presentEntry();
+  }
+
+  function presentEntry() {
     shell.dataset.appMode = state.mode;
     elements["game-stage"].dataset.mode = state.mode;
     elements.overlay.hidden = true;
@@ -638,9 +697,14 @@
     renderPack();
     syncMusic();
     setText("live-status", state.kind === "boss" ? "보스전 주사위 굴리는 중" : "주사위 굴리는 중");
+    canvas.removeAttribute("aria-hidden");
     canvas.tabIndex = 0;
     canvas.focus({ preventScroll: true });
-    if (state.reducedMotion) settleEntry();
+    if (state.entryPhase === "settle" || (state.entryPhase === "throw" && state.reducedMotion)) {
+      settleEntry();
+    } else if (state.entryPhase === "open") {
+      setText("live-status", "전투 입구가 열립니다.");
+    }
   }
 
   function settleEntry() {
@@ -2352,6 +2416,11 @@
 
   function chooseReward(xp, trial, gains = []) {
     const candidates = rpg.rewardChoices(rewards.createFloorPool(state.floor), run.random);
+    state.rewardOffer = { candidates, xp, trial, gains };
+    presentReward(state.rewardOffer);
+  }
+
+  function presentReward({ candidates, xp, trial, gains }, selectedId) {
     state.mode = "gear";
     const options = candidates.map((item) => {
       const slot = rpg.slots.find((entry) => entry.id === item.slot);
@@ -2375,11 +2444,12 @@
       options,
       primary: "보상 받기",
     });
-    showRewardComparison(candidates[0]);
+    showRewardComparison(candidates.find((item) => item.id === selectedId) ?? candidates[0]);
   }
 
-  function chooseRoute() {
+  function chooseRoute(savedOffers) {
     run.selectedReward = undefined;
+    delete state.rewardOffer;
     if (!adminRun && state.floor >= previewFloorLimit) {
       showPreviewComplete();
       return;
@@ -2396,10 +2466,12 @@
     const player = state.player;
     const floorSeed = run.floorSeeds[state.floor - 1] ?? 0;
     const routeSeed = floorSeed ^ Math.imul(state.floor, 0x9e3779b1) ^ 0x726f7574;
-    const routes = content.routeOptions(state.floor, randomFrom(routeSeed), {
-      hp: player.hp, maxHp: player.maxHp, gold: run.gold, previous: run.lastRouteOffers,
-    });
+    const routes = savedOffers ? savedOffers.map((id) => content.routes.find((route) => route.id === id))
+      : content.routeOptions(state.floor, randomFrom(routeSeed), {
+        hp: player.hp, maxHp: player.maxHp, gold: run.gold, previous: run.lastRouteOffers,
+      });
     const offered = routes.map(({ id }) => id);
+    state.branchOffers = offered;
     state.mode = "branch";
     panel({
       kicker: state.floor + "층 통과 · 갈림길",
@@ -2511,6 +2583,10 @@
   elements["pause-trigger"].addEventListener("click", () => toggleRunDialog(elements["pause-dialog"]));
   elements["pause-resume"].addEventListener("click", () => elements["pause-dialog"].close());
   elements["pause-exit"].addEventListener("click", () => {
+    if (!adminRun && !saveCheckpoint(state.floor, state.player.hp, state.routeId, { version: 1, stage, state })) {
+      elements["pause-save-error"].hidden = false;
+      return;
+    }
     dialogFocus.delete(elements["pause-dialog"]);
     elements["pause-dialog"].close();
     setupTitle();
