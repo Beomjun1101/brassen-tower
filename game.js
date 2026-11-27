@@ -6,7 +6,6 @@
   const titleRenderer = window.BrassenTitle;
   const rpg = window.TowerRpg;
   const rewards = window.TowerRewards;
-  const story = window.TowerStory;
   const audio = window.TowerAudio;
   const shelter = window.TowerShelter;
   const village = window.TowerVillage;
@@ -14,7 +13,7 @@
   const shell = document.querySelector(".game-shell");
   const elements = Object.fromEntries([
     "floor-value", "objective", "health-label", "health-fill", "gold-value",
-    "dice-list", "dice-panel", "stage-progress", "stage-title", "threat-label", "notification", "live-status", "overlay",
+    "stage-progress", "stage-title", "threat-label", "notification", "live-status", "overlay",
     "overlay-kicker", "overlay-title", "overlay-copy", "overlay-choices",
     "primary-action", "touch-controls", "hero-label", "level-value", "xp-label", "xp-fill", "gear-list",
     "game-stage", "floor-steps", "hazard-label", "timer-label", "dash-state", "minimap",
@@ -22,19 +21,13 @@
     "build-editor", "build-points", "build-stats", "skip-gear",
     "pack-panel", "pack-list", "pack-count", "compare-heading", "compare-candidate-label",
     "audio-toggle", "music-track", "back-to-title", "region-label",
-    "elevation-label", "elevation-legend", "scene-speaker", "scene-skip",
-    "story-radio", "story-radio-speaker", "story-radio-line",
-    "entry-results", "entry-result-dice",
+    "elevation-label", "elevation-legend",
   ].map((id) => [id, document.getElementById(id)]));
   const minimapSection = elements.minimap.closest(".map-section");
 
   const playerRadius = 0.29;
   const challengeGold = 12;
   const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-  const diceThrowDuration = 1780;
-  const diceResultDuration = 1950;
-  const doorOpeningDuration = 610;
-  const gateSeconds = 0.64;
   const checkpointKey = "brass-spire-campaign-v1";
   const swingDurations = [0.24, 0.27, 0.32];
   const terrainCycles = {
@@ -43,14 +36,6 @@
   };
   const entrance = { width: 34, height: 26, spawn: { x: 4, y: 13 }, enemies: [], obstacles: [], items: [] };
   const previewFloorLimit = 20;
-  const storyChapters = { 5: "reservoir", 15: "inspection", 29: "collapse", 329: "ledger", 665: "relay", 1009: "key" };
-  const clinicLanding = {
-    ...entrance, title: "진료소 배관실", theme: "sluice", fixture: "cold-pipe",
-    width: 12, height: 9, spawn: { x: 3.55, y: 5.25 }, storySocket: { x: 6.35, y: 4.9 },
-    obstacles: [{ x: 2.6, y: 2.25, w: 1.7, h: 1.0 }, { x: 9.55, y: 2.25, w: 2.1, h: 1.3 }],
-    stations: [], rolls: [],
-  };
-  const storyControls = "가까이에서 상호작용";
   const enemyTypes = {
     guard: { hp: 84, speed: 2.57, damage: 24, range: 1.95, windup: 0.56, cooldown: 0.65, radius: 0.32 },
     runner: { hp: 54, speed: 3.47, damage: 19, range: 1.55, windup: 0.46, cooldown: 0.56, radius: 0.27 },
@@ -73,12 +58,9 @@
   let state;
   let minimapBackground;
   let adminRun = false;
-  let cellGoal = 0;
   let allocation;
   let action;
-  let skipScene;
   let notificationUntil = 0;
-  let radioUntil = 0;
   let previousTime = performance.now();
   let trackName = "";
 
@@ -113,10 +95,7 @@
 
   function isOpen(x, y, radius) {
     if (x < radius || y < radius || x > state.map.width - radius || y > state.map.height - radius) return false;
-    const shutter = state.storyGate;
-    if (shutter && shutter.progress < 0.86 && window.TowerFieldScenes.inGate(shutter, { x, y }, radius)) return false;
     return state.obstacles.every((wall) => {
-      if (wall.gateLeaf && (state.exit?.openProgress ?? 0) >= 0.92) return true;
       const gapX = Math.max(0, Math.abs(x - wall.x) - wall.w / 2);
       const gapY = Math.max(0, Math.abs(y - wall.y) - wall.h / 2);
       return gapX * gapX + gapY * gapY >= radius * radius;
@@ -182,25 +161,22 @@
     };
   }
 
-  function newRun(survivor, jumpFloor) {
-    adminRun = jumpFloor !== undefined;
+  function createRun(survivor) {
     const seeds = crypto.getRandomValues(new Uint32Array(content.floorCount + 1));
-    const progress = survivor?.progress ?? rpg.createProgress(adminRun ? undefined : allocation);
+    const progress = survivor ? { ...survivor.progress, level: 1, xp: 0 }
+      : rpg.createProgress(adminRun ? undefined : allocation);
     const classId = survivor?.classId ?? null;
     const stats = village.applyClass(rpg.getStats(progress), classId);
-    const random = randomFrom(seeds[0]);
-    run = { random, floorSeeds: seeds.slice(1), gold: survivor?.gold ?? 0, seconds: 0, cleared: 0,
+    return { random: randomFrom(seeds[0]), floorSeeds: seeds.slice(1), gold: survivor?.gold ?? 0, seconds: 0, cleared: 0,
       rewards: survivor?.rewards ?? [], totalClears: survivor?.totalClears ?? 0, nextRewardId: survivor?.nextRewardId ?? 0,
-      storyChoices: survivor?.storyChoices ?? {}, scenesSeen: survivor?.scenesSeen ?? [],
       trials: [], progress, stats, classId, quests: [], villageVisits: {}, nextWard: 0, nextPower: 0 };
+  }
+
+  function newRun(jumpFloor) {
+    adminRun = jumpFloor !== undefined;
+    run = createRun();
     renderGear();
-    if (adminRun) {
-      enterFloor(jumpFloor, stats.maxHp);
-    } else if (!run.storyChoices.commission) {
-      openLanding(1, stats.maxHp, { scene: story.scenes.commission, chapter: "commission" });
-    } else {
-      enterFloor(1, stats.maxHp);
-    }
+    enterFloor(jumpFloor ?? 1, run.stats.maxHp);
   }
 
   function viewFloor(number, data, health, mode, damageMultiplier = 1) {
@@ -218,35 +194,29 @@
       hazard: data.hazard, hazardTiles: [], bossTargets: [], bossShockCooldown: 0, projectiles: [],
       timeLimit: data.timeLimit, alarm: false, patrolsArrived: false, hitCount: 0,
       bossPhaseTwo: false, bossOverdrive: false, overdriveReleased: false, shockBursts: 0, shockHits: 0,
-      holdZone: data.hold && { ...data.hold, progress: 0, active: false }, mortarTargets: [],
+      mortarTargets: [],
       ward: 0, overclock: 0,
       wave: 1, waveArrival: 0, effects: [], cameraShake: 0, cameraShakeEnabled: !reducedMotion,
-      elapsed: 0, revealTimer: 0, entryElapsed: 0, entryDuration: 0, mode,
+      elapsed: 0, revealTimer: 0, mode,
     };
   }
 
   function enterFloor(number, health, routeId) {
+    clearInput();
     saveCheckpoint(number, health, routeId);
     if (content.isShelterFloor(number)) {
-      openLanding(number, health, storyAtFloor(number));
+      openShelter(number, health);
       return;
     }
     const floorSeed = run.floorSeeds[number - 1] ?? crypto.getRandomValues(new Uint32Array(1))[0];
-    stage = content.createFloor(number, randomFrom(floorSeed), undefined, run.storyChoices, { seed: floorSeed });
+    stage = content.createFloor(number, randomFrom(floorSeed), "combat", {}, { seed: floorSeed });
     const routeEffects = content.routes.find(({ id }) => id === routeId)?.effects ?? {};
-    state = viewFloor(number, stage, health, "rolling", routeEffects.enemyDamageMultiplier);
+    state = viewFloor(number, stage, health, "playing", routeEffects.enemyDamageMultiplier);
     state.routeEffects = routeEffects;
-    state.entryRolls = stage.rolls;
-    state.entrySettleAt = stage.rolls.length ? (reducedMotion ? 180 : diceThrowDuration) : 0;
-    state.entryOpenAt = stage.rolls.length ? state.entrySettleAt + diceResultDuration : (reducedMotion ? 0 : 270);
-    state.entryDuration = state.entryOpenAt + (reducedMotion ? 180 : doorOpeningDuration);
-    state.entryPhase = stage.rolls.length ? "throw" : "open";
-    state.entryTicks = 0;
     state.ward = run.nextWard + (routeEffects.ward ?? 0);
     state.overclock = run.nextPower;
     run.nextWard = 0;
     run.nextPower = 0;
-    cellGoal = state.items.filter((item) => item.kind === "cell").length;
     if (state.hazard === "sparks") {
       const locations = [
         [0.2, 0.37], [0.38, 0.56], [0.55, 0.25], [0.31, 0.73], [0.64, 0.67], [0.81, 0.47], [0.82, 0.83],
@@ -256,30 +226,10 @@
       state.sparkLocations = locations.slice(offset).concat(locations.slice(0, offset));
       state.sparkCycle = -1;
     }
-    const encounter = storyAtFloor(number);
-    const exit = state.items.find((item) => item.kind === "exit");
-    if (exit) {
-      state.exit = exit;
-      state.obstacles = [...state.obstacles, ...content.exitGateWalls(exit)];
-    } else if (number === 1) {
-      const gate = stage.gateMarker ?? { x: stage.width - 1.55, y: stage.height * 0.61 };
-      state.gateMarker = { ...gate, type: "sluice", active: false, openProgress: 0 };
-    }
-    if (stage.final && exit) {
-      state.storyPoint = { x: exit.x, y: exit.y, scene: story.epilogue(run.storyChoices), atExit: true,
-        prompt: "공급 밸브 열기", device: "valve", active: false };
-    } else if (encounter) {
-      state.storyPoint = { ...(stage.storySocket ?? { x: 30.7, y: 16.3 }), ...encounter, active: false };
-    }
-    elements.notification.hidden = true;
-    renderDice();
+    if (stage.gateMarker) state.gateMarker = { ...stage.gateMarker, type: "sluice", active: false, openProgress: 0 };
     renderFloorSteps();
+    beginFloor();
     syncHUD();
-    panel({
-      kicker: number + "층",
-      title: stage.rolls.length ? "주사위 투척" : "문 개방",
-      copy: "",
-    });
   }
 
   function saveCheckpoint(floor, health, route) {
@@ -313,17 +263,13 @@
           rpg.rewardGear({ ...entry.item, id: entry.item.id.slice(0, version) });
         }
       }
-      run = { ...saved.run, storyChoices: saved.run.storyChoices ?? {}, scenesSeen: saved.run.scenesSeen ?? [],
-        classId: saved.run.classId ?? null, quests: saved.run.quests ?? [], villageVisits: saved.run.villageVisits ?? {},
+      const { storyChoices, scenesSeen, localPlans, ...runData } = saved.run;
+      run = { ...runData,
+        classId: saved.run.classId ?? null, quests: village.migrateQuests(saved.run.quests), villageVisits: saved.run.villageVisits ?? {},
         random: randomFrom(saved.randomSeed), stats: village.applyClass(rpg.getStats(saved.run.progress), saved.run.classId) };
-      delete run.localPlans;
       renderGear();
       const health = Math.min(run.stats.maxHp, Math.max(1, saved.health ?? run.stats.maxHp));
-      if (saved.floor === 1 && !run.storyChoices.commission) {
-        openLanding(1, health, { scene: story.scenes.commission, chapter: "commission" });
-      } else {
-        enterFloor(saved.floor, health, saved.route);
-      }
+      enterFloor(saved.floor, health, saved.route);
       return true;
     } catch {
       return false;
@@ -340,8 +286,8 @@
 
   function syncMusic() {
     if (state.mode === "playing") {
-      if (state.landing || state.combatComplete) {
-        trackName = audio.cue(state.landing ? "shelter" : "story");
+      if (state.shelter) {
+        trackName = audio.cue("shelter");
       } else {
         const boss = state.kind === "boss";
         const roster = livingEnemies().map((enemy) => enemy.kind + (enemy.elite ? " elite" : "")).sort();
@@ -349,7 +295,7 @@
         trackName = audio.cue(boss ? "boss" : state.theme, { theme: state.theme, floor: state.floor, foes: roster.join("/"), phase });
       }
     } else {
-      const menus = { title: "title", menu: "title", rolling: "entry", story: "story", shelter: "shelter",
+      const menus = { title: "title", menu: "title", shelter: "shelter",
         gear: "reward", branch: "reward", defeat: "defeat", victory: "victory" };
       trackName = audio.cue(menus[state.mode]);
     }
@@ -362,21 +308,14 @@
     attackPointer = null;
   }
 
-  function panel({ kicker, title, copy, options = [], primary, activate, beat, skip, questCards }) {
+  function panel({ kicker, title, copy, options = [], primary, activate, questCards }) {
     clearInput();
-    hideRadio();
     setText("overlay-kicker", kicker);
     setText("overlay-title", title);
     setText("overlay-copy", copy);
     elements["build-editor"].hidden = state.mode !== "menu";
     elements["gear-compare"].hidden = state.mode !== "gear";
     elements.overlay.dataset.mode = state.mode;
-    elements.overlay.dataset.scene = state.mode === "story" ? state.scene : "";
-    elements.overlay.dataset.speakerTone = beat?.tone ?? "";
-    elements.overlay.dataset.entryPhase = state.mode === "rolling" ? state.entryPhase : "";
-    elements["entry-results"].hidden = true;
-    elements["scene-speaker"].hidden = !beat?.speaker;
-    setText("scene-speaker", beat?.speaker ?? "");
     shell.dataset.appMode = state.mode;
     canvas.tabIndex = -1;
     if (state.mode === "title") canvas.setAttribute("aria-hidden", "true");
@@ -417,16 +356,13 @@
     });
     elements["overlay-choices"].replaceChildren(...choices);
     action = activate;
-    skipScene = skip?.activate;
-    elements["scene-skip"].hidden = !skip;
-    if (skip) setText("scene-skip", skip.label);
     elements["primary-action"].hidden = !primary;
     elements["primary-action"].disabled = false;
     if (primary) setText("primary-action", primary);
     elements.overlay.hidden = false;
     renderPack();
     syncMusic();
-    setText("live-status", beat ? [beat.speaker, beat.line].filter(Boolean).join(". ") : title);
+    setText("live-status", title);
     const firstOption = elements["overlay-choices"].querySelector(questCards ? ".quest-action-primary:enabled" : "button:enabled");
     const focusTarget = firstOption ?? (primary ? elements["primary-action"] : elements.overlay);
     if (focusTarget === elements.overlay) focusTarget.tabIndex = -1;
@@ -441,11 +377,9 @@
     adminRun = false;
     run = undefined;
     stage = null;
-    cellGoal = 0;
     state = viewFloor(1, entrance, previewStats.maxHp, "title");
     elements.overlay.dataset.titleMenu = String(menu);
     notify(null);
-    renderDice();
     renderGear();
     renderFloorSteps();
     syncHUD();
@@ -456,10 +390,10 @@
       choose: () => { if (!restoreCheckpoint(checkpoint)) setupBuild(); },
     });
     if (menu) options.push({
-      id: "new-run", title: "새 등반", description: checkpoint ? "시련에 들어가면 새 기록이 저장됩니다." : "능력치 5점을 배분해 등반을 준비합니다.",
+      id: "new-run", title: "새 등반", description: checkpoint ? "1층에 들어가면 새 기록이 저장됩니다." : "능력치 5점을 배분해 전투를 준비합니다.",
       choose: setupBuild,
     });
-    panel({ kicker: "", title: "Brassen Tower", copy: menu ? "" : "1,332층을 향하는 액션 로그라이크 · 1–20층 체험판",
+    panel({ kicker: "", title: "Brassen Tower", copy: menu ? "" : "전투를 돌파하며 탑을 오르는 액션 로그라이크 · 1–20층 체험판",
       options, primary: menu ? undefined : "시작",
       activate: () => {
         audio.unlock().then(refreshAudioUI);
@@ -490,9 +424,7 @@
     stage = null;
     allocation = Object.fromEntries(rpg.attributes.map(({ id }) => [id, 0]));
     state = viewFloor(1, entrance, previewStats.maxHp, "menu");
-    cellGoal = 0;
     notify(null);
-    renderDice();
     renderGear();
     renderFloorSteps();
     syncHUD();
@@ -538,7 +470,6 @@
     shell.dataset.appMode = state.mode;
     elements["game-stage"].dataset.mode = state.mode;
     elements.overlay.hidden = true;
-    renderDice();
     renderPack();
     syncMusic();
     setText("live-status", stage.title + ". " + stage.objective);
@@ -550,20 +481,6 @@
     state.revealTimer = reducedMotion ? 0 : 1.05;
     state.cameraShake = reducedMotion ? 0 : 0.14;
     enterPlayableScene();
-    if (stage.final && state.kind === "boss") {
-      const anchor = { ...stage.storySocket, scene: story.starPrelude, active: false, celestial: true };
-      state.storyPoint = anchor;
-      showScene(anchor, () => {
-        state.storyPoint = null;
-        enterPlayableScene();
-        notify("별의 산파 · 접근하는 별무리를 피해 틈을 노리세요.", 2600);
-      });
-      return;
-    }
-    if (state.floor === 2) showRadio("sluice-open");
-    if (state.floor === 3) showRadio("pressure-start");
-    if (stage.final) showRadio("final-lead");
-    if (stage.destinationCue) displayRadio(stage.destinationCue);
     const messages = [state.floor === 1 ? "경비대 접근 · 가까이서 공격하세요" : stage.title];
     if (state.floor === 2 && state.elevation) messages.push("계단으로 상단과 하단을 오갈 수 있습니다");
     if (run.pendingGear) {
@@ -594,445 +511,28 @@
     notify(messages.join(" · "));
   }
 
-  function advanceEntry(gap) {
-    state.entryElapsed += Math.min(65, gap);
-    const rebounds = [0.38, 0.49, 0.61, 0.73];
-    while (state.entryTicks < state.entryRolls.length && !reducedMotion &&
-        state.entryElapsed >= state.entrySettleAt * rebounds[state.entryTicks]) {
-      audio.dieTick(state.entryTicks);
-      state.entryTicks++;
-    }
-    const phase = state.entryElapsed >= state.entryOpenAt ? "open"
-      : state.entryElapsed >= state.entrySettleAt ? "result" : "throw";
-    if (phase !== state.entryPhase) {
-      state.entryPhase = phase;
-      elements.overlay.dataset.entryPhase = phase;
-      const result = phase === "result";
-      const destination = result ? stage.destination?.title : undefined;
-      setText("overlay-title", result ? destination ?? "주사위 결과" : "문 개방");
-      if (result) {
-        const labels = state.entryRolls.length === 4 ? ["행선지", "환경", "배치", "보상"] : ["환경", "배치", "보상"];
-        const summary = [];
-        elements["entry-result-dice"].replaceChildren(...state.entryRolls.map(({ value, sides }, index) => {
-          const entry = document.createElement("li");
-          const label = document.createElement("span");
-          label.textContent = labels[index];
-          const score = document.createElement("strong");
-          score.textContent = value + " / " + sides;
-          summary.push(labels[index] + " " + value);
-          entry.append(label, score);
-          return entry;
-        }));
-        setText("live-status", [destination ?? "주사위 결과", ...summary].join(". "));
-      }
-      elements["entry-results"].hidden = !result;
-    }
-    if (state.entryElapsed >= state.entryDuration) beginFloor();
-  }
-
-  function storyAtFloor(floor) {
-    const chapter = storyChapters[floor];
-    if (chapter) {
-      const setting = run.storyChoices[chapter];
-      if (setting && !content.isShelterFloor(floor)) return null;
-      return { scene: story.scenes[chapter], chapter, setting };
-    }
-    if (floor === content.floorCount) return null;
-    const operation = story.operations[floor]?.(run.storyChoices);
-    if (operation && !run.scenesSeen.includes(operation.scene.id ?? floor)) return operation;
-    const scene = story.interludes[floor] ?? story.shelterNotes[floor];
-    if (!scene) return null;
-    const seen = run.scenesSeen.includes(scene.id ?? floor);
-    if (seen && !content.isShelterFloor(floor)) return null;
-    return { scene, setting: seen ? "read" : undefined };
-  }
-
-  function openLanding(floor, health, encounter) {
+  function openShelter(floor, health) {
     const seed = run.floorSeeds[floor - 1];
-    const planner = window.BrassenMapPlanner;
     const roll = randomFrom(seed);
-    const plan = floor > 1 && floor <= previewFloorLimit ? planner?.plan({ floor, seed, kind: "shelter", theme: "shelter",
-      choices: run.storyChoices, macro: 1 + Math.floor(roll() * 6), placement: 1 + Math.floor(roll() * 4),
-      minor: 1 + Math.floor(roll() * 4) }) : null;
-    const landing = floor === 1 ? clinicLanding : shelter.create(floor, plan, { seed, choices: run.storyChoices });
+    const plan = floor <= previewFloorLimit ? window.BrassenMapPlanner?.plan({ floor, seed, kind: "shelter", theme: "shelter",
+      macro: 1 + Math.floor(roll() * 6), placement: 1 + Math.floor(roll() * 4), minor: 1 + Math.floor(roll() * 4) }) : null;
+    const landing = shelter.create(floor, plan, { seed });
     stage = {
       ...landing, region: content.getRegion(floor), hazard: "none",
       objective: floor % 10 === 5 ? "장비를 정비하거나 의뢰를 받은 뒤 출발하세요." : "휴식하거나 장비를 정비한 뒤 출발하세요.",
     };
     state = viewFloor(floor, stage, health, "playing");
     state.landing = landing.fixture;
-    state.shelter = floor === 1 ? null : landing;
+    state.shelter = landing;
     state.stations = landing.stations;
-    if (encounter) {
-      state.storyPoint = { ...landing.storySocket, ...encounter, active: !encounter.setting,
-        triggeredAt: encounter.setting ? 0 : undefined };
-    }
-    cellGoal = 0;
     notify(null);
-    hideRadio();
     renderFloorSteps();
     enterPlayableScene();
-    if (state.storyPoint?.active) activateStoryPoint(state.storyPoint);
-  }
-
-  function hideRadio() {
-    elements["story-radio"].hidden = true;
-  }
-
-  function showRadio(key) {
-    displayRadio(story.cues[key]?.(run.storyChoices));
-  }
-
-  function displayRadio(cue) {
-    if (!cue) return;
-    elements["story-radio"].hidden = false;
-    setText("story-radio-speaker", cue.speaker);
-    setText("story-radio-line", cue.line);
-    audio.deviceSignal("radio");
-    radioUntil = performance.now() + Math.max(4100, cue.line.length * 120);
-  }
-
-  function activateStoryPoint(marker) {
-    const physical = startIncident(marker);
-    if (physical) hideRadio();
-    else showRadio(marker.scene.cue);
-    if (state.floor <= previewFloorLimit && !marker.scene.optional) {
-      notify("이야기 · " + marker.scene.title, 2800);
-    }
-    return physical;
-  }
-
-  function rememberStoryPoint(point) {
-    if (point.chapter || point.atExit) return;
-    const id = point.scene.id ?? state.floor;
-    if (!run.scenesSeen.includes(id)) run.scenesSeen.push(id);
-  }
-
-  function applyStoryChoice(chapter, choice) {
-    if (run.storyChoices[chapter]) return false;
-    const { id, effect } = choice;
-    run.storyChoices[chapter] = id;
-    creditGold(effect.gold);
-    if (effect.xp) awardXp(effect.xp);
-    if (effect.stat) updateProgress(rpg.gainStat(run.progress, effect.stat, effect.amount));
-    run.nextWard += effect.ward ?? 0;
-    run.nextPower += effect.overclock ?? 0;
-    return true;
-  }
-
-  function incidentPositions(anchor, count) {
-    const spacing = 0.52;
-    const origin = { x: anchor.x, y: anchor.y };
-    const reachable = [{ ...origin, col: 0, row: 0 }];
-    const visited = new Set(["0,0"]);
-    const stations = state.stations ?? [];
-    for (let index = 0; index < reachable.length; index++) {
-      const from = reachable[index];
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const col = from.col + dx, row = from.row + dy;
-        const key = col + "," + row;
-        if (Math.abs(col) > 9 || Math.abs(row) > 9 || visited.has(key)) continue;
-        const x = origin.x + col * spacing, y = origin.y + row * spacing;
-        if (!openStep(from, x, y, 0.47)) continue;
-        visited.add(key);
-        reachable.push({ x, y, col, row });
-      }
-    }
-    const positions = [origin];
-    const offsets = [[-2.6, 1.55], [0.75, -2.60], [2.6, 1.55]];
-    const options = reachable.filter((spot) => stations.every((station) => distance(station, spot) > 1.5));
-    for (const [x, y] of offsets.slice(0, count - 1)) {
-      const target = { x: origin.x + x, y: origin.y + y };
-      const nearest = [...options].sort((a, b) => distance(a, target) - distance(b, target));
-      const spot = nearest.find((candidate) => positions.every((position) => distance(candidate, position) >= 2.3))
-        ?? nearest.find((candidate) => positions.every((position) => distance(candidate, position) >= 1.25));
-      if (!spot) return null;
-      positions.push({ x: spot.x, y: spot.y });
-    }
-    return positions;
-  }
-
-  function startIncident(anchor) {
-    const definition = anchor.operation ?? story.incidents[anchor.chapter];
-    if (!definition) return false;
-    const steps = definition.steps;
-    const options = anchor.scene.choices ?? [];
-    const positions = incidentPositions(anchor, steps.length + options.length);
-    if (!positions) return false;
-    const points = steps.map(({ done, ...step }, index) => ({
-      ...positions[index], ...step, doneText: done, active: index === 0, done: false,
-    }));
-    options.forEach((choice, index) => {
-      const [device, label] = definition.routes[choice.id];
-      points.push({ ...positions[steps.length + index], device, label, hint: choice.description, kind: "choose",
-        choice: choice.id, active: false, done: false });
-    });
-    anchor.active = false;
-    state.incident = { anchor, points, definition, step: 0, steps: steps.length, progress: 0, payload: false,
-      reservoir: anchor.chapter === "reservoir", complete: false, task: steps[0].task };
-    prepareFieldAction(points[0]);
-    setText("live-status", state.incident.task);
-    return true;
-  }
-
-  function prepareFieldAction(point, kind = point.action) {
-    if (!kind) return;
-    const sequence = window.TowerFieldScenes.create({
-      kind, branch: point.choice, graph: stage.roomGraph, anchor: point, player: state.player, bounds: state.map,
-      heightAt: elevationAt,
-      pass: (from, to, radius) => openStep(from, to.x, to.y, radius)
-        && walkable((from.x + to.x) / 2, (from.y + to.y) / 2, radius),
-    });
-    if (!sequence) return;
-    state.fieldAction = sequence;
-    state.storyActors = sequence.actors;
-    if (kind === "passage") return;
-
-    sequence.point = point;
-    state.storyGate = sequence.gate;
-    Object.assign(point, sequence.control);
-    if (kind === "lockdown") {
-      const evidence = state.incident.points[state.incident.step + 1];
-      if (evidence?.kind === "lift") Object.assign(evidence, sequence.far);
-    }
-  }
-
-  function incidentPointInReach(point, radius = 1.26) {
-    const player = state.player;
-    return point.active && distance(player, point) <= radius && closeReach(player, point) &&
-      isOpen((point.x + player.x) / 2, (point.y + player.y) / 2, 0.13);
-  }
-
-  function completeIncidentStep(point) {
-    const incident = state.incident;
-    point.done = true;
-    point.active = false;
-    point.triggeredAt = performance.now() / 1000;
-    incident.step++;
-    incident.progress = 0;
-    if (incident.step === incident.steps) {
-      const branches = incident.points.slice(incident.steps);
-      if (!branches.length) {
-        finishIncident(point, point.doneText);
-        return;
-      }
-      for (const branch of branches) branch.active = true;
-      incident.task = incident.definition.task;
-    } else {
-      const next = incident.points[incident.step];
-      next.active = true;
-      incident.task = next.task;
-      prepareFieldAction(next);
-    }
-    audio.deviceSignal(point.device === "cartridge" ? "terminal" : "valve");
-    addEffect("loot", point, 0.6);
-    notify(point.doneText);
-    setText("live-status", incident.task);
-  }
-
-  function finishIncident(point, result) {
-    const incident = state.incident;
-    const anchor = incident.anchor;
-    for (const entry of incident.points) entry.active = false;
-    point.done = true;
-    point.triggeredAt = performance.now() / 1000;
-    incident.complete = true;
-    incident.payload = false;
-    incident.task = result;
-    anchor.setting = point.choice ?? "read";
-    anchor.triggeredAt = point.triggeredAt;
-    rememberStoryPoint(anchor);
-    audio.deviceSignal(point.device);
-    addEffect("loot", point, 0.75);
-    notify(result, 2800);
-    setText("live-status", result);
-    if (anchor.chapter === "reservoir") prepareFieldAction(point, "passage");
-    if (state.shelter) saveVillage();
-    else incident.leaveAt = state.elapsed + 1.1;
-  }
-
-  function useIncidentPoint(point) {
-    if (!incidentPointInReach(point)) return;
-    const incident = state.incident;
-    const sequence = state.fieldAction;
-    if (sequence?.point === point && sequence.kind === "lockdown") {
-      if (!sequence.intervene) {
-        sequence.intervene = true;
-        audio.deviceSignal("valve");
-      }
-      return;
-    }
-    if (point.kind === "hold") {
-      notify(point.action === "escort" ? "발판 위에 서서 후송문을 열어 주세요." : "압력판 위에 서 있으면 서서히 안정됩니다.", 1400);
-      return;
-    }
-    if (point.kind === "choose") {
-      const anchor = incident.anchor;
-      const choice = anchor.scene.choices.find(({ id }) => id === point.choice);
-      if (!applyStoryChoice(anchor.chapter, choice)) return;
-      finishIncident(point, incident.definition.result[point.choice]);
-      return;
-    }
-    if (point.kind === "lift") incident.payload = true;
-    if (point.kind === "fit") incident.payload = false;
-    completeIncidentStep(point);
-  }
-
-  function updateIncident(delta) {
-    const incident = state.incident;
-    if (!incident) return;
-    if (incident.leaveAt !== undefined && state.elapsed >= incident.leaveAt) {
-      incident.leaveAt = undefined;
-      if (incident.anchor.chapter === "commission") enterFloor(1, state.player.hp);
-      else finishFloorRewards();
-      return;
-    }
-    const point = incident.points[incident.step];
-    const sequence = state.fieldAction;
-    if (sequence && !sequence.done) {
-      const held = sequence.kind === "escort" && incidentPointInReach(sequence.point, 0.66);
-      const phase = sequence.phase;
-      window.TowerFieldScenes.update(sequence, delta, { held, player: state.player });
-      if (sequence.kind === "passage") return;
-      if (sequence.kind === "escort") {
-        const patient = sequence.actors[0];
-        incident.progress = Math.min(1, distance(patient, sequence.near) / (distance(sequence.near, sequence.far) - 0.68));
-      }
-      if (sequence.phase !== phase) {
-        const message = sequence.phase === "closed" ? point.closedTask :
-          sequence.phase === "opening" || sequence.phase === "crossing" ? point.activeTask : point.task;
-        if (message) {
-          incident.task = message;
-          setText("live-status", message);
-        }
-      }
-      if (sequence.done) completeIncidentStep(point);
-      return;
-    }
-    if (point?.kind !== "hold" || !point.active) return;
-    if (incidentPointInReach(point, 0.66)) {
-      incident.progress = Math.min(1, incident.progress + delta / point.time);
-      if (incident.progress >= 1) completeIncidentStep(point);
-    } else {
-      incident.progress = Math.max(0, incident.progress - delta * 0.45);
-    }
-  }
-
-  function showScene(point, resume) {
-    const { scene, chapter } = point;
-    state.mode = "story";
-    state.scene = scene.art;
-    point.triggeredAt = performance.now() / 1000;
-    audio.deviceSignal(point.device ?? scene.device);
-    notify(null);
-    const directionToDevice = direction(point.x - state.player.x, point.y - state.player.y);
-    setFacing(state.player, directionToDevice);
-    state.player.moving = false;
-    state.player.velocityX = state.player.velocityY = 0;
-    state.player.dashRemaining = 0;
-    state.player.dashFlash = 0;
-    state.player.swingLife = 0;
-    state.player.attackFlash = 0;
-    state.player.pendingStrike = undefined;
-    const beats = scene.beats(run.storyChoices);
-    const stageState = state;
-    const active = () => state === stageState && state.mode === "story";
-    const leave = () => {
-      if (active()) resume();
-    };
-    const present = (beat, controls) => {
-      if (!active()) return;
-      state.storyShot = beat?.shot ?? "device";
-      panel({ kicker: scene.chapter, title: scene.title, copy: beat?.line ?? scene.choicePrompt, beat, ...controls });
-    };
-    const options = (scene.choices ?? []).map((choice) => ({
-      id: choice.id, title: choice.title, detail: choice.description,
-      choose: () => {
-        if (!active() || !applyStoryChoice(chapter, choice)) return;
-        point.setting = choice.id;
-        point.triggeredAt = performance.now() / 1000;
-        audio.deviceSignal(point.device ?? scene.device);
-        const response = scene.response?.(run.storyChoices);
-        if (response) {
-          notify(null);
-          present(response, { primary: state.floor === 1 ? "수문으로" : "계속", activate: leave });
-        } else {
-          leave();
-        }
-      },
-    }));
-    const choose = () => present(null, { options });
-    function read(index) {
-      const last = index === beats.length - 1;
-      if (last && options.length) {
-        present(beats[index], { options });
-        return;
-      }
-      const next = last ? leave : () => read(index + 1);
-      const primary = last ? "계속" : "다음 대사";
-      const skip = !last && (options.length
-        ? { label: "선택으로", activate: choose }
-        : { label: "건너뛰기", activate: leave });
-      present(beats[index], { primary, activate: next, skip });
-    }
-    read(0);
-  }
-
-  function renderDice() {
-    const section = elements["dice-panel"];
-    section.hidden = !state.revealed || !stage.rolls.length;
-    section.open = false;
-    if (section.hidden) {
-      elements["dice-list"].replaceChildren();
-      return;
-    }
-    elements["dice-list"].replaceChildren(...stage.rolls.map((roll) => {
-      const entry = document.createElement("div");
-      entry.className = "verdict-row";
-      const die = document.createElement("span");
-      die.className = "verdict-die";
-      die.dataset.value = String(roll.value);
-      die.setAttribute("aria-hidden", "true");
-      die.append(...Array.from({ length: 9 }, () => document.createElement("i")));
-      const copy = document.createElement("div");
-      const label = document.createElement("strong");
-      label.className = "verdict-title";
-      label.textContent = roll.label;
-      label.setAttribute("aria-label", roll.label + ", 주사위 눈 " + roll.value);
-      const detail = document.createElement("small");
-      detail.className = "verdict-result";
-      detail.textContent = roll.detail;
-      copy.append(label, detail);
-      entry.append(die, copy);
-      return entry;
-    }));
+    syncHUD();
   }
 
   function livingEnemies() {
     return state.enemies.filter((enemy) => enemy.hp > 0);
-  }
-
-  function gatheredCells() {
-    return state.items.filter((item) => item.kind === "cell" && item.collected).length;
-  }
-
-  function exitBlocker() {
-    if (gatheredCells() < cellGoal) return "cells";
-    if (state.kind === "escape" && state.elapsed < (stage.unlockAfter ?? 10)) return "timer";
-    if (state.enemies.some((enemy) => enemy.gateGuard && enemy.hp > 0)) return "guard";
-    return null;
-  }
-
-  function openExitIfReady() {
-    const exit = state.items.find((item) => item.kind === "exit");
-    if (!exit || exit.active || exitBlocker()) return false;
-    exit.active = true;
-    exit.openSince = state.elapsed;
-    exit.openProgress = reducedMotion ? 1 : 0;
-    if (reducedMotion && state.storyPoint?.atExit) state.storyPoint.active = true;
-    addEffect("pickup", exit, 0.62);
-    notify(stage.final ? "공급 밸브 잠금 해제" : state.theme === "sluice" ? "수문 잠금 해제" : "격벽문 잠금 해제");
-    return true;
   }
 
   function renderFloorSteps() {
@@ -1097,7 +597,7 @@
         block.fixture ? "#9b845e" : block.structural ? "#566c71" : "#83917c",
         block.fixture ? "#cfb88b" : block.structural ? "#97b2b7" : null);
     }
-    return { point, shape };
+    return { point };
   }
 
   function drawMinimap() {
@@ -1131,7 +631,7 @@
         ...projection,
       };
     }
-    const { image, point, shape } = minimapBackground;
+    const { image, point } = minimapBackground;
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.clearRect(0, 0, width, height);
     context.drawImage(image, 0, 0);
@@ -1163,16 +663,6 @@
         mapPolygon(context, [[x, y - 4], [x + 4, y], [x, y + 4], [x - 4, y]], "#ffda8b", "#553c28");
       }
     }
-    if (state.holdZone) {
-      const { x, y, radius } = state.holdZone;
-      mapPolygon(context, shape(x - radius / 2, y - radius / 2, radius, radius), "#4cad99", "#9cf7df");
-    }
-    const storyMarkers = state.incident?.points ?? (state.storyPoint ? [state.storyPoint] : []);
-    for (const marker of storyMarkers) {
-      if (!marker.active) continue;
-      const [mx, my] = point(marker.x, marker.y);
-      mapPolygon(context, [[mx, my - 4], [mx + 4, my], [mx, my + 4], [mx - 4, my]], "#edbb79", "#2e261a");
-    }
     const [x, y] = point(state.player.x, state.player.y);
     context.beginPath();
     context.arc(x, y, 3.4, 0, Math.PI * 2);
@@ -1183,7 +673,7 @@
   }
 
   function updateRunIndicators() {
-    const active = state.revealed && state.mode === "playing" && !state.landing && !state.combatComplete;
+    const active = state.revealed && state.mode === "playing" && !state.shelter;
     const hazard = state.revealed && state.hazard !== "none" ? stage.rule : "";
     setText("hazard-label", hazard);
     const tiers = state.revealed ? state.elevation : null;
@@ -1211,9 +701,6 @@
     if (active && state.waveArrival) threat = "증원 접근 중";
     if (active && state.kind === "combat" && !state.waveArrival && state.hitCount === 0) threat = "무피격 +" + goldText(challengeGold) + " 금화";
     if (active && state.bossOverdrive) threat = "과열";
-    if (active && state.kind === "escape" && state.elapsed < (stage.unlockAfter ?? 10)) {
-      threat = "시간 잠금 " + Math.ceil((stage.unlockAfter ?? 10) - state.elapsed) + "초";
-    }
     setText("threat-label", threat);
     elements["threat-label"].hidden = !threat;
     const remaining = state.player.dashCooldown;
@@ -1231,13 +718,7 @@
     elements["region-label"].hidden = !region;
     setText("stage-title", state.revealed ? stage.title : "");
     elements["stage-title"].hidden = !state.revealed;
-    const point = state.storyPoint;
-    const incident = state.incident;
-    setText("objective", state.revealed
-      ? incident && (!incident.complete || incident.leaveAt !== undefined) ? incident.task
-      : point?.active && (!point.scene.optional || storyPointInReach(point))
-        ? (point.prompt ?? point.scene.prompt) + " · " + storyControls : stage.objective
-      : "");
+    setText("objective", state.revealed ? stage.objective : "");
     if (minimapSection.hidden !== !state.revealed) minimapSection.hidden = !state.revealed;
     setText("health-label", Math.ceil(state.player.hp) + " / " + maxHp);
     setText("gold-value", goldText(run?.gold));
@@ -1258,37 +739,14 @@
       xpFill.closest('[role="progressbar"]')?.setAttribute("aria-valuenow", xpPercent);
     }
     let progress = "교전 " + state.wave + " · 남은 적 " + alive.length;
-    if (cellGoal || state.kind === "escape") {
-      const exit = state.items.find((item) => item.kind === "exit");
-      const guards = alive.filter((enemy) => enemy.gateGuard).length;
-      const label = stage.final ? "배분 회로" : "전력 셀";
-      if (exit?.active) {
-        progress = (stage.final ? "공급 밸브 가동 가능" : "출구 개방") + " · 가까이에서 상호작용";
-      } else {
-        const objectives = [];
-        if (cellGoal) objectives.push(label + " " + gatheredCells() + " / " + cellGoal);
-        if (guards) objectives.push("출구 경비 " + guards);
-        progress = objectives.join(" · ") || "출구 잠김";
-      }
-    } else if (state.enemies.some((enemy) => enemy.kind === "boss")) {
+    if (state.kind === "boss") {
       const boss = state.enemies.find((enemy) => enemy.kind === "boss");
-      progress = (stage.bossName ?? "수호자") + " " + Math.ceil(boss.hp / boss.maxHp * 100) + "%";
-      if (boss.shielded) progress += " · 충격파 충전";
-    } else if (state.holdZone) {
-      const zone = state.holdZone;
-      progress = "동기화 " + Math.floor(zone.progress * 100) + "%";
-      if (zone.active) progress += " · 구역 확보";
-    } else if (state.kind === "hunt") {
-      const target = state.enemies.find((enemy) => enemy.marked);
-      progress = "표식 대상 · " + Math.ceil(target.hp / target.maxHp * 100) + "%";
+      if (boss) {
+        progress = (stage.bossName ?? "수호자") + " " + Math.ceil(boss.hp / boss.maxHp * 100) + "%";
+        if (boss.shielded) progress += " · 충격파 충전";
+      }
     }
-    if (!state.revealed || state.landing || state.combatComplete) progress = "";
-    if (incident && !incident.complete) {
-      const step = incident.points[incident.step];
-      const nearby = incident.points.find((entry) => entry.hint && incidentPointInReach(entry));
-      progress = nearby?.hint ?? (step?.kind === "hold" && step.active
-        ? (step.action === "escort" ? "들것 통과 " : "압력 안정 ") + Math.floor(incident.progress * 100) + "%" : "");
-    }
+    if (!state.revealed || state.shelter || state.combatComplete) progress = "";
     setText("stage-progress", progress);
     updateRunIndicators();
   }
@@ -1496,7 +954,7 @@
 
   function attack() {
     const player = state.player;
-    if (state.mode !== "playing" || state.landing || state.combatComplete ||
+    if (state.mode !== "playing" || state.shelter || state.combatComplete ||
         player.attackCooldown > 0 || player.pendingStrike || player.dashRemaining > 0) return;
     const route = state.routeEffects ?? {};
     const range = (run.stats.attackRange + (route.attackRangeBonus ?? 0)) * (state.hazard === "mist" ? 0.85 : 1);
@@ -1576,28 +1034,6 @@
     }
     player.invulnerable = Math.max(player.invulnerable, 0.23 + run.stats.dashGrace);
     addEffect("dash", player, 0.30);
-  }
-
-  function storyPointInReach(point) {
-    return point?.active && distance(state.player, point) <= 1.3 && closeReach(state.player, point);
-  }
-
-  function useStoryPoint(point) {
-    if (point.atExit) {
-      point.setting = "supply";
-      settleCombat();
-    }
-    showScene(point, () => {
-      rememberStoryPoint(point);
-      if (point.chapter === "commission") enterFloor(1, state.player.hp);
-      else if (state.shelter) {
-        point.setting ??= "read";
-        point.active = false;
-        saveVillage();
-        enterPlayableScene();
-      }
-      else finishFloorRewards();
-    });
   }
 
   function visitDetails(floor = state.floor) {
@@ -1681,7 +1117,9 @@
     });
     const active = new Set(run.quests.map(({ id }) => id));
     const limited = run.quests.length >= village.maxQuests;
-    const offers = village.questOffers(state.floor, run.floorSeeds[state.floor - 1]).filter(({ id }) => !active.has(id));
+    const available = adminRun || state.floor < previewFloorLimit;
+    const offers = village.questOffers(state.floor, run.floorSeeds[state.floor - 1])
+      .filter(({ id }) => !active.has(id) && (available || claimed.includes(id) || rejected.includes(id)));
     for (const id of claimed) {
       const floor = Number(id.split(":")[0]);
       if (floor === state.floor || active.has(id)) continue;
@@ -1709,8 +1147,9 @@
       ] };
     });
     state.mode = "shelter";
+    const count = "등록한 의뢰 " + run.quests.length + " / " + village.maxQuests;
     panel({ kicker: state.floor + "층 · " + stage.title, title: "의뢰 게시판",
-      copy: "등록한 의뢰 " + run.quests.length + " / " + village.maxQuests,
+      copy: available ? count : count + "\n마지막 쉼터에서는 완료한 의뢰의 보상을 받을 수 있습니다.",
       questCards: [...progress, ...listings], primary: "닫기", activate: enterPlayableScene });
   }
 
@@ -1819,14 +1258,6 @@
       return;
     }
     if (station.kind === "departure") {
-      if (state.incident && !state.incident.complete) {
-        notify(state.incident.task, 1800);
-        return;
-      }
-      if (state.storyPoint?.active && !state.storyPoint.scene.optional) {
-        notify(state.storyPoint.scene.prompt + " · 출발 전에 확인하세요.", 1600);
-        return;
-      }
       if (!adminRun && state.floor >= previewFloorLimit && run.previewComplete) {
         showPreviewComplete();
         return;
@@ -1856,52 +1287,9 @@
   }
 
   function interact() {
-    if (state.mode !== "playing") return;
-    const active = state.incident?.points.filter((entry) => incidentPointInReach(entry));
-    if (active?.length) {
-      active.sort((a, b) => distance(a, state.player) - distance(b, state.player));
-      useIncidentPoint(active[0]);
-      return;
-    }
-    const point = state.storyPoint;
-    if (storyPointInReach(point)) {
-      useStoryPoint(point);
-      return;
-    }
-    if (state.shelter) {
-      const station = state.stations.find((entry) => distance(state.player, entry) <= 1.32);
-      if (station) useShelterStation(station);
-      return;
-    }
-    if (state.landing || state.combatComplete || (!cellGoal && state.kind !== "escape")) return;
-    const nearby = state.items.find((item) => !item.collected && distance(state.player, item) <= 1.05 && closeReach(state.player, item));
-    if (!nearby) return;
-    if (nearby.kind === "cell") {
-      nearby.collected = true;
-      addEffect("pickup", nearby, 0.45);
-      if (state.floor === 2 && gatheredCells() === 1) showRadio("relay-cell");
-      if (!openExitIfReady()) {
-        const recovered = stage.final ? "배분 회로 복구" : "전력 셀 확보";
-        notify(gatheredCells() === cellGoal ? recovered + " 완료 · 남은 출구 경비를 격파하세요" : recovered);
-      }
-      return;
-    }
-    openExitIfReady();
-    if (nearby.active) {
-      if ((nearby.openProgress ?? 1) < 0.92) {
-        notify("문이 열리고 있습니다.", 900);
-        return;
-      }
-      if (point?.atExit) useStoryPoint(point);
-      else finishFloor();
-      return;
-    }
-    const blocked = {
-      cells: stage.final ? "배분 회로를 모두 복구해야 합니다." : "전력 셀을 모두 확보하세요.",
-      timer: "출구의 시간 잠금이 작동 중입니다.",
-      guard: "출구를 지키는 경비를 먼저 쓰러뜨리세요.",
-    };
-    notify(blocked[exitBlocker()], 1400);
+    if (state.mode !== "playing" || !state.shelter) return;
+    const station = state.stations.find((entry) => distance(state.player, entry) <= 1.32);
+    if (station) useShelterStation(station);
   }
 
   function damagePlayer(amount) {
@@ -2167,10 +1555,10 @@
     const sight = ranged ? (gap < type.range * 1.10 && hasLineOfSight(enemy, player, true))
       : lancer ? (gap < type.range * 1.10 && hasLineOfSight(enemy, player) && closeReach(enemy, player))
       : mortar || closeReach(enemy, player);
-    const detection = (cellGoal ? 5.8 : state.holdZone ? 13 : 10.5) + (creature ? 1.65 : 0);
-    const heardCombat = !cellGoal && gap < detection + 3 && allies.some((ally) => ally !== enemy
+    const detection = 10.5 + (creature ? 1.65 : 0);
+    const heardCombat = gap < detection + 3 && allies.some((ally) => ally !== enemy
       && (ally.windup > 0 || ally.flash > 0) && distance(ally, enemy) < 5.2);
-    if (gap < detection || enemy.hp < enemy.maxHp || boss || heardCombat || (state.holdZone && state.wave > 1)) {
+    if (gap < detection || enemy.hp < enemy.maxHp || boss || heardCombat) {
       enemy.engaged = true;
     }
     setFacing(enemy, aim);
@@ -2230,13 +1618,11 @@
     if (state.wave > 1 || !stage.wave.length) return;
     const deep = state.floor >= content.frontierFloor;
     const trigger = state.floor === 1 ? 1 : deep ? 3 : 2;
-    const combat = state.kind === "combat" && remaining <= trigger;
-    const holding = state.holdZone && state.holdZone.progress >= (deep ? 0.25 : 0.32);
     if (!state.waveArrival) {
-      if (!combat && !holding) return;
+      if (state.kind !== "combat" || remaining > trigger) return;
       const warning = deep ? 1.0 : 1.18;
       state.waveArrival = state.elapsed + warning;
-      notify(holding ? "방어 구역으로 증원이 접근합니다." : deep ? "다른 무리가 합류합니다." : "경비 증원이 다가옵니다.", 1600);
+      notify(deep ? "다른 무리가 합류합니다." : "경비 증원이 다가옵니다.", 1600);
       for (const enemy of stage.wave) addEffect("charge", enemy, warning);
     }
     if (state.elapsed < state.waveArrival) return;
@@ -2372,11 +1758,6 @@
   function updateGame(delta) {
     const player = state.player;
     state.elapsed += delta;
-    const gate = state.exit ?? state.gateMarker;
-    if (gate?.active && gate.openProgress < 1) {
-      gate.openProgress = Math.min(1, (state.elapsed - gate.openSince) / gateSeconds);
-      if (gate.openProgress >= 0.92 && state.storyPoint?.atExit) state.storyPoint.active = true;
-    }
     state.revealTimer = Math.max(0, state.revealTimer - delta);
     run.seconds += delta;
     for (const timer of ["attackCooldown", "attackFlash", "swingLife", "dashCooldown", "dashFlash", "invulnerable"]) {
@@ -2401,28 +1782,17 @@
 
     for (const effect of state.effects) effect.life -= delta;
     state.effects = state.effects.filter((effect) => effect.life > 0);
-    if (state.landing || state.combatComplete) {
-      updateIncident(delta);
-      if (state.finishAt != null && state.elapsed >= state.finishAt) finishFloorRewards();
-      return;
-    }
+    if (state.shelter) return;
 
     advanceStrike();
     if (attackPointer !== null || keys.has("Space") || [...touchPointers.values()].includes("attack")) attack();
 
     updateAlarm();
-    if (state.holdZone) {
-      const zone = state.holdZone;
-      zone.active = distance(zone, player) <= zone.radius && closeReach(zone, player);
-      zone.progress = zone.active ? Math.min(1, zone.progress + delta / zone.duration) : 0;
-    }
-    openExitIfReady();
     updateCombatWave(livingEnemies().length);
     const alive = livingEnemies();
     const boss = state.enemies.find((enemy) => enemy.kind === "boss");
     const combatCleared = state.kind === "combat" && !alive.length && (state.wave > 1 || !stage.wave.length);
-    const targetCleared = state.kind === "hunt" && !alive.some((enemy) => enemy.marked);
-    if (combatCleared || targetCleared || state.holdZone?.progress >= 1 || (boss && boss.hp === 0)) {
+    if (combatCleared || (boss && boss.hp === 0)) {
       finishFloor();
       return;
     }
@@ -2439,41 +1809,16 @@
     if (player.hp === 0) endRun(false);
   }
 
-  function settleCombat() {
+  function finishFloor() {
     state.combatComplete = true;
     state.projectiles = [];
     state.mortarTargets = [];
     state.bossTargets = [];
     state.hazardTiles = [];
     for (const surface of state.terrain) surface.status = "idle";
-  }
-
-  function finishFloor() {
-    if (state.mode !== "playing") return;
-    if (stage.final && state.kind === "boss") {
-      settleCombat();
-      syncMusic();
-      const anchor = { x: state.player.x, y: state.player.y, scene: story.epilogue(run.storyChoices),
-        celestial: true, active: false };
-      state.storyPoint = anchor;
-      showScene(anchor, finishFloorRewards);
-      return;
-    }
-    if (state.storyPoint || state.gateMarker) {
-      settleCombat();
-      notify(null);
-      syncMusic();
-      if (state.storyPoint) {
-        const marker = state.storyPoint;
-        marker.active = true;
-        if (!activateStoryPoint(marker) && marker.scene.optional) state.finishAt = state.elapsed + 2.4;
-      } else {
-        state.gateMarker.active = true;
-        state.gateMarker.openSince = state.elapsed;
-        state.gateMarker.openProgress = reducedMotion ? 1 : 0;
-        state.finishAt = state.elapsed + (reducedMotion ? 0.25 : gateSeconds + 0.50);
-      }
-      return;
+    if (state.gateMarker) {
+      state.gateMarker.active = true;
+      state.gateMarker.openProgress = 1;
     }
     finishFloorRewards();
   }
@@ -2484,12 +1829,12 @@
     trackQuests({ type: "clear", trial: state.kind });
     let trial = "";
     if (state.kind === "combat" && state.hitCount === 0) trial = "무피격 통과";
-    if (state.timeLimit && !state.alarm) trial = "경보 전 탈출";
+    if (state.timeLimit && !state.alarm) trial = "경보 전 전투 완료";
     if (state.kind === "boss" && state.shockBursts > 0 && state.shockHits === 0) trial = "충격파 회피";
     if (trial) run.trials.push(trial);
     creditGold(stage.gold + run.stats.goldOnClear + (state.routeEffects?.clearGoldBonus ?? 0) + (trial ? challengeGold : 0));
     renderFloorSteps();
-    const baseXp = state.kind === "boss" ? 58 : state.kind === "combat" ? 20 : 50;
+    const baseXp = state.kind === "boss" ? 58 : 20;
     const xp = baseXp + Math.max(0, state.floor - 3) * 3 + (state.routeEffects?.clearXpBonus ?? 0);
     const earnedXp = Math.round(xp * (1 + run.stats.xpBonus));
     const gains = awardXp(xp);
@@ -2593,11 +1938,10 @@
       };
     });
     const reward = trial ? " · " + trial + " 금화 +" + goldText(challengeGold) : "";
-    const storyResult = state.floor <= previewFloorLimit && state.incident?.complete ? state.incident.task + "\n" : "";
     panel({
       kicker: state.floor + "층 통과",
       title: "보상 선택",
-      copy: storyResult + (xp ? "목표 달성 +" + xp + " XP" + reward + " · " : "") +
+      copy: (xp ? "목표 달성 +" + xp + " XP" + reward + " · " : "") +
         "보유 금화 " + goldText(run.gold) + (gains.length ? "\n레벨 상승 · " + gains.join(" · ") : ""),
       options,
       primary: "보상 받기",
@@ -2654,8 +1998,7 @@
     run.previewComplete = true;
     saveCheckpoint(state.floor, state.player.hp);
     panel({ kicker: "체험판 · " + previewFloorLimit + "층", title: "첫 구간 등반 완료",
-      copy: (run.scenesSeen.includes("lower-gate-warning") ? "하층으로 돌아가는 문이 잠겼습니다. 명령은 29층에서 내려왔습니다.\n" : "") +
-        "진행 기록을 저장했습니다. 시작 화면에서 이어하면 마지막 쉼터로 돌아갑니다.",
+      copy: "진행 기록을 저장했습니다. 시작 화면에서 이어하면 마지막 쉼터로 돌아갑니다.",
       primary: "시작 화면으로", activate: () => setupTitle() });
   }
 
@@ -2694,29 +2037,23 @@
       if (!adminRun) {
         try { localStorage.removeItem(checkpointKey); } catch {}
       }
-      panel({ kicker: "이야기 완료", title: story.epilogue(run.storyChoices).title, copy: progress + trials,
+      panel({ kicker: "1,332층", title: "첨탑 등반 완료", copy: progress + trials,
         primary: "시작 화면으로", activate: () => setupTitle() });
       return;
     }
     const loss = loseRewards();
-    const pending = { cleared: run.cleared, nextWard: run.nextWard, nextPower: run.nextPower,
-      quests: run.quests, villageVisits: run.villageVisits };
-    run.cleared = 0;
-    run.nextWard = 0;
-    run.nextPower = 0;
-    run.quests = [];
-    run.villageVisits = {};
+    run = createRun(run);
     saveCheckpoint(1, run.stats.maxHp);
-    Object.assign(run, pending);
     renderGear();
     const report = [
+      "레벨 1 · 경험치 0에서 다시 시작",
       "최근 5층 손실 · 보유품 " + loss.recentItems + "개 / 금화 " + goldText(loss.recentGold),
       "이전 층 손실 · 보유품 " + loss.oldItemsLost + "개 / 금화 " + goldText(loss.oldGoldLost),
       loss.statsLost ? "획득 성장치 60% 손실 · 기본 배분 유지" : "기본 배분 유지",
       "남은 보유품 " + run.rewards.filter((entry) => entry.kind !== "gold").length + "개 · 금화 " + goldText(run.gold),
     ];
     panel({ kicker: "등반 종료", title: state.floor + "층에서 쓰러졌습니다", copy: report.join("\n"),
-      primary: "남은 것을 들고 1층부터", activate: () => newRun(run, adminRun ? 1 : undefined) });
+      primary: "남은 것을 들고 1층부터", activate: () => enterFloor(1, run.stats.maxHp) });
   }
 
   function frame(now) {
@@ -2724,13 +2061,11 @@
     const delta = Math.min(1 / 30, gap / 1000);
     previousTime = now;
     const paused = document.hidden || window.TowerAdmin?.isOpen();
-    if (state.mode === "rolling" && !paused) advanceEntry(gap);
     state.cameraShake = Math.max(0, state.cameraShake - Math.max(0, delta));
     if (state.mode === "playing" && delta > 0 && !paused) {
       updateGame(delta);
     }
     if (now >= notificationUntil && !elements.notification.hidden) elements.notification.hidden = true;
-    if (now >= radioUntil && !elements["story-radio"].hidden) hideRadio();
     syncHUD();
     drawMinimap();
     if (state.mode === "title") titleRenderer.draw(canvas, now, reducedMotion);
@@ -2739,7 +2074,6 @@
   }
 
   elements["primary-action"].addEventListener("click", () => action?.());
-  elements["scene-skip"].addEventListener("click", () => skipScene?.());
   elements["audio-toggle"].addEventListener("click", () => {
     audio.setEnabled(!audio.active()).then(refreshAudioUI);
   });
@@ -2793,21 +2127,6 @@
     event.preventDefault();
     canvas.focus({ preventScroll: true });
     const aim = renderer.screenToWorld(canvas, event.clientX, event.clientY, state);
-    const targets = state.incident?.points.filter((entry) => entry.active);
-    const target = targets?.find((entry) => renderer.storyDeviceHit(canvas, event.clientX, event.clientY, state, entry))
-      ?? targets?.find((entry) => distance(aim, entry) < 1.1);
-    if (target) {
-      if (incidentPointInReach(target)) useIncidentPoint(target);
-      else notify(target.label + " · " + storyControls, 1300);
-      return;
-    }
-    const point = state.storyPoint;
-    if (point?.active && (distance(aim, point) < 1.55 ||
-        renderer.storyDeviceHit(canvas, event.clientX, event.clientY, state))) {
-      if (storyPointInReach(point)) useStoryPoint(point);
-      else notify((point.prompt ?? point.scene.prompt) + " · " + storyControls, 1300);
-      return;
-    }
     const station = state.stations?.find((entry) => distance(aim, entry) < 1.4);
     if (station) {
       useShelterStation(station);
@@ -2849,7 +2168,7 @@
   window.TowerAdmin?.setup({ maxFloor: content.floorCount, move(floor) {
     if (!Number.isInteger(floor) || floor < 1 || floor > content.floorCount) return;
     if (adminRun && run) enterFloor(floor, run.stats.maxHp);
-    else newRun(undefined, floor);
+    else newRun(floor);
   } });
   setupTitle();
   requestAnimationFrame(frame);

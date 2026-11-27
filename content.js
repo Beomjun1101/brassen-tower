@@ -664,12 +664,12 @@
       architecture: regionalArchitecture[id].title, ...(site ? { site } : {}) };
   }
 
-  function facilityPlan(floor, region, destination, consequence) {
+  function facilityPlan(floor, region, destination, consequence, ordinaryCombat) {
     const district = facilityDistricts[region.id];
     const previous = regions[regions.indexOf(region) - 1];
     const offset = floor - (previous?.through ?? 0) - 1;
     const form = Math.floor(offset / district.features.length);
-    const [introFeature, introTitle] = openingFacilities[floor - 1] ?? [];
+    const [introFeature, introTitle] = ordinaryCombat ? [] : openingFacilities[floor - 1] ?? [];
     const [destinationTitle, destinationFeatures] = destination ? [destination[1], destination[2]] : [];
     const trialOrdinal = floor - Math.floor(floor / shelterInterval);
     const feature = consequence?.feature ?? introFeature ?? destinationFeatures?.[trialOrdinal % 2]
@@ -678,7 +678,8 @@
     const lane = serviceLanes[form % serviceLanes.length];
     const branch = branchNames[Math.floor(form / serviceLanes.length)];
     const circuit = ["유입측", "환류측", "비상측", "배출측"][offset % 4];
-    const title = consequence?.title ?? introTitle ?? sites[floor]?.name ?? bossTrials[floor]?.title
+    const fixedTitle = ordinaryCombat ? undefined : sites[floor]?.name ?? bossTrials[floor]?.title;
+    const title = consequence?.title ?? introTitle ?? fixedTitle
       ?? (destinationTitle ? `${district.name} ${branch} ${lane} ${circuit} ${destinationTitle}`
         : `${district.name} ${branch} ${lane} ${equipmentType.name}`);
     return { feature, title, purpose: equipmentType.purpose, equipmentType, form, architecture: regionalArchitecture[region.id] };
@@ -1220,6 +1221,8 @@
     let trialRoll = 0;
     let stage;
     const final = floor === floorCount;
+    const bossFloor = isBossFloor(floor);
+    const ordinaryCombat = kind === "combat" && !bossFloor && !isShelterFloor(floor);
     const region = getRegion(floor);
     const regionSpec = regionForFloor(floor);
     const trials = region.trials;
@@ -1230,10 +1233,10 @@
     const earlyPlan = floor <= mapPlanningLimit && planning != null && !isShelterFloor(floor);
     const drawn = earlyPlan ? [] : null;
     const next = drawn ? () => { const value = rng(); drawn.push(value); return value; } : rng;
-    if (final) {
+    if (bossFloor) {
       stage = 2;
-    } else if (isBossFloor(floor)) {
-      stage = 2;
+    } else if (ordinaryCombat) {
+      stage = 0;
     } else if (floor <= 3) {
       stage = floorKinds.indexOf(consequence?.kind ?? trials[0]);
       // Keep the seeded environment and layout aligned with the previous floor-3 draw stream.
@@ -1255,11 +1258,12 @@
     const minor = final ? 1 : roll(next, 4);
     const regionalDestinations = destinations[region.id];
     const bossDestinations = bossTrial && !authoredBoss ? Object.values(regionalDestinations).slice(0, 3) : [];
-    // Generic bosses keep their original hazard, geometry and roster draws before drawing a destination.
-    const bossDestinationRoll = bossDestinations.length ? roll(next, bossDestinations.length) : 0;
-    const rolledDestination = bossDestinations[bossDestinationRoll - 1]
+    const independentDestinations = ordinaryCombat ? Object.values(regionalDestinations) : bossDestinations;
+    // The independent destination draw preserves the environment, geometry and roster draw order.
+    const destinationRoll = independentDestinations.length ? roll(next, independentDestinations.length) : 0;
+    const rolledDestination = independentDestinations[destinationRoll - 1]
       ?? (floor > 4 && trialRoll && !sites[floor] ? regionalDestinations[trialKind] : null);
-    const facility = facilityPlan(floor, regionSpec, rolledDestination, consequence);
+    const facility = facilityPlan(floor, regionSpec, rolledDestination, consequence, ordinaryCombat);
     const variation = final ? finalTrial.environment : template.variations[macro - 1];
     const layout = layouts[placement - 1];
     const profile = routeProfiles[placement - 1];
@@ -1271,13 +1275,15 @@
     const gold = template.baseGold + 3 * (minor - 1);
     const distributionFloor = stage === 1;
     const hasDivider = geometry === 1;
-    const theme = opening?.theme ?? sites[floor]?.theme ?? rolledDestination?.[0]
+    const fixedTheme = ordinaryCombat ? undefined : sites[floor]?.theme;
+    const theme = opening?.theme ?? fixedTheme ?? rolledDestination?.[0]
       ?? (hasDivider ? regionSpec.dividerTheme : regionSpec.theme);
     const transmission = theme === "relay" && region.id === "transmission" && !consequence?.dry;
     const waterMap = theme === "sluice" || transmission;
     const dryRoom = !waterMap && !bossTrial && !final && floor !== 2 ? dryProfiles[placement - 1] : null;
     const waterway = waterMap ? profile.waterway : null;
-    const terrace = floor > 1 && !final && (hasDivider || stage === 3) ? terraces[placement - 1] : null;
+    const raisedCombat = ordinaryCombat && (floor === 2 || (floor > 2 && macro >= 5 && placement >= 3));
+    const terrace = floor > 1 && !final && (hasDivider || stage === 3 || raisedCombat) ? terraces[placement - 1] : null;
     const elevation = terrace ? makeElevation(terrace, foldY, layout.fold) : null;
     const context = {
       floor, seed: planning?.seed, choices: storyChoices ?? {}, kind: trialKind, theme,
@@ -1324,11 +1330,11 @@
       { sides: 4, value: placement, label: distributionFloor ? "통로와 전력 셀 배치" : "전장 지형", detail: routeLayout.join(" · ") },
       { sides: 4, value: minor, label: floor === 1 ? "입구 경비 편성" : template.minorLabel, detail: `${changes.detail} · ${gold} 금화` },
     ];
-    const arrivalRoll = bossDestinationRoll || trialRoll;
+    const arrivalRoll = destinationRoll || trialRoll;
     if (arrivalRoll) {
       const challenge = bossTrial ? "수호자 격파" : floor >= frontierFloor && stage === 0 ? "무리 격파" : template.name;
       const destinationLabel = rolledDestination?.[1] ?? opening?.title ?? template.title;
-      rolls.unshift({ sides: bossDestinationRoll ? bossDestinations.length : trials.length, value: arrivalRoll,
+      rolls.unshift({ sides: destinationRoll ? independentDestinations.length : trials.length, value: arrivalRoll,
         label: "행선지", detail: `${destinationLabel} · ${challenge}` });
     }
 
@@ -1337,15 +1343,16 @@
       ?? (trialKind === "hold" ? `상단의 표시 구역에 머물며 ${holdTasks[theme]}`
         : elevation ? terraceObjectives[trialKind] ?? template.objective : template.objective);
     const title = final ? finalTrial.title : authoredBoss?.title ?? opening?.title
-      ?? (floor <= 2 ? template.title : facility.title);
-    const destinationLine = consequence?.cue[1] ?? rolledDestination?.[3] ?? (floor === 4 ? openingCues[trialKind] : null);
+      ?? (floor <= 2 && !ordinaryCombat ? template.title : facility.title);
+    const destinationLine = ordinaryCombat ? null
+      : consequence?.cue[1] ?? rolledDestination?.[3] ?? (floor === 4 ? openingCues[trialKind] : null);
     const result = {
       number: floor,
       kind: trialKind,
       theme,
       region,
       facility: { feature: facility.feature, title: facility.title, purpose: facility.purpose },
-      destination: destinationLine ? { title, kind: trialKind, theme } : null,
+      destination: destinationLine || ordinaryCombat ? { title, kind: trialKind, theme } : null,
       destinationCue: destinationLine ? { speaker: consequence?.cue[0] ?? "등반가", line: destinationLine } : null,
       floorPlan: final ? null : { id: waterMap ? waterway ?? "straight" : structure.id, title: layoutTitle },
       title,
@@ -1356,7 +1363,7 @@
       height,
       elevation,
       storySocket: storyBossFloors.has(floor) ? { x: 30.7, y: 16.3 }
-        : storyOperationFloors.has(floor) ? { x: 30.7, y: foldY(terrace && placement === 1 ? 9.35 : 7.15) } : null,
+        : !ordinaryCombat && storyOperationFloors.has(floor) ? { x: 30.7, y: foldY(terrace && placement === 1 ? 9.35 : 7.15) } : null,
       spawn: { x: template.spawn[0], y: foldY(template.spawn[1]) },
       hazard: variation.hazard,
       timeLimit: variation.timeLimit,

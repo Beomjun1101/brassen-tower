@@ -10,14 +10,12 @@
     <script src="render.js" defer></script>
     <script src="rewards.js" defer></script>
     <script src="rpg.js" defer></script>
-    <script src="story.js" defer></script>
     <script src="audio.js" defer></script>
     <script src="title.js" defer></script>
     <script src="shelter.js" defer></script>
     <script src="village.js" defer></script>
     <script src="map-planner.js" defer></script>
     <script src="floor-graph.js" defer></script>
-    <script src="field-scenes.js" defer></script>
     <script src="admin.js" defer></script>
     <script src="game.js" defer></script>
   </head>
@@ -97,21 +95,13 @@
               캔버스를 지원하는 브라우저에서 플레이할 수 있습니다.
             </canvas>
             <p id="notification" class="notification"></p>
-            <p id="story-radio" class="story-radio" role="status" aria-live="polite" aria-atomic="true" hidden>
-              <strong id="story-radio-speaker"></strong>
-              <span id="story-radio-line"></span>
-            </p>
             <div id="overlay" class="overlay" data-mode="title" data-title-menu="false" role="region" aria-labelledby="overlay-title">
               <div class="overlay-panel">
                 <div class="overlay-heading">
                   <span id="overlay-kicker" class="overlay-kicker"></span>
                   <h2 id="overlay-title">Brassen Tower</h2>
                 </div>
-                <strong id="scene-speaker" class="scene-speaker" hidden></strong>
-                <p id="overlay-copy" class="overlay-copy">1,332층을 오르는 액션 로그라이크</p>
-                <section id="entry-results" class="entry-results" aria-label="확정된 주사위 결과" aria-live="polite" aria-atomic="true" hidden>
-                  <ul id="entry-result-dice" class="entry-result-dice"></ul>
-                </section>
+                <p id="overlay-copy" class="overlay-copy">전투를 돌파하며 탑을 오르는 액션 로그라이크</p>
                 <section id="build-editor" class="build-editor" aria-label="초기 능력치 배분" hidden>
                   <div class="build-budget"><span>남은 점수</span><output id="build-points" aria-live="polite">5</output></div>
                   <div id="build-stats" class="build-stats"></div>
@@ -143,7 +133,6 @@
                 <div class="overlay-actions">
                   <button id="back-to-title" class="secondary-action" type="button">타이틀로</button>
                   <button id="skip-gear" class="secondary-action" type="button">이번 보상 건너뛰기</button>
-                  <button id="scene-skip" class="secondary-action scene-skip" type="button" hidden>건너뛰기</button>
                   <button id="primary-action" class="primary-action" type="button" hidden>등반 시작</button>
                 </div>
               </div>
@@ -184,7 +173,6 @@
             <ul class="map-key" aria-label="지도 기호">
               <li><b aria-hidden="true">●</b> 나</li>
               <li><b aria-hidden="true">△</b> 적</li>
-              <li><b aria-hidden="true">◆</b> 회수 목표</li>
               <li><b aria-hidden="true">□</b> 출구</li>
             </ul>
             <ul id="elevation-legend" class="map-key elevation-key" aria-label="높이 지형" hidden>
@@ -214,10 +202,6 @@
             </div>
           </details>
 
-          <details id="dice-panel" class="status-section verdict-details" hidden>
-            <summary class="section-heading">시련 판정</summary>
-            <div id="dice-list" class="verdict-list"></div>
-          </details>
         </aside>
       </main>
 

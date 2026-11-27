@@ -3,13 +3,17 @@
 
   const maxQuests = 3;
   const villageStep = 5;
+  const passageJob = {
+    id: "relay-check", title: "진입로 돌파", goal: { type: "clear", trial: "combat" }, count: [1, 1],
+    task: () => "일반 전투 층을 한 번 통과하세요.", gold: 31,
+  };
   const jobs = [
-    { id: "patrol", title: "마을 순찰 의뢰", goal: { type: "kill" }, count: [6, 9], task: (n) => `시련에서 적 ${n}기를 제압하세요.`, gold: 24 },
-    { id: "marksmen", title: "사격 통로 확보", goal: { type: "kill", kind: "sentry" }, count: [2, 3], task: (n) => `시련에서 사격형 적 ${n}기를 제압하세요.`, gold: 29 },
-    { id: "veterans", title: "정예 경비 돌파", goal: { type: "kill", elite: true }, count: [2, 2], task: (n) => `시련에서 정예 적 ${n}기를 제압하세요.`, gold: 31 },
-    { id: "survey", title: "윗길 답사", goal: { type: "clear" }, count: [3, 4], task: (n) => `시련 ${n}개를 통과하세요.`, gold: 26 },
-    { id: "relay-check", title: "전력선 점검", goal: { type: "clear", trial: "relay" }, count: [1, 1], task: () => "전력 셀 회수 시련을 한 번 통과하세요.", gold: 31 },
-    { id: "recovery", title: "회수반 보급", goal: { type: "loot" }, count: [3, 4], task: (n) => `시련 보상으로 물품 ${n}개를 회수하세요.`, gold: 23 },
+    { id: "patrol", title: "마을 순찰 의뢰", goal: { type: "kill" }, count: [6, 9], task: (n) => `전투에서 적 ${n}기를 제압하세요.`, gold: 24 },
+    { id: "marksmen", title: "사격 통로 확보", goal: { type: "kill", kind: "sentry" }, count: [2, 3], task: (n) => `전투에서 사격형 적 ${n}기를 제압하세요.`, gold: 29 },
+    { id: "veterans", title: "정예 경비 돌파", goal: { type: "kill", elite: true }, count: [2, 2], task: (n) => `전투에서 정예 적 ${n}기를 제압하세요.`, gold: 31 },
+    { id: "survey", title: "윗길 답사", goal: { type: "clear" }, count: [3, 4], task: (n) => `전투 층 ${n}개를 통과하세요.`, gold: 26 },
+    passageJob,
+    { id: "recovery", title: "회수반 보급", goal: { type: "loot" }, count: [3, 4], task: (n) => `전투 보상으로 물품 ${n}개를 회수하세요.`, gold: 23 },
   ];
   const classes = [
     { id: "sentinel", title: "수호병", description: "타격을 버티며 통로를 지킵니다.", detail: "최대 체력 +14 · 피해 감소 +9%p · 이동 −0.15칸/초", bonus: { maxHp: 14, damageReduction: 0.09, speed: -0.15 } },
@@ -26,11 +30,11 @@
   let latestShop;
   const blessings = [
     { id: "quiet", title: "잠잠한 제단", description: "불꽃이 잠시 흔들리다 제자리로 돌아옵니다.", effects: {}, weight: 55 },
-    { id: "ward", title: "구리 수호자의 인장", description: "다음 시련 보호막 +18", effects: { ward: 18 }, weight: 16 },
+    { id: "ward", title: "구리 수호자의 인장", description: "다음 전투 보호막 +18", effects: { ward: 18 }, weight: 16 },
     { id: "heal", title: "등불 아래의 붕대", description: "현재 체력 최대 24 회복", effects: { heal: 24 }, weight: 12 },
     { id: "xp", title: "오래된 인수 일지", description: "경험치 +26", effects: { xp: 26 }, weight: 8 },
     { id: "gold", title: "봉헌함 속 동전", description: "금화 +14", effects: { gold: 14 }, weight: 5 },
-    { id: "power", title: "꺼지지 않은 심지", description: "다음 시련 공격력 +7", effects: { overclock: 7 }, weight: 4 },
+    { id: "power", title: "꺼지지 않은 심지", description: "다음 전투 공격력 +7", effects: { overclock: 7 }, weight: 4 },
   ];
 
   function isVillage(floor) {
@@ -67,6 +71,15 @@
   function acceptQuest(active, offer, floor) {
     if (!isVillage(floor) || !offer?.goal || active.length >= maxQuests || active.some(({ id }) => id === offer.id)) return active;
     return [...active, { ...offer, startedAt: floor, progress: 0 }];
+  }
+
+  function migrateQuests(quests) {
+    if (!Array.isArray(quests)) return [];
+    return quests.map((quest) => {
+      if (quest?.goal?.type !== "clear" || quest.goal.trial !== "relay") return quest;
+      return { ...quest, title: passageJob.title, description: passageJob.task(),
+        goal: { ...quest.goal, trial: passageJob.goal.trial } };
+    });
   }
 
   function questReady(quest) {
@@ -157,6 +170,6 @@
     return { id: `${floor}:${selected.id}`, title: selected.title, description: selected.description, effects: { ...selected.effects } };
   }
 
-  window.TowerVillage = { maxQuests, isVillage, questOffers, acceptQuest, questReady, advanceQuests,
+  window.TowerVillage = { maxQuests, isVillage, questOffers, acceptQuest, migrateQuests, questReady, advanceQuests,
     shopStock, buyPrice, sellPrice, classById, classOptions, applyClass, shrineEvent };
 })();
