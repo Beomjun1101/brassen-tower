@@ -36,7 +36,8 @@
     dashGrace: "대쉬 무적 시간",
   };
   const lowerIsBetter = new Set(["attackCooldown", "dashCooldown"]);
-  const baseAttackInterval = 0.125;
+  const baseAttackInterval = 0.20;
+  const minimumAttackInterval = 0.125;
   const killRecoveryCap = 7.5;
 
   const levelThresholds = [0, 50, 100, 175, 265, 395, 555, 755, 1000, 1300, 1665, 2110];
@@ -211,7 +212,7 @@
   }
 
   function attackInterval(stats, routeMultiplier = 1, weaponOffset = 0) {
-    return Math.max(baseAttackInterval, (stats.attackCooldown + weaponOffset) * routeMultiplier);
+    return Math.max(minimumAttackInterval, (stats.attackCooldown + weaponOffset) * routeMultiplier);
   }
 
   function compareStats(progress, candidate, resolveStats = getStats) {

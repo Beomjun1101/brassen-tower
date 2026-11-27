@@ -68,10 +68,11 @@
   };
   const entrance = { width: 34, height: 26, spawn: { x: 4, y: 13 }, enemies: [], obstacles: [], items: [] };
   const previewFloorLimit = 30;
-  const currentEnemyScalingVersion = 2;
+  const currentEnemyScalingVersion = 3;
   const enemyScalingByVersion = {
     1: { healthPerFloor: 0.04, damagePerFloor: 0.025, cooldownPerFloor: 0.01 },
     2: { healthPerFloor: 0.015, damagePerFloor: 0.01, cooldownPerFloor: 0.005 },
+    3: { healthPerFloor: 0.015, damagePerFloor: 0.01, cooldownPerFloor: 0.005, lateHealth: 0.30, lateDamage: 0.15 },
   };
   const dashDuration = 0.18;
   const dialogModes = new Set(["playing", "rolling", "tutorial", "shelter", "gear", "branch"]);
@@ -307,8 +308,14 @@
     const depth = Math.max(0, floor - 1);
     const previewDepth = Math.min(depth, previewFloorLimit - 1);
     const scaling = enemyScalingByVersion[scalingVersion];
-    const healthScale = scaling ? 1 + depth * scaling.healthPerFloor : 1 + depth * 0.064 + previewDepth ** 2 * 0.00025;
-    const damageScale = scaling ? 1 + depth * scaling.damagePerFloor : 1 + depth * 0.04 + previewDepth ** 2 * 0.00015;
+    const lateDepth = Math.max(0, floor - 10);
+    const lateProgress = lateDepth / (15 + lateDepth);
+    const healthScale = scaling
+      ? (1 + depth * scaling.healthPerFloor) * (1 + lateProgress * (scaling.lateHealth ?? 0))
+      : 1 + depth * 0.064 + previewDepth ** 2 * 0.00025;
+    const damageScale = scaling
+      ? (1 + depth * scaling.damagePerFloor) * (1 + lateProgress * (scaling.lateDamage ?? 0))
+      : 1 + depth * 0.04 + previewDepth ** 2 * 0.00015;
     const initialCooldown = scaling ? 0.83 - previewDepth * scaling.cooldownPerFloor
       : depth === 0 ? 0.83 : 0.66 - (previewDepth - 1) * 0.005;
     const creature = enemy.faction === "creature";
