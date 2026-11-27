@@ -862,6 +862,15 @@
     glow.addColorStop(1, "#080b11");
     context.fillStyle = glow;
     context.fillRect(0, 0, width, height);
+    if (!shelter && state.kind === "boss") {
+      context.save();
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.font = `900 ${clamp(radius * .23, 22, 42)}px system-ui, sans-serif`;
+      context.fillStyle = "#ffd39b";
+      context.fillText("BOSS", centerX, centerY - radius * 1.50);
+      context.restore();
+    }
     const at = (x, y) => [centerX + x * radius, centerY + y * radius];
     const arch = [[-1.42, 1.16], [-1.42, -0.69], [-0.94, -1.23], [0.94, -1.23],
       [1.42, -0.69], [1.42, 1.16]];
@@ -2630,7 +2639,7 @@
   }
 
   function enemyTelegraph(context, baseCamera, enemy, elevation) {
-    if (!(enemy.windup > 0)) return;
+    if (!(enemy.windup > 0) || enemy.kind === "mortar" || enemy.kind === "saboteur") return;
     const camera = onSurface(baseCamera, elevation, enemy);
     const aimed = Number.isFinite(enemy.aimX) && Number.isFinite(enemy.aimY);
     const marksman = enemy.kind === "marksman";
@@ -2692,7 +2701,7 @@
       groundRing(context, camera, enemy.x, enemy.y, radius * .82, null, "#ffc189a8", 1.4);
       return;
     }
-    if (enemy.kind === "saboteur") return;
+    if (!aimed && (enemy.kind === "sentry" || marksman || enemy.kind === "lancer" || enemy.kind === "skirmisher")) return;
     const boss = enemy.kind === "boss";
     const radius = enemy.attackRange || (boss ? 2.2 : 1.05);
     dangerRing(context, camera, enemy.x, enemy.y, radius, boss ? "#ff58374b" : "#f65d313b",
@@ -2702,10 +2711,25 @@
   }
 
   function bossTargets(context, baseCamera, targets, seconds, elevation) {
-    for (const { x, y, radius, active, kind } of targets ?? []) {
+    for (const { x, y, radius, active, kind, remaining } of targets ?? []) {
       const camera = raisedCamera(baseCamera, surfaceHeight(elevation, x, y));
       const charge = (Math.sin(seconds * 17) + 1) * 0.5;
       const size = Math.max(0.15, radius || 0.9);
+      if (kind === "mortar" && active) {
+        const phase = clamp(-remaining / .3, 0, 1);
+        context.save();
+        context.globalAlpha = 1 - phase;
+        groundRing(context, camera, x, y, size * (.30 + .70 * phase), "#ff8b5445", "#ffdb93", 2.1);
+        for (let index = 0; index < 7; index++) {
+          const angle = index * tau / 7;
+          const dx = Math.cos(angle) * size * phase, dy = Math.sin(angle) * size * phase;
+          const rise = .25 + Math.sin(phase * Math.PI) * (.26 + (index % 3) * .14);
+          line(context, [point(camera, x + dx * .75, y + dy * .75, rise * .7),
+            point(camera, x + dx, y + dy, rise)], "#ffd092", 1.35);
+        }
+        context.restore();
+        continue;
+      }
       if (kind === "mine") {
         const color = active ? "#ffc884" : "#d9a879";
         dangerRing(context, camera, x, y, size, active ? "#eb6e3435" : "#dc974b19", color, active ? 2 : 1.4, !active);
@@ -3957,6 +3981,13 @@
     stellar: { scale: 1.74, height: 2.86 },
   };
 
+  const bossFrames = [
+    { width: 1, rise: 0, spread: 0 },
+    { width: 1.14, rise: -.08, spread: .07 },
+    { width: .91, rise: -.13, spread: -.03 },
+    { width: 1.20, rise: .02, spread: .12 },
+  ];
+
   const bossStances = {
     sweep: [.14, .05],
     rupture: [.04, .105],
@@ -3976,7 +4007,7 @@
       armed ? "#fff2b5" : "#e8cc88", "#302c2a", .6);
   }
 
-  function specialistWeapon(context, kit, hand, farHand, pose, facing, size, metal, palette, signature) {
+  function specialistWeapon(context, kit, hand, farHand, pose, facing, size, metal, palette, signature, appearance) {
     const facingSide = pose.facingRight ? 1 : -1;
     const tilt = facing[1];
     const wind = pose.anticipation;
@@ -3986,15 +4017,27 @@
       return (u, v = 0) => [grip[0] + (u * dx - v * dy * side) * size,
         grip[1] + (u * dy + v * Math.cos(angle)) * size];
     };
+    const weapon = appearance?.weapon ?? 0;
     if (kit === "skirmisher" || kit === "hunter") {
       const knife = (grip, angle, side, reach) => {
         const edge = bladeAt(grip, angle, side);
         line(context, [edge(-.10), edge(.166)], "#40302f", size * .077);
         line(context, [edge(.175, -.103), edge(.15, .09)], "#d3a472", size * .045);
-        forgedPlate(context, [edge(.19, -.055), edge(reach * .78, -.11), edge(reach, -.207),
-          edge(reach * .92, .025), edge(reach * .56, .094), edge(.207, .058)],
-        ["#463644", "#c3a58a", "#ffddb2"], palette, size, .14, true);
-        line(context, [edge(.24, -.035), edge(reach * .76, -.069), edge(reach, -.18)], "#ffe6ba", size * .027);
+        const blade = weapon === 1
+          ? [edge(.19, -.045), edge(reach * .70, -.145), edge(reach * .71, -.30), edge(reach * 1.17, -.27),
+            edge(reach * 1.03, -.143), edge(reach * .85, .008), edge(.20, .064)]
+          : weapon === 2
+            ? [edge(.19, -.055), edge(reach * .63, -.086), edge(reach * 1.32, -.042),
+              edge(reach * .73, .055), edge(.20, .071)]
+            : weapon === 3
+              ? [edge(.19, -.095), edge(reach * .61, -.24), edge(reach, -.228), edge(reach * .90, .12),
+                edge(reach * .55, .155), edge(.207, .056)]
+              : [edge(.19, -.055), edge(reach * .78, -.11), edge(reach, -.207), edge(reach * .92, .025),
+                edge(reach * .56, .094), edge(.207, .058)];
+        const steel = weapon ? [metal[0], "#bbad99", metal[2]] : ["#463644", "#c3a58a", "#ffddb2"];
+        forgedPlate(context, blade, steel, palette, size, .13, true);
+        line(context, [edge(.24, -.028), edge(reach * .67, weapon === 3 ? -.126 : -.052)], steel[2], size * .031);
+        if (weapon === 3) line(context, [edge(reach * .56, -.119), edge(reach * .70, .067)], steel[0], size * .036);
       };
       const pursuit = signature === "pursuit";
       if (kit === "hunter") knife(farHand, .77 + wind * (pursuit ? .62 : .40), -facingSide, .58);
@@ -4004,11 +4047,23 @@
       const head = bladeAt(hand, .40 + tilt * .14 - wind * (sweep ? 1.30 : 1.85) + follow * (sweep ? .82 : .56), facingSide);
       line(context, [head(-.37), head(.78)], "#31252a", size * .115);
       line(context, [head(-.35, -.028), head(.75, -.027)], "#c29a6a", size * .041);
-      forgedPlate(context, [head(.60, -.17), head(.73, -.24), head(.99, -.17), head(1.04, -.042),
-        head(.96, .17), head(.78, .21), head(.62, .132)],
-      ["#493432", "#8f5747", "#e6af7a"], palette, size, .17, true);
-      line(context, [head(.77, -.185), head(.72, .125)], "#e0a371", size * .052);
-      line(context, [head(.945, -.131), head(.89, .124)], "#553835", size * .045);
+      const hammer = weapon === 1
+        ? [head(.61, -.14), head(.66, -.36), head(.91, -.42), head(1.02, -.28), head(.94, -.055),
+          head(1.06, .124), head(.93, .19), head(.71, .159)]
+        : weapon === 2
+          ? [head(.59, -.18), head(.71, -.27), head(.96, -.24), head(1.17, -.31), head(1.09, -.10),
+            head(1.18, .095), head(.94, .199), head(.74, .21), head(.62, .13)]
+          : weapon === 3
+            ? [head(.59, -.19), head(.93, -.23), head(1.07, -.06), head(1.09, .145), head(.98, .24),
+              head(.65, .24), head(.54, .11)]
+            : [head(.60, -.17), head(.73, -.24), head(.99, -.17), head(1.04, -.042), head(.96, .17),
+              head(.78, .21), head(.62, .132)];
+      const iron = weapon ? metal : ["#493432", "#8f5747", "#e6af7a"];
+      forgedPlate(context, hammer, iron, palette, size, .17, true);
+      const cheek = weapon === 1 ? -.30 : -.185;
+      line(context, [head(.77, cheek), head(.72, .125)], iron[2], size * .052);
+      line(context, [head(.945, -.131), head(.89, .124)], iron[0], size * .045);
+      if (weapon === 3) line(context, [head(.58, .11), head(1.024, .18)], iron[2], size * .035);
       ellipse(context, ...farHand, size * .064, size * .060, metal[1], metal[0], .75);
     } else if (kit === "marksman") {
       const barrel = bladeAt(hand, -.15 + tilt * .34 - wind * .12 + follow * .08, facingSide);
@@ -4027,10 +4082,28 @@
     } else {
       for (const grip of [farHand, hand]) {
         const glove = (u, v) => [grip[0] + (u + facingSide * .09) * size, grip[1] + v * size];
-        forgedPlate(context, [glove(-.16, -.105), glove(.16, -.13), glove(.19, .06), glove(.098, .129),
-          glove(-.123, .13), glove(-.185, .023)], metal, palette, size, .23, true);
-        for (const nub of [-.068, .055]) {
-          line(context, [glove(nub, -.081), glove(nub + .008, .062)], wind > 0 ? "#ffd28d" : "#e18b55", size * .034);
+        const reach = weapon === 1 ? .29 : weapon === 3 ? .245 : .17;
+        const gloveWidth = weapon === 2 ? .24 : .16;
+        forgedPlate(context, [glove(-gloveWidth, -.105), glove(gloveWidth, -.13), glove(reach + .02, .06),
+          glove(.098, .129 + (weapon === 2 ? .05 : 0)), glove(-.123, .13), glove(-.185, .023)],
+        metal, palette, size, .23, true);
+        const charge = wind > 0 ? "#fff1c4" : appearance ? metal[2] : "#e18b55";
+        if (weapon === 2) {
+          ellipse(context, ...glove(.035, .004), size * .104, size * .083, metal[0], charge, size * .030);
+          line(context, [glove(-.012, .008), glove(.082, -.011)], charge, size * .028);
+        } else if (weapon === 1 || weapon === 3) {
+          const jaw = (u, v) => glove(facingSide * u, v);
+          for (const nub of [-1, 1]) {
+            const v = .083 * nub;
+            line(context, [jaw(.075, v), jaw(reach, v * 1.41), jaw(reach + .08, v * (weapon === 1 ? .78 : 1.29))],
+              metal[0], size * .118);
+            line(context, [jaw(.080, v), jaw(reach, v * 1.37), jaw(reach + .074, v * (weapon === 1 ? .78 : 1.29))],
+              charge, size * .055);
+          }
+        } else {
+          for (const nub of [-.068, .055]) {
+            line(context, [glove(nub, -.081), glove(nub + .008, .062)], charge, size * .034);
+          }
         }
       }
     }
@@ -4083,6 +4156,82 @@
     ellipse(context, px - size * 0.006, py - size * 0.006, size * 0.012, size * 0.010, metal[2]);
   }
 
+  function bossBackgear(context, chest, appearance, kit, side, size, metal, palette, pose) {
+    const frame = appearance.frame;
+    if (kit === "engine") {
+      for (const sign of [-1, 1]) {
+        const canister = (u, v) => chest(sign * (.38 + u), v);
+        const top = frame === 2 ? -1.39 : frame === 1 ? -1.27 : frame === 3 ? -1.16 : -1.06;
+        const width = frame === 2 ? .091 : frame === 3 ? .215 : .147;
+        forgedPlate(context, [canister(-.09, -.51), canister(-.13, top + .11),
+          canister(-.055, top), canister(width * .64, top), canister(width, top + .105),
+          canister(width, -.68), canister(.08, -.50)], metal, palette, size, .23, true);
+        if (frame === 1) {
+          for (const z of [-1.12, -.93, -.74]) {
+            line(context, [canister(-.111, z), canister(width - .003, z + .025)], metal[2], size * .049);
+          }
+        } else if (frame === 2) {
+          line(context, [canister(.018, top + .086), canister(.018, -.66)], metal[0], size * .060);
+          line(context, [canister(.018, top + .17), canister(.018, -.81)], metal[2], size * .030);
+        } else if (frame === 3) {
+          const port = canister(.045, -.926);
+          ellipse(context, ...port, size * .109, size * .119, metal[0], metal[2], size * .036);
+          line(context, [canister(-.018, -.90), canister(.111, -.952)], metal[2], size * .034);
+        } else {
+          line(context, [canister(-.10, -.95), canister(width - .01, -.95)], metal[2], size * .045);
+        }
+      }
+      return;
+    }
+    if (!frame) return;
+    if (kit === "hunter") {
+      const pull = pose.stride * .64 + pose.anticipation * .23;
+      const cloak = (u, v) => chest(-side * u, v);
+      const hem = frame === 1 ? [[.67,-.34],[.46,-.49],[.39,-.29]] : frame === 2 ? [[.84,-.57],[.54,-.43]]
+        : [[.66,-.27],[.49,-.58],[.26,-.24]];
+      forgedPlate(context, [cloak(.17,-.93), cloak(.41,-.86), cloak(.55,-.72 + pull),
+        ...hem.map(([u, v]) => cloak(u, v + pull)), cloak(.14,-.43)], metal, palette, size, .16, true);
+      line(context, [cloak(.25, -.88), cloak(.445, -.77), cloak(hem[0][0] - .055, hem[0][1] + pull)],
+        metal[2], size * .031);
+      return;
+    }
+    for (const sign of [-1, 1]) {
+      const shoulder = (u, v) => chest(sign * u, v);
+      const crest = frame === 1 ? [[.27,-.92],[.42,-1.17],[.58,-1.04],[.63,-.85]]
+        : frame === 2 ? [[.26,-.93],[.36,-1.26],[.50,-1.16],[.50,-.83]]
+          : [[.30,-.96],[.56,-.99],[.69,-.81],[.64,-.63]];
+      forgedPlate(context, [...crest.map(([u,v]) => shoulder(u,v)), shoulder(.42,-.63), shoulder(.27,-.74)],
+        metal, palette, size, .16, true);
+      line(context, [shoulder(...crest[1]), shoulder(...crest[2]), shoulder(.49, -.77)], metal[2], size * .041);
+    }
+  }
+
+  function bossHelmet(context, brow, index, kit, side, size, metal, palette, lit) {
+    const cap = (u, v) => brow(u * side, v);
+    const hunter = kit === "hunter";
+    const light = lit ? "#fff1c5" : metal[2];
+    if (index === 1) {
+      forgedPlate(context, [cap(-.29,-.92), cap(-.37,-1.20), cap(-.22,-1.31), cap(-.11,-1.16),
+        cap(.15,-1.17), cap(.24,-1.33), cap(.35,-1.21), cap(.24,-.91), cap(.105,-.82), cap(-.18,-.83)],
+      metal, palette, size, .15, true);
+      line(context, [cap(-.175,-1.016), cap(.035,-.985), cap(.201,-1.035)], metal[0], size * .102);
+      line(context, [cap(-.122,-1.009), cap(.080,-.998), cap(.178,-1.025)], light, size * .032);
+    } else if (index === 2) {
+      forgedPlate(context, [cap(-.21,-.94), cap(-.27,-1.20), cap(-.12,-1.34), cap(.132,-1.36),
+        cap(.268,-1.21), cap(.213,-.88), cap(.078,-.82), cap(-.149,-.849)], metal, palette, size, .18, true);
+      line(context, [cap(-.017,-1.306), cap(.010,-1.175), cap(.087,-.92)], metal[2], size * .042);
+      ellipse(context, ...cap(.069,-1.068), size * .124, size * .092, metal[0], metal[2], size * .023);
+      ellipse(context, ...cap(.099,-1.063), size * .058, size * .059, light, metal[0], .7);
+    } else {
+      forgedPlate(context, [cap(-.29,-.95), cap(-.23,-1.25), cap(-.035,-1.39), cap(.233,-1.243),
+        cap(.302,-1.065), cap(hunter ? .39 : .29,-.94), cap(.09,-.83), cap(-.089,-.87), cap(-.20,-.82)],
+      metal, palette, size, .16, true);
+      poly(context, [cap(-.17,-1.092), cap(.215,-1.16), cap(.26,-1.015), cap(.075,-.944), cap(-.143,-.994)], metal[0]);
+      line(context, [cap(-.038,-1.049), cap(.078,-1.062), cap(.204,-1.099)], light, size * .038);
+      line(context, [cap(-.19,-1.20), cap(-.041,-1.315), cap(.088,-1.24)], metal[2], size * .036);
+    }
+  }
+
   function pressureGunner(context, at, facing, actor, pose, size, metal, palette) {
     const mortar = actor.kind === "mortar";
     const [fx, fy] = facing;
@@ -4119,7 +4268,7 @@
     ellipse(context, lens[0] - size * 0.032, lens[1] - size * 0.011, size * 0.026, size * 0.012, "#ffe7b0");
   }
 
-  function compressionGuard(context, at, actor, pose, size, metal, palette, facing, kit) {
+  function compressionGuard(context, at, actor, pose, size, metal, palette, facing, kit, appearance) {
     const [fx, fy] = facing;
     const boss = actor.kind === "boss";
     const runner = actor.kind === "runner";
@@ -4133,12 +4282,13 @@
     const armSide = pose.armSide;
     const armDepth = pose.armDepth;
     const weaponSide = clamp(fx * 2.8, -1, 1);
-    const breadth = specialization?.breadth ?? (boss ? 1.19 : runner ? 0.82 : warden ? 1.08 : 1);
+    const frame = bossFrames[appearance?.frame];
+    const breadth = (specialization?.breadth ?? (boss ? 1.19 : runner ? 0.82 : warden ? 1.08 : 1)) * (frame?.width ?? 1);
     const chest = (x, y) => at(x * breadth + fx * (0.077 * Math.max(0, -y - 0.48)), y);
     const wind = pose.anticipation;
     const follow = Math.max(pose.charge * 0.74, pose.recoil * 0.86);
     const folding = warden ? pose.guarded * 0.21 : 0;
-    const wristX = armSide * (0.38 + follow * (agile ? .24 : .17) - wind * 0.08) + pose.stride * 0.15;
+    const wristX = armSide * (0.38 + (frame?.spread ?? 0) + follow * (agile ? .24 : .17) - wind * 0.08) + pose.stride * 0.15;
     const wristY = -0.48 + armDepth + fy * 0.083 - wind * (kit === "breaker" ? .40 : .24)
       + follow * 0.072 - folding + (kit === "saboteur" ? wind * .21 : 0);
     const nearArm = armJoints(chest(armSide * 0.258, -0.742 + armDepth),
@@ -4168,6 +4318,7 @@
         chest(-side * .60, -.53 + clothHang), chest(-side * .41, -.58 + clothHang), chest(-side * .26, -.73)],
       [coat[0], kit === "hunter" ? metal[1] : "#c48047", metal[2]], palette, size, .18, true);
     }
+    if (appearance) bossBackgear(context, chest, appearance, kit, side, size, metal, palette, pose);
     paintArm(context, farArm, size, coat, "#1b1820");
     forgedPlate(context, [chest(-0.24, -0.60), chest(0.24, -0.60), chest(0.27, -0.39),
       chest(0.13, human ? -0.24 + pose.stride * 0.26 : -0.29),
@@ -4197,8 +4348,10 @@
     }
 
     const brow = (x, y) => chest(x + fx * (0.044 + follow * 0.04),
-      y + (runner || agile ? 0.075 : 0) + fy * 0.031);
-    if (human) {
+      y + (runner || agile ? 0.075 : 0) + fy * 0.031 + (frame?.rise ?? 0));
+    if (appearance?.head) {
+      bossHelmet(context, brow, appearance.head, kit, side, size, metal, palette, actor.windup > 0);
+    } else if (human) {
       const skin = actor.id % 3 === 1 ? ["#6b4844", "#ba8d69", "#dfb886"] : ["#784c44", "#bc855f", "#e3b48b"];
       const face = (x, y) => brow(x * side, -1.076 + y);
       miniatureFace(context, face, size, palette, {
@@ -4228,7 +4381,7 @@
       pauldron(0.129, -0.758), pauldron(0.071, -0.695), pauldron(-0.101, -0.707)],
       metal, palette, size, 0.28);
     if (kit) {
-      specialistWeapon(context, kit, hand, farArm[2], pose, facing, size, metal, palette, actor.bossMove);
+      specialistWeapon(context, kit, hand, farArm[2], pose, facing, size, metal, palette, actor.bossMove, appearance);
     } else if (lancer) {
       const roll = 0.14 + fy * 0.39 - wind * 0.23 + pose.charge * 0.16;
       const blade = (distance, width = 0) =>
@@ -4284,7 +4437,7 @@
     boss: ["#352438", "#895986", "#d69abd"],
   };
 
-  function burrowCreature(context, base, at, actor, pose, size, skin, palette, facing, kit) {
+  function burrowCreature(context, base, at, actor, pose, size, skin, palette, facing, kit, appearance) {
     const [fx, fy] = facing;
     const side = pose.facingRight ? 1 : -1;
     const boss = actor.kind === "boss";
@@ -4298,7 +4451,9 @@
     const mortar = actor.kind === "mortar";
     const sentry = actor.kind === "sentry";
     const low = runner || mortar || warden || sentry || marksman || saboteur;
-    const bodyWide = breaker ? 1.30 : boss ? 1.11 : low ? 1.19 : 0.98;
+    const frame = bossFrames[appearance?.frame];
+    const weapon = appearance?.weapon ?? 0;
+    const bodyWide = (breaker ? 1.30 : boss ? 1.11 : low ? 1.19 : 0.98) * (frame?.width ?? 1);
     const bodyDip = low ? (runner ? 0.17 : 0.09) : 0;
     const body = (x, y) => at(side * x * bodyWide, y + bodyDip);
     const fore = pose.anticipation;
@@ -4306,16 +4461,21 @@
     if (!sentry) {
       const tailRoot = body(-0.30, -0.59);
       const tailBend = body(-0.65, -0.51 - pose.stride * 0.26 - (breaker ? fore * .33 : 0));
-      const tailTip = body(runner ? -1.07 : -0.90, -0.63 + pose.stride * 0.40
-        + (breaker ? -.76 * fore + .31 * pose.recoil : fore * .12));
-      line(context, [tailRoot, tailBend, tailTip], skin[0], size * 0.136);
-      line(context, [tailRoot, tailBend, tailTip], skin[1], size * 0.078);
+      const tailTip = body(runner || weapon === 2 ? -1.07 : -0.90, -0.63 + pose.stride * 0.40
+        + (breaker ? -.76 * fore + .31 * pose.recoil : fore * .12) - (weapon === 1 ? .19 : 0));
+      line(context, [tailRoot, tailBend, tailTip], skin[0], size * (weapon === 3 ? .184 : .136));
+      line(context, [tailRoot, tailBend, tailTip], skin[1], size * (weapon === 3 ? .113 : .078));
       line(context, [tailBend, tailTip], skin[2] + "a9", size * 0.033);
-      if (breaker) {
+      if (breaker || weapon) {
         const club = (u, v) => [tailTip[0] + u * size * side, tailTip[1] + v * size];
-        forgedPlate(context, [club(-.25, -.12), club(-.11, -.25), club(.06, -.20), club(.18, -.095),
-          club(.12, .16), club(-.07, .23), club(-.23, .135)], skin, palette, size, .21, true);
-        line(context, [club(-.15, -.22), club(-.08, -.08), club(-.22, .10)], "#f4bd8b", size * .031);
+        const shape = weapon === 1 ? [[-.27,-.25],[-.054,-.22],[.11,-.06],[.09,.12],[-.14,.20],[-.31,.15],[-.168,.044]]
+          : weapon === 2 ? [[-.45,-.22],[-.19,-.105],[.096,-.071],[.06,.091],[-.23,.086],[-.43,.15],[-.32,-.011]]
+            : weapon === 3 ? [[-.28,-.11],[-.20,-.28],[.02,-.31],[.12,-.157],[.18,.105],[-.024,.24],[-.26,.21]]
+              : [[-.25,-.12],[-.11,-.25],[.06,-.20],[.18,-.095],[.12,.16],[-.07,.23],[-.23,.135]];
+        forgedPlate(context, shape.map(([u,v]) => club(u,v)), skin, palette, size, .15, true);
+        const sheen = weapon === 2 ? [club(-.40,-.19), club(-.18,-.075), club(.044,-.052)]
+          : [club(-.15,-.19), club(-.08,-.08), club(-.22,.10)];
+        line(context, sheen, appearance ? skin[2] : "#f4bd8b", size * .031);
       }
     }
     const paw = (leg, depth) => {
@@ -4344,7 +4504,33 @@
     paw(-1, 0);
     paw(1, 0);
 
-    const shoulderRise = boss ? 0.085 : 0;
+    const shoulderRise = boss ? .085 - (frame?.rise ?? 0) : 0;
+    if (appearance?.frame) {
+      const flex = fore * -.14 + pose.recoil * .07;
+      const back = (u, v) => body(u, v + flex);
+      const shape = appearance.frame === 1
+        ? [[-.57,-.69],[-.59,-1.03],[-.50,-1.22],[-.38,-1.10],[-.26,-1.37],[-.13,-1.13],
+          [.02,-1.42],[.17,-1.13],[.25,-.83],[.14,-.65]]
+        : appearance.frame === 2
+          ? [[-.70,-.77],[-.60,-1.12],[-.42,-1.50],[-.34,-1.28],[-.12,-1.42],
+            [.025,-1.20],[.20,-1.08],[.28,-.79],[.11,-.70]]
+          : [[-.67,-.66],[-.63,-.89],[-.48,-1.04],[-.28,-1.12],[.02,-1.14],[.24,-1.024],
+            [.36,-.83],[.31,-.64],[-.11,-.54]];
+      forgedPlate(context, shape.map(([u,v]) => back(u,v)), skin, palette, size, .15, true);
+      line(context, [back(...shape[1]), back(...shape[2]), back(-.30,-.79)], skin[2], size * .039);
+      if (appearance.frame === 1) {
+        for (const u of [-.42, -.18]) {
+          line(context, [back(u,-1.07), back(u+.070,-.94), back(u+.03,-.79)], skin[2], size * .041);
+        }
+      } else if (appearance.frame === 2) {
+        poly(context, [back(-.56,-1.17), back(-.44,-1.42), back(-.37,-1.18), back(-.18,-1.33),
+          back(-.25,-1.10), back(-.42,-.91)], skin[2] + "70");
+      } else {
+        for (const u of [-.32, -.13, .06]) {
+          line(context, [back(u,-1.04), back(u+.13,-.86), back(u+.043,-.71)], skin[0], size * .059);
+        }
+      }
+    }
     forgedPlate(context, [body(-0.44, -0.61), body(-0.36, -0.78), body(-0.15, -0.87 - shoulderRise),
       body(0.13, -0.87 - shoulderRise), body(0.34, -0.72), body(0.41, -0.55),
       body(0.26, -0.44), body(0.07, -0.36), body(-0.24, -0.39), body(-0.40, -0.46)],
@@ -4415,7 +4601,28 @@
         actor.windup > 0 ? "#ffedaa" : sentry ? "#ff9c60" : "#ffe498", "#3f2b34", Math.max(.7, size * .019));
       ellipse(context, ...head(u + radius * .35, v + radius * .15), size * radius * .39, size * radius * .50, "#392a34");
     }
-    if (lancer || boss) {
+    if (appearance?.head) {
+      const crest = appearance.head;
+      const bone = ["#4d3038", skin[1], skin[2]];
+      if (crest === 1) {
+        for (const offset of [-.14, .10]) {
+          const horn = (u, v) => head(u + offset, v - Math.abs(offset) * .12);
+          forgedPlate(context, [horn(-.22,-.948), horn(-.31,-1.136), horn(-.39,-1.266),
+            horn(-.161,-1.215), horn(-.073,-1.118), horn(.007,-.972)], bone, palette, size, .13, true);
+        }
+      } else if (crest === 2) {
+        forgedPlate(context, [head(-.23,-.91), head(-.31,-1.153), head(-.099,-1.205), head(.124,-1.163),
+          head(.199,-.987), head(.098,-.933)], bone, palette, size, .18, true);
+        for (const u of [-.144, .007]) {
+          ellipse(context, ...head(u,-1.095), size * .054, size * .041, bone[0], bone[2], size * .019);
+        }
+      } else {
+        forgedPlate(context, [head(-.115,-.997), head(-.055,-1.124), head(.242,-1.164), head(.319,-1.27),
+          head(.378,-1.104), head(.245,-.98), head(.126,-.963)], bone, palette, size, .14, true);
+        forgedPlate(context, [head(.138,-.75 + jaw), head(.269,-.79 + jaw), head(.381,-.89 + jaw),
+          head(.337,-.723 + jaw), head(.23,-.677 + jaw)], bone, palette, size, .13, true);
+      }
+    } else if (lancer || boss) {
       const hornReach = lancer ? 0.53 + pose.charge * 0.28 : 0.25;
       forgedPlate(context, [head(-0.074, -0.94), head(-0.05, -1.065), head(hornReach, -1.13 + fore * 0.09),
         head(0.156, -0.959)], ["#543b3d", "#b18f68", "#f1ce9c"], palette, size, 0.15, true);
@@ -4428,16 +4635,18 @@
     const active = actor.windup > 0;
     const orbiting = actor.bossMove === "orbit";
     const flare = .10 + pose.anticipation * (orbiting ? .28 : .16);
+    const appearance = actor.bossProfile?.appearance;
+    const rim = appearance?.accent ?? "#c2b7ea";
     const shade = context.createLinearGradient(...at(-.40, -1.15), ...at(.45, -.18));
     shade.addColorStop(0, "#baacdc");
-    shade.addColorStop(.38, "#716d9a");
+    shade.addColorStop(.38, appearance?.material ?? "#716d9a");
     shade.addColorStop(1, "#2b284b");
     const cloth = [at(0, -1.02), at(.33, -.88), at(.38, -.63), at(.46 + flare, -.29), at(.38, -.13),
       at(.16, -.26), at(.10, -.07), at(-.10, -.24), at(-.37, -.10),
       at(-.47 - flare, -.32), at(-.39, -.66), at(-.31, -.89)];
     poly(context, cloth, shade, "#211d3b", Math.max(1.15, size * .043));
     for (const sign of [-1, 1]) {
-      line(context, [at(sign * .16, -.83), at(sign * .18, -.53), at(sign * (.43 + flare), -.28)], "#c2b7eaab", size * .035);
+      line(context, [at(sign * .16, -.83), at(sign * .18, -.53), at(sign * (.43 + flare), -.28)], rim + "ab", size * .035);
       const hand = at(sign * (.48 + flare), -.55 - pose.anticipation * .20);
       articulatedLimb(context, [at(sign * .23, -.83), at(sign * (.37 + flare), -.68), hand],
         [size * .22, size * .136, size * .09], "#837caa", "#2a2548", "#c7b9e3");
@@ -4469,15 +4678,16 @@
     const gunner = actor.kind === "sentry" || mortar;
     const bossStyle = boss ? actor.bossProfile?.style : undefined;
     const profile = bossStyles[bossStyle];
+    const appearance = profile ? actor.bossProfile?.appearance : undefined;
     const specialty = specialistArt[actor.kind];
     const kit = profile?.kit ?? (specialty ? actor.kind : undefined);
     const size = unit * (profile?.scale ?? specialty?.scale ?? (boss ? 1.74 : runner ? 0.82 : warden ? 1.22 : 1));
     const creature = bossStyle === "beast" || (actor.faction === "creature" && bossStyle !== "engine");
     const skins = creature ? creatureSkins : guardianMetals;
     const armor = profile?.metal ?? skins[actor.kind] ?? skins.guard;
-    const accent = actor.bossProfile?.accent;
+    const accent = appearance?.accent ?? actor.bossProfile?.accent;
     const colored = profile && typeof accent === "string" && /^#[0-9a-f]{6}$/i.test(accent)
-      ? [armor[0], armor[1], accent] : armor;
+      ? [armor[0], appearance?.material ?? armor[1], accent] : armor;
     const metal = actor.flash > 0.08 ? ["#4d4046", "#c4a39b", "#fce8d4"] : colored;
     const facing = unitVector(pose.look);
     const [fx] = facing;
@@ -4508,19 +4718,30 @@
       context.restore();
     }
     if (creature) {
-      burrowCreature(context, ground, at, actor, pose, size, metal, palette, facing, kit);
+      burrowCreature(context, ground, at, actor, pose, size, metal, palette, facing, kit, appearance);
       return;
     }
     legStride(context, ground, at, pose.charge > 0 ? facing : unitVector(pose.travel),
       pose, size, metal[0], metal[1], pose.charge * 0.15, actor.faction === "human");
     if (gunner && actor.faction !== "human") pressureGunner(context, at, facing, actor, pose, size, metal, palette);
-    else compressionGuard(context, at, actor, pose, size, metal, palette, facing, kit);
+    else compressionGuard(context, at, actor, pose, size, metal, palette, facing, kit, appearance);
   }
 
   function enemyHealthHeight(actor) {
     if (actor.stellar) return 2.86;
     const profile = actor.kind === "boss" && bossStyles[actor.bossProfile?.style];
-    if (profile) return profile.height;
+    if (profile) {
+      const appearance = actor.bossProfile?.appearance;
+      const style = actor.bossProfile.style;
+      if (!appearance || style === "stellar") return profile.height;
+      const organic = style === "beast" || (actor.faction === "creature" && style !== "engine");
+      const frameHeight = organic ? [1.16, 1.45, 1.55, 1.18][appearance.frame]
+        : appearance.frame === 2 ? 1.43 : 1.21;
+      const hood = appearance.head ? 1.42 : 1.23;
+      const rise = organic ? 0 : -(bossFrames[appearance.frame]?.rise ?? 0);
+      const crest = Math.max(frameHeight, hood + rise) - (organic && style === "hunter" ? .13 : 0);
+      return Math.max(profile.height, profile.scale * crest + .21);
+    }
     const specialty = specialistArt[actor.kind];
     if (specialty) return specialty.height - (actor.faction === "creature" ? .16 : 0);
     if (actor.faction === "human") {

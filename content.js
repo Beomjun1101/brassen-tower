@@ -160,7 +160,8 @@
   function profileForBoss(floor, theme, macro, placement, minor) {
     if (floor === floorCount) {
       return { id: "stellar-1332", style: "stellar", sequence: ["orbit", "crossfire", "rupture"],
-        accent: "#e4d1ff", timing: 1, size: 1 };
+        accent: "#e4d1ff", timing: 1, size: 1,
+        appearance: { variant: 3, material: "#665a96", accent: "#ede0ff", head: 3, weapon: 3, frame: 3 } };
     }
     const ordinal = Math.floor(floor / 10);
     const { style, accent, names, opening } = bossStyles[ordinal % bossStyles.length];
@@ -173,8 +174,20 @@
     const sequence = floor === 9 ? [opening, "rupture", pattern === 1 ? "orbit" : "crossfire"]
       : floor === 19 ? [opening, pattern === 1 ? "crossfire" : "barrage", "orbit"]
       : bossSequence(opening, group * names.length + pattern);
+    const palettes = {
+      warden: [["#626459", "#f2cd88"], ["#495b59", "#ead6a2"], ["#685542", "#ffbe82"], ["#505160", "#e4c999"]],
+      hunter: [["#6f4744", "#ffb381"], ["#6c525d", "#f3a28f"], ["#5b4a43", "#ffd29a"], ["#673c42", "#edad99"]],
+      engine: [["#405f69", "#8ee4eb"], ["#4b5f7a", "#a5d7ff"], ["#3f6662", "#9be7cf"], ["#566173", "#d2dcff"]],
+      beast: [["#59664c", "#d4eb97"], ["#70634b", "#e9cb85"], ["#546750", "#aee6a4"], ["#596552", "#efd499"]],
+    };
+    const variant = (group + macro * 3 + placement + minor * 2 + environment) % 4;
+    const [material, trim] = palettes[style][variant];
+    // Multiplying by an odd integer permutes all 64 combinations so a style does not repeat its silhouette.
+    const silhouette = (group * 13 + ordinal % bossStyles.length * 7) % 64;
+    const appearance = { variant, material, accent: trim,
+      head: silhouette % 4, weapon: Math.floor(silhouette / 4) % 4, frame: Math.floor(silhouette / 16) };
     return { id: `${style}-${floor}-${theme}-${macro}-${placement}-${minor}`, style, accent,
-      sequence, timing, size, name: names[pattern] };
+      sequence, timing, size, name: names[pattern], appearance };
   }
 
   const rosterNames = {

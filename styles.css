@@ -66,7 +66,7 @@ button:disabled { cursor: default; }
 .shelter-rule { display: flex; align-items: baseline; gap: 8px; color: var(--muted); font-size: .77rem; white-space: nowrap; }
 .shelter-rule strong { color: var(--brass); font-size: .9rem; }
 .music-track { color: var(--muted); font-size: .72rem; line-height: 1.2; }
-.audio-toggle {
+.audio-toggle, .status-trigger, .pause-trigger, .dialog-close {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
@@ -93,6 +93,24 @@ button:disabled { cursor: default; }
 .audio-toggle[aria-pressed="true"] { border-color: #7ba693; color: #d5f0e2; }
 .audio-toggle[aria-pressed="true"]::before { border-color: #9bd2b8; background: #9bd2b8; box-shadow: 0 0 7px #88edbd77; }
 .audio-toggle:hover { border-color: var(--brass); background: #304137; }
+:is(.status-trigger, .pause-trigger, .dialog-close):hover { border-color: var(--patina); background: #304137; }
+.pause-symbol { display: none; }
+
+@media (pointer: coarse), (max-width: 600px) {
+  :is(.status-trigger, .pause-trigger) kbd { display: none; }
+}
+
+@media (max-width: 480px) {
+  .pause-trigger { justify-content: center; min-width: 38px; }
+  .pause-symbol { display: inline; font-size: 1rem; line-height: 1; }
+  .pause-label { display: none; }
+}
+
+@media (max-width: 340px) {
+  .masthead:has(.pause-trigger:not([hidden])) { gap: 5px; }
+  .masthead:has(.pause-trigger:not([hidden])) .brand-mark { display: none; }
+  .masthead:has(.pause-trigger:not([hidden])) .brand h1 { font-size: .94rem; }
+}
 
 [data-app-mode="title"] { position: relative; }
 [data-app-mode="title"] .masthead {
@@ -535,6 +553,61 @@ kbd {
   line-height: 1.25;
 }
 
+
+.game-dialog {
+  width: min(590px, calc(100% - 20px));
+  max-height: min(640px, calc(100dvh - 20px));
+  margin: auto;
+  padding: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scroll-padding-block-start: 59px;
+  border: 1px solid #87917a;
+  border-top: 2px solid var(--brass);
+  background: #172820;
+  color: var(--text);
+  box-shadow: 0 18px 48px #070e0bc0;
+}
+
+.game-dialog::backdrop { background: #070f0dd4; }
+.game-dialog-header {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid #726a4f;
+  background: #25332a;
+}
+.game-dialog-header h2 { color: #f1dfb2; font-size: 1.22rem; line-height: 1.25; }
+.game-dialog .dialog-close { justify-content: center; min-height: 44px; padding-inline: 12px; }
+.status-dialog-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; padding: 12px; }
+.status-dialog-body section { min-width: 0; padding: 8px; border: 1px solid #435d4f; background: #1d2e25; }
+.status-dialog-body h3 { margin: 0 0 6px; color: var(--brass); font-size: .86rem; }
+.status-detail-list { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.status-detail-list dt, .status-detail-list dd {
+  padding: 4px 0;
+  border-top: 1px solid #384d41;
+  font-size: .8rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.status-detail-list dt { padding-inline-end: 5px; color: #c9d8c9; }
+.status-detail-list dd { font-weight: 720; text-align: end; }
+.status-quest-list { display: grid; gap: 6px; padding: 0; list-style: none; font-size: .8rem; overflow-wrap: anywhere; }
+.status-quest-list li { padding: 5px 0; border-top: 1px solid #384d41; }
+.status-quest-list li > * { display: block; }
+.status-quest-list span { margin-top: 2px; color: #c9d8c9; }
+.pause-dialog { width: min(350px, calc(100% - 20px)); }
+.pause-actions { display: grid; gap: 8px; padding: 14px; }
+.pause-actions .primary-action { min-height: 44px; margin: 0; }
+
+@media (max-width: 520px) {
+  .status-dialog-body { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 8px; }
+}
 
 .overlay {
   --accent: var(--brass);

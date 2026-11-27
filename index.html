@@ -30,6 +30,10 @@
         <div class="masthead-controls">
           <div class="shelter-rule"><span>쉼터 간격</span><strong>5층</strong></div>
           <output id="music-track" class="music-track" aria-live="polite" hidden></output>
+          <button id="status-trigger" class="status-trigger" type="button" aria-haspopup="dialog" aria-controls="status-dialog" aria-keyshortcuts="Q" hidden>상태창 <kbd aria-hidden="true">Q</kbd></button>
+          <button id="pause-trigger" class="pause-trigger" type="button" aria-label="일시정지" aria-haspopup="dialog" aria-controls="pause-dialog" aria-keyshortcuts="Escape" hidden>
+            <span class="pause-symbol" aria-hidden="true">Ⅱ</span><span class="pause-label" aria-hidden="true">일시정지</span><kbd aria-hidden="true">Esc</kbd>
+          </button>
           <button id="audio-toggle" class="audio-toggle" type="button" aria-label="배경 음악" aria-pressed="false">음악 끔</button>
         </div>
       </header>
@@ -221,6 +225,39 @@
 
         </aside>
       </main>
+
+      <dialog id="status-dialog" class="game-dialog status-dialog" aria-labelledby="status-title">
+        <header class="game-dialog-header">
+          <h2 id="status-title">상태창</h2>
+          <button id="status-close" class="dialog-close" type="button" autofocus>닫기</button>
+        </header>
+        <div class="status-dialog-body">
+          <section aria-labelledby="status-summary-title">
+            <h3 id="status-summary-title">등반가</h3>
+            <dl id="status-summary" class="status-detail-list"></dl>
+          </section>
+          <section aria-labelledby="status-gear-title">
+            <h3 id="status-gear-title">장착 장비</h3>
+            <dl id="status-gear" class="status-detail-list"></dl>
+          </section>
+          <section aria-labelledby="status-stats-title">
+            <h3 id="status-stats-title">능력치</h3>
+            <dl id="status-stats" class="status-detail-list"></dl>
+          </section>
+          <section aria-labelledby="status-quests-title">
+            <h3 id="status-quests-title">의뢰</h3>
+            <ul id="status-quests" class="status-quest-list"></ul>
+          </section>
+        </div>
+      </dialog>
+
+      <dialog id="pause-dialog" class="game-dialog pause-dialog" aria-labelledby="pause-title">
+        <header class="game-dialog-header"><h2 id="pause-title">일시정지</h2></header>
+        <div class="pause-actions">
+          <button id="pause-resume" class="primary-action" type="button" autofocus>계속하기</button>
+          <button id="pause-exit" class="dialog-close" type="button">나가기</button>
+        </div>
+      </dialog>
 
       <p id="live-status" class="visually-hidden" role="status" aria-live="polite"></p>
       <noscript><p class="noscript-note">플레이하려면 브라우저의 자바스크립트를 활성화하세요.</p></noscript>

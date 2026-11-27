@@ -68,6 +68,13 @@
     ["live-ward", "충전 보호판", "rare", { ward: 14, overclock: 6 }],
   ];
 
+  const floorReplacements = new Map([
+    ["recoil-slicer", ["chipped-counterblade", "금 간 반동검", "common", { damage: 5, dashStrike: 5, maxHp: -9 }, "최대 체력 −9"]],
+    ["slide-shoes", ["weighted-boots", "납추 장화", "common", { dashCooldown: -0.075, speed: -0.26 }, "이동 속도 −0.26칸/초"]],
+    ["training-notes", ["torn-notes", "찢어진 훈련 기록", "common", { xp: 12 }, "경험치 보상이 적음"]],
+    ["live-ward", ["worn-ward", "닳은 보호판", "common", { ward: 5 }, "보호막이 약함"]],
+  ]);
+
   const statLabels = {
     maxHp: "최대 체력",
     damage: "공격력",
@@ -128,25 +135,30 @@
     return `${statLabels[key]} ${sign}${value}${unit}`;
   }
 
-  function createPool(floor) {
+  function buildPool(floor, replacements) {
     const power = Number.isFinite(floor) ? Math.max(1, Math.trunc(floor)) : 1;
     const scale = 1 + 0.085 * (power - 1);
-    const equipment = Object.entries(gear).flatMap(([slot, entries]) => entries.map(([key, title, rarity, stats]) => {
+    const floorTemplate = (template) => replacements?.get(template[0]) ?? template;
+    const equipment = Object.entries(gear).flatMap(([slot, entries]) => entries.map(floorTemplate).map(([key, title, rarity, stats, downside]) => {
       const bonus = Object.fromEntries(Object.entries(stats).map(([stat, amount]) => [stat, scaledStat(stat, amount, scale)]));
       const description = Object.entries(bonus).map(([stat, amount]) => describeStat(stat, amount)).join(" · ");
-      return { id: "loot-" + key, title, description, tag: description, kind: "gear", slot, rarity, bonus, power, cost: 0 };
+      return { id: "loot-" + key, title, description, tag: description, kind: "gear", slot, rarity, bonus, power, cost: 0,
+        ...(downside ? { compromised: true, downside } : {}) };
     }));
     const talents = events.map(([key, title, rarity, stat, base]) => {
       const amount = scaledStat(stat, base, scale);
       return { id: "event-" + key, title, description: describeStat(stat, amount) + " · 이번 등반 동안 유지", kind: "stat", rarity, stat, amount, power };
     });
-    const consumables = supplies.map(([key, title, rarity, stats]) => {
+    const consumables = supplies.map(floorTemplate).map(([key, title, rarity, stats, downside]) => {
       const effects = Object.fromEntries(Object.entries(stats).map(([effect, amount]) => [effect, Math.round(amount * scale)]));
       const description = Object.entries(effects).map(([effect, amount]) => `${supplyLabels[effect]} +${amount}`).join(" · ");
-      return { id: "supply-" + key, title, description, kind: "supply", rarity, effects, power };
+      return { id: "supply-" + key, title, description, kind: "supply", rarity, effects, power,
+        ...(downside ? { compromised: true, downside } : {}) };
     });
     return [...equipment, ...talents, ...consumables];
   }
 
-  window.TowerRewards = { createPool };
+  const createPool = (floor) => buildPool(floor);
+  const createFloorPool = (floor) => buildPool(floor, floorReplacements);
+  window.TowerRewards = { createPool, createFloorPool };
 })();

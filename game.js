@@ -22,6 +22,8 @@
     "pack-panel", "pack-list", "pack-count", "compare-heading", "compare-candidate-label",
     "audio-toggle", "music-track", "back-to-title", "region-label",
     "elevation-label", "elevation-legend",
+    "status-dialog", "status-trigger", "status-close", "status-summary", "status-gear", "status-stats", "status-quests",
+    "pause-dialog", "pause-trigger", "pause-resume", "pause-exit",
   ].map((id) => [id, document.getElementById(id)]));
   const minimapSection = elements.minimap.closest(".map-section");
 
@@ -44,6 +46,8 @@
   };
   const entrance = { width: 34, height: 26, spawn: { x: 4, y: 13 }, enemies: [], obstacles: [], items: [] };
   const previewFloorLimit = 20;
+  const dialogModes = new Set(["playing", "rolling", "tutorial", "shelter", "gear", "branch"]);
+  const dialogFocus = new WeakMap();
   const difficulties = {
     easy: { name: "쉬움", health: 1, damage: 1, speed: 1, interval: 1, windup: 1, shots: 2, mines: 2, bossExtra: 0 },
     normal: { name: "보통", health: 1.20, damage: 1.12, speed: 1.04, interval: .93, windup: .98, shots: 2, mines: 3, bossExtra: 1 },
@@ -365,6 +369,84 @@
     attackPointer = null;
   }
 
+  function hasRunDialog() {
+    return elements["status-dialog"].open || elements["pause-dialog"].open;
+  }
+
+  function canOpenRunDialog() {
+    return Boolean(run) && dialogModes.has(state.mode) && !window.TowerAdmin?.isOpen();
+  }
+
+  function setDetailList(name, entries) {
+    elements[name].replaceChildren(...entries.flatMap(([label, value]) => {
+      const term = document.createElement("dt");
+      const detail = document.createElement("dd");
+      term.textContent = label;
+      detail.textContent = value;
+      return [term, detail];
+    }));
+  }
+
+  function renderStatusDialog() {
+    const player = state.player;
+    const progress = run.progress;
+    const weapon = village.weaponFor(run.classId);
+    const battleWeapon = playerWeapons[player.weapon] ?? playerWeapons.sword;
+    const route = state.routeEffects ?? {};
+    setDetailList("status-summary", [
+      ["현재 층", state.floor + "층"], ["난이도", difficultyRules().name],
+      ["직업", village.classById(run.classId)?.title ?? "등반가"], ["레벨", "Lv. " + progress.level],
+      ["체력", Math.ceil(player.hp) + " / " + player.maxHp], ["소지 금화", goldText(run.gold) + " 금화"],
+      ["보호막", String(Math.ceil(state.ward))],
+    ]);
+    const equipped = rpg.equippedBySlot(progress);
+    setDetailList("status-gear", [["전투 무기", weapon.label + " · " + weapon.attackLabel],
+      ...rpg.slots.map(({ id, title }) => [title, equipped.get(id)?.title ?? "비어 있음"])]);
+    setDetailList("status-stats", [
+      ...rpg.attributes.map(({ id, title }) => [title, statValue(id, (progress.build[id] ?? 0) + (progress.earnedAttributes?.[id] ?? 0))]),
+      ["기본 타격", statValue("damage", currentAttackDamage(battleWeapon, route))],
+      ["사거리", statValue("attackRange", currentAttackRange(battleWeapon, route))],
+      ["공격 간격", statValue("attackCooldown", currentAttackInterval(battleWeapon, route))],
+      ["이동 속도", statValue("speed", run.stats.speed * (route.speedMultiplier ?? 1))],
+      ["받는 피해 감소", statValue("damageReduction", Math.min(.70, run.stats.damageReduction + (route.damageReductionBonus ?? 0)))],
+    ]);
+    const quests = run.quests.map((quest) => {
+      const entry = document.createElement("li");
+      const title = document.createElement("strong");
+      const progressText = document.createElement("span");
+      title.textContent = quest.title;
+      progressText.textContent = village.questReady(quest) ? "완료 · 보상 수령 가능" : "진행 중 · " + quest.progress + " / " + quest.goal.count;
+      entry.append(title, progressText);
+      return entry;
+    });
+    if (!quests.length) {
+      const empty = document.createElement("li");
+      empty.textContent = "진행 중인 의뢰가 없습니다.";
+      quests.push(empty);
+    }
+    elements["status-quests"].replaceChildren(...quests);
+  }
+
+  function toggleRunDialog(dialog) {
+    if (dialog.open) {
+      dialog.close();
+      return;
+    }
+    if (!canOpenRunDialog() || hasRunDialog()) return;
+    dialogFocus.set(dialog, document.activeElement);
+    clearInput();
+    if (dialog === elements["status-dialog"]) renderStatusDialog();
+    dialog.showModal();
+  }
+
+  function returnFromDialog({ currentTarget }) {
+    const focus = dialogFocus.get(currentTarget);
+    dialogFocus.delete(currentTarget);
+    if (hasRunDialog()) return;
+    clearInput();
+    if (focus?.isConnected && !focus.closest("[hidden]")) focus.focus({ preventScroll: true });
+  }
+
   function panel({ kicker, title, copy, options = [], primary, activate, questCards }) {
     clearInput();
     setText("overlay-kicker", kicker);
@@ -555,7 +637,7 @@
     elements.notification.hidden = true;
     renderPack();
     syncMusic();
-    setText("live-status", "주사위 굴리는 중");
+    setText("live-status", state.kind === "boss" ? "보스전 주사위 굴리는 중" : "주사위 굴리는 중");
     canvas.tabIndex = 0;
     canvas.focus({ preventScroll: true });
     if (state.reducedMotion) settleEntry();
@@ -566,7 +648,8 @@
     state.entryElapsed = state.entrySettleAt;
     const button = elements["entry-continue"];
     button.hidden = false;
-    setText("live-status", "주사위가 멈췄습니다. 스페이스바를 누르거나 전투 시작을 선택하세요.");
+    const entry = state.kind === "boss" ? "보스전. " : "";
+    setText("live-status", entry + "주사위가 멈췄습니다. 스페이스바를 누르거나 전투 시작을 선택하세요.");
     if (!window.TowerAdmin?.isOpen()) button.focus({ preventScroll: true });
   }
 
@@ -863,6 +946,9 @@
     elements["region-label"].hidden = !region;
     setText("stage-title", state.revealed ? stage.title : "");
     elements["stage-title"].hidden = !state.revealed;
+    const hasStatus = Boolean(run) && dialogModes.has(state.mode);
+    elements["status-trigger"].hidden = !hasStatus;
+    elements["pause-trigger"].hidden = !hasStatus;
     setText("objective", state.revealed ? stage.objective : "");
     if (minimapSection.hidden !== !state.revealed) minimapSection.hidden = !state.revealed;
     setText("health-label", Math.ceil(state.player.hp) + " / " + maxHp);
@@ -1102,6 +1188,20 @@
       .sort((a, b) => distance(player, a) - distance(player, b));
   }
 
+  function currentAttackRange(weapon, route) {
+    const reach = weapon.reach + run.stats.attackRange - 1.8 + (route.attackRangeBonus ?? 0);
+    return Math.max(.75, Math.min(weapon.projectile ? 8.6 : 3.15, reach)) * (state.hazard === "mist" ? 0.85 : 1);
+  }
+
+  function currentAttackInterval(weapon, route) {
+    return Math.max(weapon.minimum ?? 0, rpg.attackInterval(run.stats, (route.attackCooldownMultiplier ?? 1) * (weapon.interval ?? 1)));
+  }
+
+  function currentAttackDamage(weapon, route) {
+    const workshopPower = run.rewards.filter((entry) => entry.kind === "upgrade").length * 6;
+    return (run.stats.damage + (route.damageBonus ?? 0) + state.overclock + workshopPower) * (weapon.power ?? 1);
+  }
+
   function attack() {
     const player = state.player;
     if (state.mode !== "playing" || state.shelter || state.combatComplete ||
@@ -1109,12 +1209,10 @@
     const route = state.routeEffects ?? {};
     const weapon = playerWeapons[player.weapon] ?? playerWeapons.sword;
     const ranged = Boolean(weapon.projectile);
-    const reach = weapon.reach + run.stats.attackRange - 1.8 + (route.attackRangeBonus ?? 0);
-    const range = Math.max(.75, Math.min(ranged ? 8.6 : 3.15, reach)) * (state.hazard === "mist" ? 0.85 : 1);
+    const range = currentAttackRange(weapon, route);
     const target = enemiesInReach(range, ranged)[0];
     if (target) setFacing(player, direction(target.x - player.x, target.y - player.y));
-    player.attackCooldown = Math.max(weapon.minimum ?? 0,
-      rpg.attackInterval(run.stats, (route.attackCooldownMultiplier ?? 1) * (weapon.interval ?? 1)));
+    player.attackCooldown = currentAttackInterval(weapon, route);
     player.attackVariant = state.elapsed < player.nextComboUntil ? (player.attackVariant + 1) % 3 : 0;
     player.nextComboUntil = state.elapsed + 0.62;
     player.swingDuration = Math.min(weapon.swing ?? swingDurations[player.attackVariant], player.attackCooldown + 0.04);
@@ -1135,8 +1233,7 @@
     }
     if (enemy.hp <= healthLimit) return false;
     const route = state.routeEffects ?? {};
-    const workshopPower = run.rewards.filter((entry) => entry.kind === "upgrade").length * 6;
-    const damage = (run.stats.damage + (route.damageBonus ?? 0) + state.overclock + workshopPower) * (weapon.power ?? 1);
+    const damage = currentAttackDamage(weapon, route);
     const dashDamage = state.elapsed < player.dashStrikeUntil ? run.stats.dashStrike + (route.dashStrikeBonus ?? 0) : 0;
     player.dashStrikeUntil = 0;
     const finishing = enemy.hp <= enemy.maxHp * 0.30 ? run.stats.finishingDamage : 0;
@@ -1570,11 +1667,12 @@
     const blocked = Math.min(state.ward, damage);
     state.ward -= blocked;
     player.hp = Math.max(0, player.hp - (damage - blocked));
-    if (state.kind === "combat" && state.hitCount === 0) notify("무피격 보너스 종료", 1000);
+    if (blocked === damage) notify("보호막이 피해 " + blocked + "를 막았습니다.", 1000);
+    else if (state.kind === "combat" && state.hitCount === 0) notify("무피격 보너스 종료", 1000);
     state.hitCount++;
     player.invulnerable = Math.max(player.invulnerable, 0.56);
     state.cameraShake = Math.max(state.cameraShake, 0.19);
-    addEffect("hit", player, 0.35);
+    addEffect(blocked === damage ? "charge" : "hit", player, 0.35);
     return true;
   }
 
@@ -1652,9 +1750,9 @@
 
   function mortarSalvo(enemy, player) {
     const mark = (x, y, remaining) => ({
-      x: Math.max(0.6, Math.min(state.map.width - 0.6, x)),
-      y: Math.max(0.6, Math.min(state.map.height - 0.6, y)),
-      radius: 1.32, remaining, active: false, damage: enemy.damage,
+      x: Math.max(playerRadius, Math.min(state.map.width - playerRadius, x)),
+      y: Math.max(playerRadius, Math.min(state.map.height - playerRadius, y)),
+      kind: "mortar", radius: 1.32 + playerRadius * .4, remaining, active: false, damage: enemy.damage,
     });
     state.mortarTargets.push(mark(player.x, player.y, enemy.windup));
     if (state.floor >= 8) {
@@ -1692,7 +1790,7 @@
       if (marker.remaining > 0 || marker.active) continue;
       marker.active = true;
       state.cameraShake = Math.max(state.cameraShake, 0.15);
-      if (distance(marker, state.player) <= marker.radius + playerRadius * 0.4 && withinTier(marker, state.player) &&
+      if (distance(marker, state.player) <= marker.radius && withinTier(marker, state.player) &&
           (marker.kind !== "aftershock" || hasLineOfSight(marker, state.player))) receiveEnemyHit(marker.damage);
     }
     state.mortarTargets = state.mortarTargets.filter((marker) => marker.remaining > (marker.kind === "mine" ? -2.4 : -0.30));
@@ -1799,8 +1897,8 @@
         addEffect("danger", enemy, boss ? 0.40 : 0.24);
         const line = skirmisher ? direction(enemy.aimX - enemy.x, enemy.aimY - enemy.y) : null;
         const toward = line && direction(player.x - enemy.x, player.y - enemy.y);
-        if (breaker) state.mortarTargets.push({ x: enemy.x, y: enemy.y, radius: 3.04, kind: "aftershock",
-          remaining: 0.70, damage: Math.round(enemy.damage * 0.64), active: false });
+        if (breaker) state.mortarTargets.push({ x: enemy.x, y: enemy.y, radius: 3.04 + playerRadius * .4, kind: "aftershock",
+          remaining: 0.80, damage: Math.round(enemy.damage * 0.64), active: false });
         if ((!toward || line.x * toward.x + line.y * toward.y >= 0.60) && distance(enemy, player) <= enemy.attackRange &&
             closeReach(enemy, player) && hasLineOfSight(enemy, player)) {
           receiveEnemyHit(enemy.damage + (enraged ? 4 : 0));
@@ -2226,6 +2324,7 @@
     } else {
       detail = describeSupply(item) + " · 가방에서 클릭해 사용";
     }
+    if (item.downside) detail += " · " + item.downside;
     setText("compare-equipped", equipped);
     setText("compare-candidate", item.title);
     setText("compare-detail", detail);
@@ -2252,13 +2351,14 @@
   }
 
   function chooseReward(xp, trial, gains = []) {
-    const candidates = rpg.rewardChoices(rewards.createPool(state.floor), run.random);
+    const candidates = rpg.rewardChoices(rewards.createFloorPool(state.floor), run.random);
     state.mode = "gear";
     const options = candidates.map((item) => {
       const slot = rpg.slots.find((entry) => entry.id === item.slot);
       return {
         id: item.id,
         title: item.title,
+        description: item.downside,
         detail: slot?.title ?? (item.kind === "stat" ? "성장" : "공급품"),
         icon: slot?.icon ?? (item.kind === "stat" ? "✧" : "▦"),
         rarity: item.rarity,
@@ -2389,7 +2489,7 @@
     const gap = Math.max(0, now - previousTime);
     const delta = Math.min(1 / 30, gap / 1000);
     previousTime = now;
-    const paused = document.hidden || window.TowerAdmin?.isOpen();
+    const paused = document.hidden || window.TowerAdmin?.isOpen() || hasRunDialog();
     state.cameraShake = Math.max(0, state.cameraShake - Math.max(0, delta));
     if (!paused && state.mode === "rolling") {
       advanceEntry(gap);
@@ -2406,6 +2506,17 @@
 
   elements["primary-action"].addEventListener("click", () => action?.());
   elements["entry-continue"].addEventListener("click", openEntry);
+  elements["status-trigger"].addEventListener("click", () => toggleRunDialog(elements["status-dialog"]));
+  elements["status-close"].addEventListener("click", () => elements["status-dialog"].close());
+  elements["pause-trigger"].addEventListener("click", () => toggleRunDialog(elements["pause-dialog"]));
+  elements["pause-resume"].addEventListener("click", () => elements["pause-dialog"].close());
+  elements["pause-exit"].addEventListener("click", () => {
+    dialogFocus.delete(elements["pause-dialog"]);
+    elements["pause-dialog"].close();
+    setupTitle();
+  });
+  elements["status-dialog"].addEventListener("close", returnFromDialog);
+  elements["pause-dialog"].addEventListener("close", returnFromDialog);
   elements["audio-toggle"].addEventListener("click", () => {
     audio.setEnabled(!audio.active()).then(refreshAudioUI);
   });
@@ -2423,7 +2534,18 @@
     }
   });
   window.addEventListener("keydown", (event) => {
-    if (event.defaultPrevented || event.altKey || event.metaKey || event.ctrlKey || !gameKeys.has(event.code)) return;
+    if (event.defaultPrevented || event.altKey || event.metaKey || event.ctrlKey || event.isComposing) return;
+    if (event.code === "KeyQ" && !elements["pause-dialog"].open && canOpenRunDialog()) {
+      event.preventDefault();
+      if (!event.repeat) toggleRunDialog(elements["status-dialog"]);
+      return;
+    }
+    if (event.code === "Escape" && !elements["status-dialog"].open && canOpenRunDialog()) {
+      event.preventDefault();
+      if (!event.repeat) toggleRunDialog(elements["pause-dialog"]);
+      return;
+    }
+    if (hasRunDialog() || !gameKeys.has(event.code)) return;
     if (event.code === "Space") {
       const button = event.target instanceof HTMLButtonElement ? event.target : null;
       if (state.mode === "rolling" && (!button || button === elements["entry-continue"]) && !window.TowerAdmin?.isOpen()) {

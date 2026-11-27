@@ -126,6 +126,12 @@
   function rewardChoices(rewards, rng = Math.random) {
     const pool = [...rewards];
     const choices = [];
+    const standard = pool.filter(({ compromised }) => !compromised);
+    if (standard.length && standard.length < pool.length) {
+      const first = standard[Math.floor(rng() * standard.length)];
+      choices.push(first);
+      pool.splice(pool.indexOf(first), 1);
+    }
     while (choices.length < 3 && pool.length) {
       choices.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
     }
