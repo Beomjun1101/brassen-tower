@@ -27,6 +27,9 @@
     { id: "riposte", parent: "scout", title: "반격 척후병", description: "회피 직후의 한 번에 힘을 싣습니다.", detail: "이동 +0.25칸/초 · 회피 재사용 −0.10초 · 회피 후 피해 +10", bonus: { speed: 0.25, dashCooldown: -0.10, dashStrike: 10 } },
   ];
   const classIndex = new Map(classes.map((entry) => [entry.id, entry]));
+  const shopSupplyLabels = {
+    heal: "현재 체력", xp: "경험치", ward: "다음 전투 보호막", overclock: "다음 전투 공격력",
+  };
   let latestShop;
   const blessings = [
     { id: "quiet", title: "잠잠한 제단", description: "불꽃이 잠시 흔들리다 제자리로 돌아옵니다.", effects: {}, weight: 55 },
@@ -108,7 +111,8 @@
     const rare = item.rarity === "rare";
     const base = item.kind === "gear" ? (rare ? 49 : 30) : (rare ? 27 : 16);
     const depth = Math.min(140, Math.round((power - 1) * (item.kind === "gear" ? 1.4 : 0.8)));
-    return Math.max(base + depth, (item.effects?.gold ?? 0) + 5);
+    const villagePremium = Math.min(25, Math.floor((power - 1) / villageStep));
+    return Math.max(base + depth, (item.effects?.gold ?? 0) + 5) + villagePremium;
   }
 
   function sellPrice(item) {
@@ -125,7 +129,10 @@
       const ordinary = pick(items.filter((item) => item.kind === "gear" && item.rarity === "common"), draw);
       const special = pick(items.filter((item) => item.kind === "gear" && item.rarity === "rare" && item.slot !== ordinary.slot), draw);
       const aid = pick(items.filter((item) => item.kind === "supply" && (item.effects.heal || item.effects.ward)), draw);
-      const entries = [ordinary, special, aid].map((item) => ({ id: `${floor}:${item.id}`, item, price: buyPrice(item) }));
+      const effects = Object.fromEntries(Object.entries(aid.effects).filter(([key]) => key !== "gold"));
+      const description = Object.entries(effects).map(([key, amount]) => `${shopSupplyLabels[key]} +${amount}`).join(" · ");
+      const stockAid = { ...aid, effects, description };
+      const entries = [ordinary, special, stockAid].map((item) => ({ id: `${floor}:${item.id}`, item, price: buyPrice(item) }));
       latestShop = { floor, seed: seedValue, entries };
     }
     return latestShop.entries.map((entry) => {

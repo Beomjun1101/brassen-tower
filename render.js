@@ -71,6 +71,7 @@
   const backdropCache = new WeakMap();
   const terrainCache = new WeakMap();
   const terraceCache = new WeakMap();
+  const shelterSceneryOrder = new WeakMap();
   const grainCache = new WeakMap();
   const frameCameras = new WeakMap();
   const motionFrames = new WeakMap();
@@ -4326,6 +4327,7 @@
         case "story": storyApparatus(context, local, object, palette, seconds, reduced); break;
         case "incident": incidentApparatus(context, local, object, palette, seconds, reduced); break;
         case "station": window.TowerShelter.station(context, local, object, brushes); break;
+        case "shelter-decoration": window.TowerShelter.decoration(context, local, object, brushes, state.shelter); break;
         case "item": item(context, local, object, seconds, palette); break;
         case "enemy":
           if (isInView(local, object, 3.2, 3.6, 1.5)) {
@@ -4348,6 +4350,51 @@
 
   function isWall(entry) {
     return entry.type === "obstacle" || entry.type === "story-gate" || entry.kind === "exit";
+  }
+
+  function sortShelterScenery(state, scenery) {
+    const cached = shelterSceneryOrder.get(state);
+    if (cached?.walls === state.obstacles && cached.stations === state.stations && cached.decor === state.shelter.decor
+        && cached.count === scenery.length) {
+      return cached.order.map((index) => scenery[index]);
+    }
+    const bounds = scenery.map((object) => {
+      if (object.type === "station") {
+        const footprint = state.obstacles.find((wall) => wall.shelterDecor && wall.x === object.x && wall.y === object.y);
+        return centeredBounds(footprint ?? { ...object, w: 1.31, h: object.kind === "departure" ? .30 : .70 });
+      }
+      // The raised roof extends one lip beyond the collidable house on each side.
+      if (object.design === "house") return centeredBounds({ ...object, w: object.w + .24, h: object.h + .24 });
+      return centeredBounds({ ...object, w: object.w ?? 0, h: object.h ?? 0 });
+    });
+    const before = bounds.map(() => []);
+    const pending = bounds.map(() => 0);
+    for (let a = 0; a < bounds.length; a++) {
+      const first = bounds[a];
+      for (let b = a + 1; b < bounds.length; b++) {
+        const second = bounds[b];
+        if (first.right - first.back < second.left - second.front || second.right - second.back < first.left - first.front) continue;
+        const firstBehind = first.right <= second.left + .01 || first.front <= second.back + .01;
+        const secondBehind = second.right <= first.left + .01 || second.front <= first.back + .01;
+        if (firstBehind === secondBehind) continue;
+        const rear = firstBehind ? a : b;
+        const front = firstBehind ? b : a;
+        before[rear].push(front);
+        pending[front]++;
+      }
+    }
+    const order = [];
+    while (order.length < scenery.length) {
+      // Intersecting or cyclic silhouettes keep the existing centre-depth priority as a fallback.
+      let next = pending.indexOf(0);
+      if (next < 0) next = pending.findIndex((count) => count !== Infinity);
+      pending[next] = Infinity;
+      order.push(next);
+      for (const front of before[next]) pending[front]--;
+    }
+    shelterSceneryOrder.set(state, { walls: state.obstacles, stations: state.stations, decor: state.shelter.decor,
+      count: scenery.length, order });
+    return order.map((index) => scenery[index]);
   }
 
   function drawArenaCues(context, camera, state, enemies, elevation, seconds, layer) {
@@ -4405,6 +4452,7 @@
       ...(state.obstacles ?? []).filter((entry) => !entry.shelterDecor && !entry.gateDecor && !(state.storyGate && entry.storyGate))
         .map((entry) => ({ ...entry, type: "obstacle" })),
       ...(state.items ?? []).map((entry) => ({ ...entry, type: "item" })),
+      ...(state.shelter?.decor ?? []).map((entry) => ({ ...entry, type: "shelter-decoration" })),
       ...(state.stations ?? []).map((entry) => ({ ...entry, type: "station" })),
       ...enemies.map((entry, index) => ({ ...entry, type: "enemy", pose: actorPose(motion, entry, entry.id ?? index) })),
     ];
@@ -4468,7 +4516,8 @@
       incidentGround(context, camera, state, palette, 1);
     }
     drawArenaCues(context, camera, state, enemies, elevation, seconds, elevation ? 1 : undefined);
-    drawArenaObjects(context, camera, scenery, state, palette, theme, seconds, reduced, brushes);
+    const orderedScenery = state.shelter ? sortShelterScenery(state, scenery) : scenery;
+    drawArenaObjects(context, camera, orderedScenery, state, palette, theme, seconds, reduced, brushes);
     drawArenaObjects(context, camera, actors, state, palette, theme, seconds, reduced, brushes);
     for (const entry of state.projectiles ?? []) projectile(context, camera, entry, reduced, elevation);
     for (const entry of visibleEnemies) {

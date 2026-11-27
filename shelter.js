@@ -571,12 +571,10 @@
     art.line(context, [p(x, y + h - 0.06), p(x + w, y + h - 0.06)], "#121c1ba4", 1);
   }
 
-  function shelterDecoration(context, camera, art, room) {
-    for (const entry of room.decor ?? []) {
-      if (entry.design === "house") house(context, camera, art, entry, room);
-      else if (entry.design === "baffle") baffle(context, camera, art, entry, room.trim);
-      else landmarkProp(context, camera, art, entry, room);
-    }
+  function decoration(context, camera, entry, art, room) {
+    if (entry.design === "house") house(context, camera, art, entry, room);
+    else if (entry.design === "baffle") baffle(context, camera, art, entry, room.trim);
+    else landmarkProp(context, camera, art, entry, room);
   }
 
   function dress(context, camera, state, art) {
@@ -617,7 +615,6 @@
       art.line(context, [p(x, y), p(x, y, 0.78)], "#62523c", Math.max(1, camera.unit * 0.055));
       lamp(context, camera, art, x, y, 0.76, inhabited ? "#ffd39a" : "#9bd0d0", 0.66);
     }
-    shelterDecoration(context, camera, art, room);
     if (inhabited) {
       const atY = height - 1.72;
       const x = width * 0.82;
@@ -886,7 +883,7 @@
     // Reuse the drawing dimensions, recording opaque faces and boxes in world space only.
     const art = { occlusion: shapes, palette: {}, point: (_camera, x, y, z = 0) => [x, y, z],
       rectangle: skip, line: skip, ellipse: skip, poly: skip };
-    shelterDecoration(null, camera, art, room);
+    for (const entry of room.decor ?? []) decoration(null, camera, entry, art, room);
     for (const entry of stations) {
       if (entry.kind !== "campfire") station(null, camera, entry, art);
     }
@@ -894,5 +891,5 @@
     return shapes;
   }
 
-  window.TowerShelter = { create, dress, station, occlusionShapes };
+  window.TowerShelter = { create, dress, decoration, station, occlusionShapes };
 })();
