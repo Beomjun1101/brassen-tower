@@ -68,6 +68,11 @@
   };
   const entrance = { width: 34, height: 26, spawn: { x: 4, y: 13 }, enemies: [], obstacles: [], items: [] };
   const previewFloorLimit = 30;
+  const currentEnemyScalingVersion = 2;
+  const enemyScalingByVersion = {
+    1: { healthPerFloor: 0.04, damagePerFloor: 0.025, cooldownPerFloor: 0.01 },
+    2: { healthPerFloor: 0.015, damagePerFloor: 0.01, cooldownPerFloor: 0.005 },
+  };
   const dialogModes = new Set(["playing", "rolling", "tutorial", "shelter", "gear", "branch"]);
   const dialogFocus = new WeakMap();
   const difficulties = {
@@ -295,15 +300,15 @@
     return { patternCount: count, patternSeed: seed };
   }
 
-  function createEnemy(enemy, index, floor = state.floor, damageMultiplier = 1, gradualFloorScaling = true) {
+  function createEnemy(enemy, index, floor = state.floor, damageMultiplier = 1, scalingVersion = currentEnemyScalingVersion) {
     const base = enemyTypes[enemy.kind];
     const difficulty = difficultyRules();
     const depth = Math.max(0, floor - 1);
     const previewDepth = Math.min(depth, previewFloorLimit - 1);
-    // Keep reinforcements on the original curve when an older combat scene is resumed.
-    const healthScale = gradualFloorScaling ? 1 + depth * 0.04 : 1 + depth * 0.064 + previewDepth ** 2 * 0.00025;
-    const damageScale = gradualFloorScaling ? 1 + depth * 0.025 : 1 + depth * 0.04 + previewDepth ** 2 * 0.00015;
-    const initialCooldown = gradualFloorScaling ? 0.83 - previewDepth * 0.01
+    const scaling = enemyScalingByVersion[scalingVersion];
+    const healthScale = scaling ? 1 + depth * scaling.healthPerFloor : 1 + depth * 0.064 + previewDepth ** 2 * 0.00025;
+    const damageScale = scaling ? 1 + depth * scaling.damagePerFloor : 1 + depth * 0.04 + previewDepth ** 2 * 0.00015;
+    const initialCooldown = scaling ? 0.83 - previewDepth * scaling.cooldownPerFloor
       : depth === 0 ? 0.83 : 0.66 - (previewDepth - 1) * 0.005;
     const creature = enemy.faction === "creature";
     const hp = Math.round(base.hp * healthScale * (enemy.elite ? 1.24 : 1) * difficulty.health);
@@ -358,7 +363,7 @@
       mortarTargets: [],
       ward: 0, overclock: 0,
       wave: 1, waveArrival: 0, effects: [], cameraShake: 0, cameraShakeEnabled: !reducedMotion,
-      elapsed: 0, revealTimer: 0, usesBaseDamage: true, gradualFloorScaling: true, mode,
+      elapsed: 0, revealTimer: 0, usesBaseDamage: true, enemyScalingVersion: currentEnemyScalingVersion, mode,
     };
   }
 
@@ -472,7 +477,8 @@
     notify(null);
     stage = savedStage;
     state = savedState;
-    state.gradualFloorScaling ??= false;
+    // Resumed fights keep the same curve for reinforcements as for their saved enemies.
+    state.enemyScalingVersion ??= state.gradualFloorScaling ? 1 : 0;
     migrateSceneDifficulty(state);
     if (!state.shelter && state.gateMarker?.type !== "departure") {
       installCombatExit([state.player, ...livingEnemies()]);
@@ -2794,7 +2800,7 @@
     state.waveArrival = 0;
     for (const entry of stage.wave) {
       state.enemies.push(createEnemy({ ...entry, engaged: true }, state.enemies.length, state.floor,
-        state.routeEffects?.enemyDamageMultiplier, state.gradualFloorScaling));
+        state.routeEffects?.enemyDamageMultiplier, state.enemyScalingVersion));
     }
     state.cameraShake = Math.max(state.cameraShake, 0.17);
     syncMusic();
@@ -2811,7 +2817,7 @@
     state.patrolsArrived = true;
     for (const patrol of stage.reinforcements) {
       state.enemies.push(createEnemy(patrol, state.enemies.length, state.floor,
-        state.routeEffects?.enemyDamageMultiplier, state.gradualFloorScaling));
+        state.routeEffects?.enemyDamageMultiplier, state.enemyScalingVersion));
     }
     syncMusic();
   }
