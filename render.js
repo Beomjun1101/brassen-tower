@@ -3825,7 +3825,9 @@
     const armSide = weapon.style === "fist" && variant === 1 ? -pose.armSide : pose.armSide;
     const profile = swingProfiles[variant];
     const length = actor.swingDuration > 0 ? actor.swingDuration : actor.swingLife !== undefined ? profile.duration : 0.20;
-    const progress = pose.swingRemaining > 0 ? clamp(1 - pose.swingRemaining / length, 0, 1) : null;
+    const time = pose.swingRemaining > 0 ? clamp(1 - pose.swingRemaining / length, 0, 1) : null;
+    const impact = Number.isFinite(actor.swingImpact) ? clamp(actor.swingImpact, .08, .88) : .37;
+    const progress = time === null ? null : time < impact ? .37 * time / impact : .37 + .63 * (time - impact) / (1 - impact);
     const burst = weapon.style === "thrust" || weapon.style === "fist" ? .17 : .089;
     const thrust = progress === null || reduced ? 0 : Math.sin(progress * Math.PI) * burst;
     const tuck = pose.dashing * 0.082;

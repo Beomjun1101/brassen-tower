@@ -1118,9 +1118,10 @@
     player.attackVariant = state.elapsed < player.nextComboUntil ? (player.attackVariant + 1) % 3 : 0;
     player.nextComboUntil = state.elapsed + 0.62;
     player.swingDuration = Math.min(weapon.swing ?? swingDurations[player.attackVariant], player.attackCooldown + 0.04);
+    player.swingImpact = weapon.impact ?? .37;
     player.swingLife = player.swingDuration;
     player.attackFlash = player.swingDuration;
-    player.pendingStrike = { at: state.elapsed + player.swingDuration * (weapon.impact ?? .37), range, weapon,
+    player.pendingStrike = { at: state.elapsed + player.swingDuration * player.swingImpact, range, weapon,
       x: player.facingX, y: player.facingY, altitude: target ? elevationAt(target) : elevationAt(player),
       targetDistance: target ? distance(player, target) : range };
   }
