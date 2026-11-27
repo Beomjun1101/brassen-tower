@@ -295,14 +295,16 @@
     return { patternCount: count, patternSeed: seed };
   }
 
-  function createEnemy(enemy, index, floor = state.floor, damageMultiplier = 1) {
+  function createEnemy(enemy, index, floor = state.floor, damageMultiplier = 1, gradualFloorScaling = true) {
     const base = enemyTypes[enemy.kind];
     const difficulty = difficultyRules();
     const depth = Math.max(0, floor - 1);
     const previewDepth = Math.min(depth, previewFloorLimit - 1);
-    const healthScale = 1 + depth * 0.064 + previewDepth ** 2 * 0.00025;
-    const damageScale = 1 + depth * 0.040 + previewDepth ** 2 * 0.00015;
-    const initialCooldown = depth === 0 ? 0.83 : 0.66 - (previewDepth - 1) * 0.005;
+    // Keep reinforcements on the original curve when an older combat scene is resumed.
+    const healthScale = gradualFloorScaling ? 1 + depth * 0.04 : 1 + depth * 0.064 + previewDepth ** 2 * 0.00025;
+    const damageScale = gradualFloorScaling ? 1 + depth * 0.025 : 1 + depth * 0.04 + previewDepth ** 2 * 0.00015;
+    const initialCooldown = gradualFloorScaling ? 0.83 - previewDepth * 0.01
+      : depth === 0 ? 0.83 : 0.66 - (previewDepth - 1) * 0.005;
     const creature = enemy.faction === "creature";
     const hp = Math.round(base.hp * healthScale * (enemy.elite ? 1.24 : 1) * difficulty.health);
     return {
@@ -356,7 +358,7 @@
       mortarTargets: [],
       ward: 0, overclock: 0,
       wave: 1, waveArrival: 0, effects: [], cameraShake: 0, cameraShakeEnabled: !reducedMotion,
-      elapsed: 0, revealTimer: 0, usesBaseDamage: true, mode,
+      elapsed: 0, revealTimer: 0, usesBaseDamage: true, gradualFloorScaling: true, mode,
     };
   }
 
@@ -470,6 +472,7 @@
     notify(null);
     stage = savedStage;
     state = savedState;
+    state.gradualFloorScaling ??= false;
     migrateSceneDifficulty(state);
     if (!state.shelter && state.gateMarker?.type !== "departure") {
       installCombatExit([state.player, ...livingEnemies()]);
@@ -2790,7 +2793,8 @@
     state.wave = 2;
     state.waveArrival = 0;
     for (const entry of stage.wave) {
-      state.enemies.push(createEnemy({ ...entry, engaged: true }, state.enemies.length, state.floor, state.routeEffects?.enemyDamageMultiplier));
+      state.enemies.push(createEnemy({ ...entry, engaged: true }, state.enemies.length, state.floor,
+        state.routeEffects?.enemyDamageMultiplier, state.gradualFloorScaling));
     }
     state.cameraShake = Math.max(state.cameraShake, 0.17);
     syncMusic();
@@ -2806,7 +2810,8 @@
     if (state.patrolsArrived || state.elapsed < state.timeLimit + 0.8) return;
     state.patrolsArrived = true;
     for (const patrol of stage.reinforcements) {
-      state.enemies.push(createEnemy(patrol, state.enemies.length, state.floor, state.routeEffects?.enemyDamageMultiplier));
+      state.enemies.push(createEnemy(patrol, state.enemies.length, state.floor,
+        state.routeEffects?.enemyDamageMultiplier, state.gradualFloorScaling));
     }
     syncMusic();
   }
