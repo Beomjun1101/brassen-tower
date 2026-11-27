@@ -18,6 +18,7 @@
   ];
 
   const gearById = new Map();
+  const gearSlotCapacity = 2;
   const statLabels = {
     damage: "공격력",
     maxHp: "최대 체력",
@@ -122,7 +123,11 @@
     const equipped = new Map();
     for (const id of progress.gearIds) {
       const item = gearById.get(id);
-      if (item) equipped.set(item.slot, item);
+      if (!item) continue;
+      const entries = equipped.get(item.slot) ?? [];
+      if (entries.length >= gearSlotCapacity) continue;
+      entries.push(item);
+      equipped.set(item.slot, entries);
     }
     return equipped;
   }
@@ -150,24 +155,37 @@
     return gear;
   }
 
-  function forgetUnownedGear(ownedIds) {
+  function removeGear(progress, ownedIds) {
+    const remaining = new Map();
+    for (const id of ownedIds) remaining.set(id, (remaining.get(id) ?? 0) + 1);
     for (const id of gearById.keys()) {
-      if (!ownedIds.has(id)) gearById.delete(id);
+      if (!remaining.has(id)) gearById.delete(id);
     }
+    const valid = [...equippedBySlot(progress).values()].flat();
+    return { ...progress, gearIds: valid.filter(({ id }) => {
+      const count = remaining.get(id) ?? 0;
+      if (count === 0) return false;
+      remaining.set(id, count - 1);
+      return true;
+    }).map(({ id }) => id) };
   }
 
-  function removeGear(progress, ownedIds) {
-    forgetUnownedGear(ownedIds);
-    return { ...progress, gearIds: progress.gearIds.filter((id) => ownedIds.has(id)) };
+  function unequip(progress, gearId) {
+    const index = progress.gearIds.indexOf(gearId);
+    if (index === -1) return progress;
+    const gearIds = [...progress.gearIds];
+    gearIds.splice(index, 1);
+    return { ...progress, gearIds };
   }
 
   function equip(progress, gearId) {
     const item = gearById.get(gearId);
     if (!item) return progress;
     const equipped = equippedBySlot(progress);
-    if (equipped.get(item.slot)?.id === gearId) return progress;
-    equipped.set(item.slot, item);
-    return { ...progress, gearIds: [...equipped.values()].map((entry) => entry.id) };
+    const entries = equipped.get(item.slot) ?? [];
+    if (entries.length >= gearSlotCapacity) entries.shift();
+    equipped.set(item.slot, [...entries, item]);
+    return { ...progress, gearIds: [...equipped.values()].flat().map((entry) => entry.id) };
   }
 
   function getStats(progress) {
@@ -182,7 +200,7 @@
       attackRange: 1.8, damageReduction: 0, healOnKill: 0, dashStrike: 0,
       guardBreak: 0, finishingDamage: 0, dashGrace: 0 };
     for (const [key, value] of Object.entries(progress.earned)) stats[key] += value;
-    for (const entry of equippedBySlot(progress).values()) {
+    for (const entry of [...equippedBySlot(progress).values()].flat()) {
       for (const [key, value] of Object.entries(entry.bonus)) stats[key] += value;
     }
     stats.maxHp = Math.round(stats.maxHp);
@@ -212,12 +230,12 @@
   function compareGear(progress, gearId, resolveStats) {
     const item = gearById.get(gearId);
     if (!item) return null;
-    const currentItem = equippedBySlot(progress).get(item.slot);
-    const replaced = currentItem?.id !== gearId ? currentItem ?? null : null;
+    const entries = equippedBySlot(progress).get(item.slot) ?? [];
+    const replaced = entries.length >= gearSlotCapacity ? entries[0] : null;
     return { item, replaced, changes: compareStats(progress, equip(progress, gearId), resolveStats) };
   }
 
   window.TowerRpg = { startingPoints, killRecoveryCap, attributes, slots, createProgress, gainXp, levelAttributeGains, killXp, getLevelStatus,
-    rewardChoices, rewardGear, removeGear, equippedBySlot, equip, getStats, attackInterval, compareGear, compareStats,
+    rewardChoices, rewardGear, removeGear, equippedBySlot, gearSlotCapacity, equip, unequip, getStats, attackInterval, compareGear, compareStats,
     gainStat, retainEarnedStats };
 })();

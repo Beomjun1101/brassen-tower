@@ -532,10 +532,11 @@ kbd {
 .gear-slot[data-slot="armor"] { --accent: #9ec9c1; }
 .gear-slot[data-slot="boots"] { --accent: #b8ce91; }
 .gear-slot[data-slot="charm"] { --accent: #c8b4e8; }
-.gear-slot[data-rarity="rare"] { --accent: #a5dff7; }
 .gear-slot-empty { border-left-color: #617365; background: #1a2822; color: var(--muted); }
 .gear-slot > :not(.gear-icon) { min-width: 0; }
-.gear-slot > span:not(.gear-icon) { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 5px; }
+.gear-slot-items, .gear-equipped-item { display: grid; min-width: 0; gap: 3px; }
+.gear-equipped-item + .gear-equipped-item { margin-top: 3px; padding-top: 5px; border-top: 1px solid #405447; }
+.gear-equipped-item[data-rarity="rare"] .gear-name { color: #a5dff7; }
 .gear-name, .gear-slot strong { font-weight: 790; }
 .gear-slot small { color: #c2d0c1; font-size: .71rem; line-height: 1.2; }
 .gear-slot-empty .gear-name, .gear-slot-empty small { color: #aabcb0; }
@@ -548,7 +549,7 @@ kbd {
   font: 720 .82rem/1 var(--mono);
 }
 
-.gear-icon { width: 20px; height: 21px; grid-row: span 2; }
+.gear-icon { width: 20px; height: 21px; align-self: start; }
 .gear-slot .gear-tag {
   display: inline-block;
   max-width: 100%;

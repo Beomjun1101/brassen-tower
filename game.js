@@ -402,7 +402,8 @@
         rpg.rewardGear({ ...item, id: item.id.slice(0, version) });
         return { ...entry, item };
       });
-      const progress = rpg.gainStat(runData.progress, "healOnKill", legacyRecovery);
+      const owned = inventory.filter(({ kind }) => kind === "gear").map(({ item }) => item.id);
+      const progress = rpg.gainStat(rpg.removeGear(runData.progress, owned), "healOnKill", legacyRecovery);
       run = { ...runData, progress, rewards: inventory, difficulty: normalizeDifficulty(runData.difficulty),
         classId: runData.classId ?? null, quests: village.migrateQuests(runData.quests), villageVisits: runData.villageVisits ?? {},
         random: randomFrom(saved.randomSeed), stats: village.applyClass(rpg.getStats(progress), runData.classId) };
@@ -483,9 +484,10 @@
     ]);
     const equipped = rpg.equippedBySlot(progress);
     setDetailList("status-gear", [["전투 무기", weapon.label + " · " + weapon.attackLabel],
-      ...rpg.slots.map(({ id, title }) => {
-        const item = equipped.get(id);
-        return [title, item ? [item.title, item.tag].filter(Boolean).join(" · ") : "비어 있음"];
+      ...rpg.slots.flatMap(({ id, title }) => {
+        const items = equipped.get(id) ?? [];
+        return items.length ? items.map((item, index) =>
+          [title + " " + (index + 1), [item.title, item.tag].filter(Boolean).join(" · ")]) : [[title, "비어 있음"]];
       })]);
     const availableGear = packEntries(equipped).filter(({ kind }) => kind === "gear").map(({ item }) => {
       const slot = rpg.slots.find(({ id }) => id === item.slot);
@@ -1194,29 +1196,42 @@
   function renderGear() {
     const equipped = run ? rpg.equippedBySlot(run.progress) : new Map();
     elements["gear-list"].replaceChildren(...rpg.slots.map((slot) => {
-      const item = equipped.get(slot.id);
+      const items = equipped.get(slot.id) ?? [];
       const box = document.createElement("div");
-      box.className = item ? "gear-slot" : "gear-slot gear-slot-empty";
+      box.className = items.length ? "gear-slot" : "gear-slot gear-slot-empty";
       box.dataset.slot = slot.id;
-      if (item) box.dataset.rarity = item.rarity;
       const emblem = document.createElement("span");
       emblem.className = "gear-icon";
       emblem.textContent = slot.icon;
       emblem.setAttribute("aria-hidden", "true");
       const label = document.createElement("small");
-      label.textContent = slot.title;
-      const name = document.createElement("strong");
-      name.className = "gear-name";
-      name.textContent = item?.title || "비어 있음";
-      const info = document.createElement("span");
-      info.append(label, name);
-      box.append(emblem, info);
-      if (item?.tag) {
-        const tag = document.createElement("small");
-        tag.className = "gear-tag";
-        tag.textContent = item.tag;
-        box.append(tag);
+      label.textContent = slot.title + " " + items.length + " / " + rpg.gearSlotCapacity;
+      const info = document.createElement("div");
+      info.className = "gear-slot-items";
+      info.append(label);
+      if (!items.length) {
+        const empty = document.createElement("strong");
+        empty.className = "gear-name";
+        empty.textContent = "비어 있음";
+        info.append(empty);
       }
+      for (const item of items) {
+        const row = document.createElement("div");
+        row.className = "gear-equipped-item";
+        row.dataset.rarity = item.rarity;
+        const name = document.createElement("strong");
+        name.className = "gear-name";
+        name.textContent = item.title;
+        row.append(name);
+        if (item.tag) {
+          const tag = document.createElement("small");
+          tag.className = "gear-tag";
+          tag.textContent = item.tag;
+          row.append(tag);
+        }
+        info.append(row);
+      }
+      box.append(emblem, info);
       return box;
     }));
   }
@@ -1250,13 +1265,25 @@
     return Object.entries(effects).map(([key, value]) => descriptions[key] + (key === "gold" ? goldText(value) : value)).join(" · ");
   }
 
+  function equippedRecords(equipped) {
+    const remaining = [...equipped.values()].flat().map(({ id }) => id);
+    return new Set(run.rewards.filter((entry) => {
+      if (entry.kind !== "gear") return false;
+      const index = remaining.indexOf(entry.item.id);
+      if (index === -1) return false;
+      remaining.splice(index, 1);
+      return true;
+    }));
+  }
+
   function packEntries(equipped) {
     if (!run) return [];
-    const worn = new Set(Array.from(equipped.values(), ({ id }) => id));
-    return run.rewards.filter((entry) => {
-      if (entry.kind === "gear") return !worn.delete(entry.item.id);
-      return entry.kind !== "gold";
-    }).reverse();
+    const worn = equippedRecords(equipped);
+    return run.rewards.filter((entry) => entry.kind !== "gold" && !worn.has(entry)).reverse();
+  }
+
+  function ownedGearIds() {
+    return run.rewards.filter((entry) => entry.kind === "gear").map((entry) => entry.item.id);
   }
 
   function renderPack() {
@@ -1279,10 +1306,12 @@
       const title = document.createElement("strong");
       const detail = document.createElement("small");
       title.textContent = entry.item.title;
-      const duplicate = entry.kind === "gear" && equipped.get(entry.item.slot)?.id === entry.item.id;
-      button.disabled = !safe || duplicate || entry.kind === "upgrade";
+      const items = entry.kind === "gear" ? equipped.get(entry.item.slot) ?? [] : [];
+      const replaced = items.length >= rpg.gearSlotCapacity ? items[0] : null;
+      button.disabled = !safe || entry.kind === "upgrade";
       detail.textContent = entry.kind === "gear"
-        ? rpg.slots.find(({ id }) => id === entry.item.slot).title + " · " + entry.item.power + "층 보상" + (duplicate ? " · 같은 장비 장착 중" : "")
+        ? rpg.slots.find(({ id }) => id === entry.item.slot).title + " · " + entry.item.power + "층 보상" +
+          (replaced ? " · " + replaced.title + " 교체" : "")
         : entry.kind === "supply" ? describeSupply(entry.item) : "공격력 +6 · 적용 중";
       button.append(title, detail);
       button.addEventListener("click", () => useOwnedReward(entry));
@@ -1292,6 +1321,7 @@
 
   function useOwnedReward(entry) {
     if (!packAvailable() || !run.rewards.includes(entry)) return;
+    if (entry.kind === "gear" && equippedRecords(rpg.equippedBySlot(run.progress)).has(entry)) return;
     if (entry.kind === "gear") {
       updateProgress(rpg.equip(run.progress, entry.item.id), true);
       renderGear();
@@ -1733,7 +1763,7 @@
       return;
     }
     const visit = visitDetails();
-    const equipment = run.progress.gearIds;
+    const worn = page === "sell" ? equippedRecords(rpg.equippedBySlot(run.progress)) : null;
     const shopSeed = (run.floorSeeds[state.floor - 1] ?? 0) ^ 0x4dad31c2;
     const allowance = page === "buy" ? recoveryAllowance(randomFrom(shopSeed)) : 0;
     const options = page === "buy"
@@ -1760,14 +1790,14 @@
       })
       : run.rewards.filter((entry) => entry.item && village.sellPrice(entry.item) > 0).map((entry) => {
         const price = village.sellPrice(entry.item);
-        const equipped = entry.kind === "gear" && equipment.includes(entry.item.id);
+        const equipped = worn.has(entry);
         return { id: "sell-" + entry.uid, title: entry.item.title, price: "+" + goldText(price) + " 금화",
           description: equipped ? "장착 중 · 판매하면 해제" : undefined, choose: () => {
           if (!run.rewards.includes(entry)) return;
           run.rewards = run.rewards.filter((reward) => reward !== entry);
           if (entry.kind === "gear") {
-            const owned = new Set(run.rewards.filter((reward) => reward.kind === "gear").map((reward) => reward.item.id));
-            updateProgress(rpg.removeGear(run.progress, owned), true);
+            const progress = equipped ? rpg.unequip(run.progress, entry.item.id) : run.progress;
+            updateProgress(rpg.removeGear(progress, ownedGearIds()), true);
             renderGear();
           }
           creditGold(price);
@@ -2582,6 +2612,7 @@
     elements["gear-compare"].dataset.kind = item.kind;
     setText("compare-heading", { gear: "교체 미리보기", stat: "성장 효과", supply: "공급품 효과" }[item.kind]);
     if (elements["compare-candidate-label"]) setText("compare-candidate-label", "선택한 보상");
+    setText("compare-current-label", "현재 장착");
     let changes = [];
     let equipped = "";
     let detail = item.description;
@@ -2589,6 +2620,8 @@
       const comparison = compareGearOffer(item);
       changes = comparison.changes;
       equipped = comparison.replaced?.title || "빈 슬롯";
+      setText("compare-heading", comparison.replaced ? "교체 미리보기" : "추가 착용 미리보기");
+      setText("compare-current-label", comparison.replaced ? "교체할 장비" : "착용할 자리");
     } else if (item.kind === "stat") {
       changes = rpg.compareStats(run.progress, rpg.gainStat(run.progress, item.stat, item.amount), comparisonStats);
     } else {
@@ -2778,10 +2811,9 @@
     run.rewards = [...olderGold, ...olderItems.slice(0, retainedItems)].sort((a, b) => a.uid - b.uid);
     run.gold = oldBalance;
     spendGold(oldGoldLost);
-    const owned = new Set(run.rewards.filter((entry) => entry.kind === "gear").map((entry) => entry.item.id));
     const statsLost = [...Object.values(run.progress.earned), ...Object.values(run.progress.earnedAttributes ?? {})]
       .some((value) => value !== 0);
-    updateProgress(rpg.retainEarnedStats(rpg.removeGear(run.progress, owned)));
+    updateProgress(rpg.retainEarnedStats(rpg.removeGear(run.progress, ownedGearIds())));
     return { recentItems, recentGold, oldItemsLost: olderItems.length - retainedItems, oldGoldLost, statsLost };
   }
 
