@@ -22,7 +22,7 @@
     "pack-panel", "pack-list", "pack-count", "compare-heading", "compare-candidate-label",
     "audio-toggle", "music-track", "back-to-title", "region-label",
     "elevation-label", "elevation-legend",
-    "status-dialog", "status-trigger", "status-close", "status-summary", "status-gear", "status-available-gear", "status-stats", "status-quests",
+    "status-dialog", "status-trigger", "status-close", "status-summary", "status-gear", "status-available-gear", "status-usable-items", "status-stats", "status-quests",
     "pause-dialog", "pause-trigger", "pause-resume", "pause-exit", "pause-save-error",
     "coach-tip", "coach-text", "coach-next",
   ].map((id) => [id, document.getElementById(id)]));
@@ -52,7 +52,7 @@
     route: { target: "#overlay-choices .route-choice", text: "다음 층에 적용할 통로 효과를 고르세요." },
     departure: { target: "#objective", text: "열린 문에 닿으면 위층으로 바로 올라갑니다." },
     status: { target: "#status-trigger",
-      text: "Q로 착용 중인 장비와 착용 가능한 장비를 확인하세요.", touchText: "상태창에서 착용 중인 장비와 착용 가능한 장비를 확인하세요." },
+      text: "Q로 장착 가능 장비와 사용 가능 품목을 확인하세요.", touchText: "상태창에서 장착 가능 장비와 사용 가능 품목을 확인하세요." },
     pack: { target: "#pack-panel > summary", text: "가방의 소모품은 눌러 사용하고, 장비는 눌러 착용하세요." },
     town: { target: "#objective", text: "게시판에서 의뢰를 받고 상점에서 물건을 사고팔 수 있습니다." },
   };
@@ -489,11 +489,15 @@
         return items.length ? items.map((item, index) =>
           [title + " " + (index + 1), [item.title, item.tag].filter(Boolean).join(" · ")]) : [[title, "비어 있음"]];
       })]);
-    const availableGear = packEntries(equipped).filter(({ kind }) => kind === "gear").map(({ item }) => {
+    const bag = packEntries(equipped);
+    const availableGear = bag.filter(({ kind }) => kind === "gear").map(({ item }) => {
       const slot = rpg.slots.find(({ id }) => id === item.slot);
       return [item.title, [slot?.title ?? "장비", item.tag].filter(Boolean).join(" · ")];
     });
     setDetailList("status-available-gear", availableGear.length ? availableGear : [["보유 장비", "가방에 장비가 없습니다."]]);
+    const usableItems = bag.filter(({ kind }) => kind === "supply")
+      .map(({ item }) => [item.title, describeSupply(item)]);
+    setDetailList("status-usable-items", usableItems.length ? usableItems : [["소모품", "사용할 품목이 없습니다."]]);
     setDetailList("status-stats", [
       ...rpg.attributes.map(({ id, title }) => [title, statValue(id, (progress.build[id] ?? 0) + (progress.earnedAttributes?.[id] ?? 0))]),
       ["기본 타격", statValue("damage", currentAttackDamage(battleWeapon, route))],
