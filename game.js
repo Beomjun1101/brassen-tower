@@ -22,7 +22,7 @@
     "pack-panel", "pack-list", "pack-count", "compare-heading", "compare-candidate-label",
     "audio-toggle", "music-track", "back-to-title", "region-label",
     "elevation-label", "elevation-legend",
-    "status-dialog", "status-trigger", "status-close", "status-summary", "status-gear", "status-available-gear", "status-usable-items", "status-stats", "status-quests",
+    "status-dialog", "status-trigger", "status-close", "status-summary", "status-gear", "status-available-gear", "status-usable-items", "status-item-feedback", "status-stats", "status-quests",
     "pause-dialog", "pause-trigger", "pause-resume", "pause-exit", "pause-save-error",
     "coach-tip", "coach-text", "coach-next",
   ].map((id) => [id, document.getElementById(id)]));
@@ -470,6 +470,43 @@
     }));
   }
 
+  function renderStatusItems(name, entries, describe, emptyText) {
+    const list = elements[name];
+    if (!list) return;
+    if (!entries.length) {
+      const row = document.createElement("li");
+      row.className = "pack-empty";
+      row.textContent = emptyText;
+      list.replaceChildren(row);
+      return;
+    }
+
+    list.replaceChildren(...entries.map((entry, index) => {
+      const row = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "pack-item";
+      button.disabled = !packAvailable();
+      const title = document.createElement("strong");
+      title.textContent = entry.item.title;
+      const detail = document.createElement("small");
+      detail.textContent = describe(entry.item);
+      button.append(title, detail);
+      button.addEventListener("click", () => {
+        if (!elements["status-dialog"].open || !useOwnedReward(entry)) return;
+        renderStatusDialog();
+        if (elements["status-item-feedback"]) {
+          setText("status-item-feedback", entry.item.title + (entry.kind === "gear" ? " 장착" : " 사용"));
+        }
+        const remaining = list.querySelectorAll("button:enabled");
+        const next = remaining[Math.min(index, remaining.length - 1)] ?? elements["status-close"];
+        next.focus({ preventScroll: true });
+      });
+      row.append(button);
+      return row;
+    }));
+  }
+
   function renderStatusDialog() {
     const player = state.player;
     const progress = run.progress;
@@ -490,14 +527,14 @@
           [title + " " + (index + 1), [item.title, item.tag].filter(Boolean).join(" · ")]) : [[title, "비어 있음"]];
       })]);
     const bag = packEntries(equipped);
-    const availableGear = bag.filter(({ kind }) => kind === "gear").map(({ item }) => {
+    renderStatusItems("status-available-gear", bag.filter(({ kind }) => kind === "gear"), (item) => {
       const slot = rpg.slots.find(({ id }) => id === item.slot);
-      return [item.title, [slot?.title ?? "장비", item.tag].filter(Boolean).join(" · ")];
-    });
-    setDetailList("status-available-gear", availableGear.length ? availableGear : [["보유 장비", "가방에 장비가 없습니다."]]);
-    const usableItems = bag.filter(({ kind }) => kind === "supply")
-      .map(({ item }) => [item.title, describeSupply(item)]);
-    setDetailList("status-usable-items", usableItems.length ? usableItems : [["소모품", "사용할 품목이 없습니다."]]);
+      const items = equipped.get(item.slot) ?? [];
+      const replacement = items.length >= rpg.gearSlotCapacity ? items[0].title + " 교체" : "";
+      return [slot?.title ?? "장비", item.tag, replacement].filter(Boolean).join(" · ");
+    }, "가방에 장비가 없습니다.");
+    renderStatusItems("status-usable-items", bag.filter(({ kind }) => kind === "supply"),
+      describeSupply, "사용할 품목이 없습니다.");
     setDetailList("status-stats", [
       ...rpg.attributes.map(({ id, title }) => [title, statValue(id, (progress.build[id] ?? 0) + (progress.earnedAttributes?.[id] ?? 0))]),
       ["기본 타격", statValue("damage", currentAttackDamage(battleWeapon, route))],
@@ -533,6 +570,7 @@
     dialogFocus.set(dialog, document.activeElement);
     clearInput();
     if (dialog === elements["status-dialog"]) {
+      if (elements["status-item-feedback"]) setText("status-item-feedback", "");
       renderStatusDialog();
     } else {
       elements["pause-save-error"].hidden = true;
@@ -1324,8 +1362,8 @@
   }
 
   function useOwnedReward(entry) {
-    if (!packAvailable() || !run.rewards.includes(entry)) return;
-    if (entry.kind === "gear" && equippedRecords(rpg.equippedBySlot(run.progress)).has(entry)) return;
+    if (!packAvailable() || !run.rewards.includes(entry)) return false;
+    if (entry.kind === "gear" && equippedRecords(rpg.equippedBySlot(run.progress)).has(entry)) return false;
     if (entry.kind === "gear") {
       updateProgress(rpg.equip(run.progress, entry.item.id), true);
       renderGear();
@@ -1346,6 +1384,7 @@
     syncHUD();
     renderPack();
     notify(entry.item.title + (entry.kind === "gear" ? " 장착" : " 사용"));
+    return true;
   }
 
   function packAvailable() {

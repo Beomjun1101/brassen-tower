@@ -602,6 +602,8 @@ kbd {
 }
 .status-detail-list dt { padding-inline-end: 5px; color: #c9d8c9; }
 .status-detail-list dd { font-weight: 720; text-align: end; }
+.status-action-list { display: grid; gap: 5px; padding: 0; list-style: none; }
+.status-action-list .pack-item { width: 100%; min-height: 44px; }
 .status-quests { grid-column: 1 / -1; }
 .status-quest-list { display: grid; gap: 6px; padding: 0; list-style: none; font-size: .8rem; overflow-wrap: anywhere; }
 .status-quest-list li { padding: 5px 0; border-top: 1px solid #384d41; }
