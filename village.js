@@ -206,7 +206,7 @@
     result.speed = Math.max(1, result.speed);
     result.damageReduction = Math.max(0, Math.min(0.5, result.damageReduction));
     result.guardBreak = Math.max(0, Math.min(1, result.guardBreak));
-    result.attackCooldown = Math.max(0.08, result.attackCooldown);
+    result.attackCooldown = Math.max(0, result.attackCooldown);
     result.dashCooldown = Math.max(0.35, result.dashCooldown);
     return result;
   }

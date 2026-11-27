@@ -41,6 +41,7 @@
   const motionPreference = window.matchMedia?.("(prefers-reduced-motion: reduce)");
   const dieRebounds = [0.38, 0.49, 0.61, 0.73];
   const checkpointKey = "brass-spire-campaign-v1";
+  const campaign = window.BrassenCampaign;
   const settingsKey = "brassen-tower-settings";
   const preferences = readSettings();
   const seenCoaches = new Map();
@@ -101,19 +102,19 @@
   };
   const playerWeapons = {
     sword: { reach: 1.8, angle: .38 },
-    hammer: { reach: 1.65, angle: .36, interval: 1.30, intervalOffset: .06, minimum: .18, impact: .53, stagger: .20 },
+    hammer: { reach: 1.65, angle: .36, interval: 1.30, intervalOffset: .06, impact: .53, stagger: .20 },
     rapier: { reach: 2.28, angle: .73, impact: .33, step: .17, power: .96 },
     daggers: { reach: 1.26, angle: .54, impact: .27, step: .12, power: .92 },
-    maul: { reach: 1.76, angle: .36, interval: 1.49, intervalOffset: .10, minimum: .25, impact: .62, stagger: .30, power: 1.15 },
-    poleaxe: { reach: 2.58, angle: .65, interval: 1.28, intervalOffset: .05, minimum: .16, impact: .48, stagger: .16 },
+    maul: { reach: 1.76, angle: .36, interval: 1.49, intervalOffset: .10, impact: .62, stagger: .30, power: 1.15 },
+    poleaxe: { reach: 2.58, angle: .65, interval: 1.28, intervalOffset: .05, impact: .48, stagger: .16 },
     sabre: { reach: 2.11, angle: .18, power: .97 },
-    greatsword: { reach: 2.35, angle: .44, interval: 1.36, intervalOffset: .05, minimum: .15, impact: .56, pierce: .17, power: 1.07 },
+    greatsword: { reach: 2.35, angle: .44, interval: 1.36, intervalOffset: .05, impact: .56, pierce: .17, power: 1.07 },
     twinblades: { reach: 1.42, angle: .55, step: .23, impact: .28, power: .89 },
     hooks: { reach: 1.62, angle: .56, impact: .39, counter: .22, power: .92 },
-    staff: { reach: 6.7, interval: 1.87, intervalOffset: .10, minimum: .32, swing: .39, impact: .55, projectile: "spell", speed: 9.5, power: .82 },
-    orb: { reach: 7.15, interval: 1.98, intervalOffset: .10, minimum: .34, swing: .43, impact: .55, projectile: "spell", speed: 10, pierce: .13, power: .81 },
-    bow: { reach: 6.05, interval: 1.62, intervalOffset: .10, minimum: .27, swing: .35, impact: .51, projectile: "arrow", speed: 13.5, power: .86 },
-    crossbow: { reach: 6.55, interval: 1.80, intervalOffset: .10, minimum: .29, swing: .36, impact: .43, projectile: "arrow", speed: 15, pierce: .10, power: .86 },
+    staff: { reach: 6.7, interval: 1.87, intervalOffset: .10, swing: .39, impact: .55, projectile: "spell", speed: 9.5, power: .82 },
+    orb: { reach: 7.15, interval: 1.98, intervalOffset: .10, swing: .43, impact: .55, projectile: "spell", speed: 10, pierce: .13, power: .81 },
+    bow: { reach: 6.05, interval: 1.62, intervalOffset: .10, swing: .35, impact: .51, projectile: "arrow", speed: 13.5, power: .86 },
+    crossbow: { reach: 6.55, interval: 1.80, intervalOffset: .10, swing: .36, impact: .43, projectile: "arrow", speed: 15, pierce: .10, power: .86 },
     gauntlets: { reach: .95, angle: .58, impact: .24, step: .10, stagger: .12, power: .94 },
     tonfa: { reach: 1.12, angle: .46, impact: .30, step: .13, stagger: .18, power: .92 },
   };
@@ -127,6 +128,7 @@
   let attackPointer = null;
   let attackPointerPosition = null;
   let run;
+  let runAccount = null;
   let stage;
   let state;
   let minimapBackground;
@@ -347,6 +349,7 @@
 
   function newRun(jumpFloor) {
     adminRun = jumpFloor !== undefined;
+    runAccount = campaign?.userId() ?? null;
     run = createRun();
     renderGear();
     enterFloor(jumpFloor ?? 1, run.stats.maxHp);
@@ -439,8 +442,10 @@
     if (adminRun) return false;
     const { random, stats, floorSeeds, ...data } = run;
     try {
-      localStorage.setItem(checkpointKey, JSON.stringify({ floor, health, route, randomSeed: random.snapshot(), scene,
-        run: { ...data, floorSeeds: [...floorSeeds] } }));
+      const checkpoint = { floor, health, route, randomSeed: random.snapshot(), scene,
+        run: { ...data, floorSeeds: [...floorSeeds] } };
+      if (campaign) campaign.save(checkpointKey, runAccount, checkpoint);
+      else localStorage.setItem(checkpointKey, JSON.stringify(checkpoint));
       return true;
     } catch {
       return false;
@@ -449,7 +454,7 @@
 
   function readCheckpoint() {
     try {
-      const saved = JSON.parse(localStorage.getItem(checkpointKey));
+      const saved = campaign ? campaign.read(checkpointKey) : JSON.parse(localStorage.getItem(checkpointKey));
       if (!saved?.run?.progress?.build || !Array.isArray(saved.run.rewards) || !Array.isArray(saved.run.floorSeeds) ||
           !Number.isInteger(saved.floor) || saved.floor < 1 || saved.floor > content.floorCount) return null;
       return saved;
@@ -530,6 +535,7 @@
 
   function restoreCheckpoint(saved) {
     adminRun = false;
+    runAccount = campaign?.userId() ?? null;
     try {
       const { storyChoices, scenesSeen, localPlans, ...runData } = saved.run;
       const equipped = new Set(runData.progress.gearIds);
@@ -815,18 +821,20 @@
     renderGear();
     renderFloorSteps();
     syncHUD();
-    const checkpoint = menu ? readCheckpoint() : null;
+    const account = menu ? campaign?.menu(checkpointKey) : null;
+    const checkpoint = menu && !account?.blocked ? readCheckpoint() : null;
     const options = [];
     if (checkpoint) options.push({
       id: "resume", title: "이어하기", description: checkpoint.floor + (hasSavedScene(checkpoint) ? "층 저장 지점 · " : "층 입장부터 · ") +
         difficulties[normalizeDifficulty(checkpoint.run.difficulty)].name,
       choose: () => { if (!restoreCheckpoint(checkpoint)) setupBuild(); },
     });
-    if (menu) options.push({
+    if (menu && !account?.blocked) options.push({
       id: "new-run", title: "새 등반", description: checkpoint ? "1층에 들어가면 새 기록이 저장됩니다." : "능력치 5점을 배분해 전투를 준비합니다.",
       choose: setupBuild,
     });
-    panel({ kicker: "", title: "Brassen Tower", copy: menu ? "" : "전투를 돌파하며 탑을 오르는 액션 로그라이크 · 1–" + previewFloorLimit + "층 체험판",
+    options.push(...(account?.options ?? []));
+    panel({ kicker: "", title: "Brassen Tower", copy: menu ? account?.message ?? "" : "전투를 돌파하며 탑을 오르는 액션 로그라이크 · 1–" + previewFloorLimit + "층 체험판",
       options, primary: menu ? undefined : "시작",
       activate: () => {
         audio.unlock().then(refreshAudioUI);
@@ -1687,7 +1695,7 @@
 
   function currentAttackInterval(weapon, route, stats = run.stats) {
     const multiplier = (route.attackCooldownMultiplier ?? 1) * (weapon.interval ?? 1);
-    return Math.max(weapon.minimum ?? 0, rpg.attackInterval(stats, multiplier, weapon.intervalOffset));
+    return rpg.attackInterval(stats, multiplier, weapon.intervalOffset);
   }
 
   function currentMoveSpeed(route = {}, stats = run.stats) {
@@ -3531,7 +3539,10 @@
     const trials = run.trials.length ? " · 추가 목표 " + run.trials.length + "개 달성" : "";
     if (victory) {
       if (!adminRun) {
-        try { localStorage.removeItem(checkpointKey); } catch {}
+        try {
+          if (campaign) campaign.save(checkpointKey, runAccount, null);
+          else localStorage.removeItem(checkpointKey);
+        } catch {}
       }
       panel({ kicker: "1,332층", title: "첨탑 등반 완료", copy: progress + trials,
         primary: "시작 화면으로", activate: () => setupTitle() });
@@ -3760,5 +3771,8 @@
     else newRun(floor);
   } });
   setupTitle();
+  campaign?.setup(checkpointKey, () => {
+    if (state.mode === "title" && elements.overlay.dataset.titleMenu === "true") setupTitle(true);
+  }, () => state.mode === "title");
   requestAnimationFrame(frame);
 })();

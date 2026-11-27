@@ -206,13 +206,14 @@
     stats.maxHp = Math.round(stats.maxHp);
     stats.damageReduction = Math.max(0, Math.min(0.5, stats.damageReduction));
     stats.guardBreak = Math.min(1, stats.guardBreak);
-    stats.attackCooldown = Math.max(0.08, stats.attackCooldown);
+    stats.attackCooldown = Math.max(0, stats.attackCooldown);
     stats.dashCooldown = Math.max(0.35, stats.dashCooldown);
     return stats;
   }
 
   function attackInterval(stats, routeMultiplier = 1, weaponOffset = 0) {
-    return Math.max(minimumAttackInterval, (stats.attackCooldown + weaponOffset) * routeMultiplier);
+    const weaponFactor = 1 + weaponOffset / baseAttackInterval;
+    return Math.max(minimumAttackInterval, stats.attackCooldown * weaponFactor * routeMultiplier);
   }
 
   function compareStats(progress, candidate, resolveStats = getStats) {

@@ -34,7 +34,7 @@ Esc의 설정에서 전체 음량, 자동 조준, 자동 장착을 바꿀 수 �
 
 전투가 시작되면 플레이어는 0.5초 뒤, 적은 1초 뒤부터 움직입니다. 레벨이 오를 때마다 새 최대 체력의 5%를 회복합니다.
 
-기본 공격 간격은 0.20초입니다. 장비와 갈림길의 효과로 간격을 줄일 수 있으며 전체 하한은 0.125초입니다. 무기에 따라 공격 간격과 하한이 달라집니다. 유격병은 측면을 노리고, 파쇄병은 강한 근접 공격을 씁니다. 저격병은 멀리서 조준하고, 공작병은 폭발 위험 구역을 만듭니다.
+기본 공격 간격은 0.20초입니다. 장비와 갈림길의 효과로 간격을 줄일 수 있으며 전체 하한은 0.125초입니다. 무기마다 기본 간격이 다르며, 단축 효과를 충분히 쌓으면 모든 무기가 0.125초에 도달합니다. 유격병은 측면을 노리고, 파쇄병은 강한 근접 공격을 씁니다. 저격병은 멀리서 조준하고, 공작병은 폭발 위험 구역을 만듭니다.
 
 처치 시 회복은 드물게 나오는 등반 스탯입니다. 최대 7.5까지 오르며, 사망하면 모두 잃습니다. 한도를 넘는 회복 보상은 남은 수치만 제공하며, 이미 7.5이면 복합 보상에는 나머지 효과만 표시됩니다.
 
@@ -95,3 +95,13 @@ Esc의 설정에서 전체 음량, 자동 조준, 자동 장착을 바꿀 수 �
 `index.html`은 화면 구조를, `styles.css`는 인터페이스를 정의합니다. `game.js`는 게임 진행을 맡고, `render.js`와 `title.js`는 배경과 캐릭터를 Canvas에 그립니다. 나머지 스크립트는 층과 보상, 성장, 마을, 소리를 구성합니다.
 
 HTML에서 CSS와 JavaScript를 상대 경로로 불러오는 정적 게임입니다. GitHub Pages에서 바로 배포하려면 **Settings → Pages**의 게시 원본을 **Deploy from a branch**로 두고 소스가 들어 있는 브랜치의 **/(root)**를 선택하세요. `.nojekyll`로 별도 빌드 없이 소스 파일을 게시합니다. [GitHub Pages 게시 설정](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
+
+
+## GitHub 로그인과 기기 간 저장
+
+게임은 GitHub Pages에서 실행되고, 로그인과 계정별 저장은 Supabase에서 처리합니다. 연결이 설정되면 시작 메뉴에 **GitHub로 로그인**이 표시됩니다. 로그아웃 상태의 저장은 기기에 남습니다. 로그인한 계정에 저장이 없으면 **이 기기의 기록을 계정에 복사**할 수 있습니다.
+
+1. Supabase 프로젝트를 만들고 SQL Editor에서 [캠페인 저장 마이그레이션](supabase/migrations/20261128000100_create_brassen_campaigns.sql)을 적용합니다.
+2. GitHub OAuth App을 등록합니다. 홈페이지는 게임 주소, 콜백 URL은 Supabase의 GitHub 로그인 설정에서 확인한 URL을 입력합니다. OAuth Client ID와 Client Secret은 Supabase의 GitHub 인증 제공자 설정에 입력합니다. [GitHub 로그인 설정](https://supabase.com/docs/guides/auth/social-sign-in/auth-github)
+3. Supabase 인증의 Site URL과 허용 리디렉션에 게임 주소 `https://beomjun1101.github.io/brassen-tower/`를 등록합니다. [리디렉션 URL 설정](https://supabase.com/docs/guides/auth/redirect-urls)
+4. [cloud-config.js](cloud-config.js)에 프로젝트 URL과 공개용 publishable key를 입력하고 GitHub Pages에 배포합니다.
