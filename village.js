@@ -17,7 +17,7 @@
   ];
   const classes = [
     { id: "sentinel", title: "수호병", description: "타격을 버티며 통로를 지킵니다.", detail: "최대 체력 +14 · 피해 감소 +9%p · 이동 −0.15칸/초", bonus: { maxHp: 14, damageReduction: 0.09, speed: -0.15 } },
-    { id: "duelist", title: "결투가", description: "짧은 틈에 재빨리 칼을 넣습니다.", detail: "공격력 +6 · 공격 간격 −0.025초(최소 0.20초) · 최대 체력 −8", bonus: { damage: 6, attackCooldown: -0.025, maxHp: -8 } },
+    { id: "duelist", title: "결투가", description: "짧은 틈에 재빨리 칼을 넣습니다.", detail: "공격력 +6 · 공격 간격 −0.025초(최소 0.10초) · 최대 체력 −8", bonus: { damage: 6, attackCooldown: -0.025, maxHp: -8 } },
     { id: "scout", title: "척후병", description: "자리를 바꾸며 적을 따돌립니다.", detail: "이동 +0.28칸/초 · 대쉬 재사용 −0.09초 · 공격력 −2", bonus: { speed: 0.28, dashCooldown: -0.09, damage: -2 } },
     { id: "mage", title: "마법사", description: "먼 적을 마력탄으로 견제합니다.",
       detail: "공격력 +2 · 최대 체력 −12 · 이동 −0.12칸/초", bonus: { damage: 2, maxHp: -12, speed: -0.12 } },
@@ -27,7 +27,7 @@
       detail: "최대 체력 +10 · 피해 감소 +4%p", bonus: { maxHp: 10, damageReduction: 0.04 } },
     { id: "bulwark", parent: "sentinel", title: "철벽 수호병", description: "폭주한 설비 앞에서 오래 버팁니다.", detail: "최대 체력 +24 · 피해 감소 +13%p · 이동 −0.18칸/초", bonus: { maxHp: 24, damageReduction: 0.13, speed: -0.18 } },
     { id: "marshal", parent: "sentinel", title: "전열 집행관", description: "피해를 흘리고 정면의 적을 밀어붙입니다.", detail: "최대 체력 +18 · 피해 감소 +10%p · 공격력 +5", bonus: { maxHp: 18, damageReduction: 0.10, damage: 5 } },
-    { id: "sabre", parent: "duelist", title: "속검 결투가", description: "체력을 내주고 공격 사이의 틈을 줄입니다.", detail: "공격력 +10 · 공격 간격 −0.045초(최소 0.20초) · 최대 체력 −10", bonus: { damage: 10, attackCooldown: -0.045, maxHp: -10 } },
+    { id: "sabre", parent: "duelist", title: "속검 결투가", description: "체력을 내주고 공격 사이의 틈을 줄입니다.", detail: "공격력 +10 · 공격 간격 −0.045초(최소 0.10초) · 최대 체력 −10", bonus: { damage: 10, attackCooldown: -0.045, maxHp: -10 } },
     { id: "breaker", parent: "duelist", title: "갑주 파쇄인", description: "단단한 상대의 방호를 무너뜨립니다.", detail: "공격력 +9 · 장갑 관통 +22%p · 최대 체력 −5", bonus: { damage: 9, guardBreak: 0.22, maxHp: -5 } },
     { id: "runner", parent: "scout", title: "틈새 길잡이", description: "좁은 통로에서도 빠르게 빠져나옵니다.", detail: "이동 +0.45칸/초 · 대쉬 재사용 −0.16초 · 공격력 −2", bonus: { speed: 0.45, dashCooldown: -0.16, damage: -2 } },
     { id: "riposte", parent: "scout", title: "반격 척후병", description: "대쉬 직후의 한 번에 힘을 싣습니다.", detail: "이동 +0.25칸/초 · 대쉬 재사용 −0.10초 · 대쉬 후 피해 +10", bonus: { speed: 0.25, dashCooldown: -0.10, dashStrike: 10 } },
@@ -199,7 +199,7 @@
     result.speed = Math.max(1, result.speed);
     result.damageReduction = Math.max(0, Math.min(0.5, result.damageReduction));
     result.guardBreak = Math.max(0, Math.min(1, result.guardBreak));
-    result.attackCooldown = Math.max(0.16, result.attackCooldown);
+    result.attackCooldown = Math.max(0.08, result.attackCooldown);
     result.dashCooldown = Math.max(0.35, result.dashCooldown);
     return result;
   }

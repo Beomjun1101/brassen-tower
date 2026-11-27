@@ -246,15 +246,19 @@
             <h3 id="status-summary-title">등반가</h3>
             <dl id="status-summary" class="status-detail-list"></dl>
           </section>
-          <section aria-labelledby="status-gear-title">
-            <h3 id="status-gear-title">장착 장비</h3>
-            <dl id="status-gear" class="status-detail-list"></dl>
-          </section>
           <section aria-labelledby="status-stats-title">
             <h3 id="status-stats-title">능력치</h3>
             <dl id="status-stats" class="status-detail-list"></dl>
           </section>
-          <section aria-labelledby="status-quests-title">
+          <section aria-labelledby="status-gear-title">
+            <h3 id="status-gear-title">착용 중인 장비</h3>
+            <dl id="status-gear" class="status-detail-list"></dl>
+          </section>
+          <section aria-labelledby="status-available-gear-title">
+            <h3 id="status-available-gear-title">착용 가능한 장비</h3>
+            <dl id="status-available-gear" class="status-detail-list"></dl>
+          </section>
+          <section class="status-quests" aria-labelledby="status-quests-title">
             <h3 id="status-quests-title">의뢰</h3>
             <ul id="status-quests" class="status-quest-list"></ul>
           </section>
@@ -270,6 +274,10 @@
         </div>
       </dialog>
 
+      <aside id="coach-tip" class="coach-tip" aria-label="플레이 안내" hidden>
+        <p id="coach-text" role="status" aria-atomic="true"></p>
+        <button id="coach-next" class="coach-next" type="button" aria-describedby="coach-text">다음</button>
+      </aside>
       <p id="live-status" class="visually-hidden" role="status" aria-live="polite"></p>
       <noscript><p class="noscript-note">플레이하려면 브라우저의 자바스크립트를 활성화하세요.</p></noscript>
     </div>

@@ -33,7 +33,8 @@
     dashGrace: "대쉬 무적 시간",
   };
   const lowerIsBetter = new Set(["attackCooldown", "dashCooldown"]);
-  const baseAttackInterval = 0.20;
+  const baseAttackInterval = 0.10;
+  const killRecoveryCap = 10;
 
   const levelThresholds = [0, 50, 100, 175, 265, 395, 555, 755, 1000, 1300, 1665, 2110];
   const enemyExperience = {
@@ -48,12 +49,15 @@
 
   function gainStat(progress, key, amount) {
     if (!Object.hasOwn(statLabels, key) || !Number.isFinite(amount)) return progress;
-    const earned = { ...progress.earned, [key]: (progress.earned[key] ?? 0) + amount };
+    const total = (progress.earned[key] ?? 0) + amount;
+    const earned = { ...progress.earned, [key]: key === "healOnKill" ? Math.min(killRecoveryCap, total) : total };
     return { ...progress, earned };
   }
 
   function retainEarnedStats(progress) {
-    const earned = Object.fromEntries(Object.entries(progress.earned).map(([key, value]) => [key, value * 2 / 5]));
+    const earned = Object.fromEntries(Object.entries(progress.earned)
+      .filter(([key]) => key !== "healOnKill")
+      .map(([key, value]) => [key, value * 2 / 5]));
     const earnedAttributes = Object.fromEntries(
       Object.entries(progress.earnedAttributes ?? {}).map(([key, value]) => [key, value * 2 / 5]),
     );
@@ -184,13 +188,13 @@
     stats.maxHp = Math.round(stats.maxHp);
     stats.damageReduction = Math.max(0, Math.min(0.5, stats.damageReduction));
     stats.guardBreak = Math.min(1, stats.guardBreak);
-    stats.attackCooldown = Math.max(0.16, stats.attackCooldown);
+    stats.attackCooldown = Math.max(0.08, stats.attackCooldown);
     stats.dashCooldown = Math.max(0.35, stats.dashCooldown);
     return stats;
   }
 
-  function attackInterval(stats, routeMultiplier = 1) {
-    return Math.max(baseAttackInterval, stats.attackCooldown * routeMultiplier);
+  function attackInterval(stats, routeMultiplier = 1, weaponOffset = 0) {
+    return Math.max(baseAttackInterval, (stats.attackCooldown + weaponOffset) * routeMultiplier);
   }
 
   function compareStats(progress, candidate, resolveStats = getStats) {
@@ -213,7 +217,7 @@
     return { item, replaced, changes: compareStats(progress, equip(progress, gearId), resolveStats) };
   }
 
-  window.TowerRpg = { startingPoints, attributes, slots, createProgress, gainXp, levelAttributeGains, killXp, getLevelStatus,
+  window.TowerRpg = { startingPoints, killRecoveryCap, attributes, slots, createProgress, gainXp, levelAttributeGains, killXp, getLevelStatus,
     rewardChoices, rewardGear, removeGear, equippedBySlot, equip, getStats, attackInterval, compareGear, compareStats,
     gainStat, retainEarnedStats };
 })();

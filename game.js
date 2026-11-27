@@ -22,8 +22,9 @@
     "pack-panel", "pack-list", "pack-count", "compare-heading", "compare-candidate-label",
     "audio-toggle", "music-track", "back-to-title", "region-label",
     "elevation-label", "elevation-legend",
-    "status-dialog", "status-trigger", "status-close", "status-summary", "status-gear", "status-stats", "status-quests",
+    "status-dialog", "status-trigger", "status-close", "status-summary", "status-gear", "status-available-gear", "status-stats", "status-quests",
     "pause-dialog", "pause-trigger", "pause-resume", "pause-exit", "pause-save-error",
+    "coach-tip", "coach-text", "coach-next",
   ].map((id) => [id, document.getElementById(id)]));
   const minimapSection = elements.minimap.closest(".map-section");
 
@@ -31,15 +32,29 @@
   const playerStartDelay = 0.5;
   const enemyStartDelay = 1;
   const challengeGold = 12;
+  const killRecoveryOfferChance = 0.05;
   const parryWindow = 0.125;
   const failedParryCooldown = 5;
   const motionPreference = window.matchMedia?.("(prefers-reduced-motion: reduce)");
   const dieRebounds = [0.38, 0.49, 0.61, 0.73];
   const checkpointKey = "brass-spire-campaign-v1";
-  const seenTutorials = new Set();
-  const tutorials = {
-    1: { title: "첫 전투", copy: "WASD 또는 방향키로 움직이고, 스페이스바를 한 번씩 누르거나 클릭해 공격합니다.\nShift로 대쉬하고, 적의 공격이 닿는 순간 F로 패링하세요.\n터치 화면에서는 아래 조작 버튼을 쓰세요. 적을 모두 쓰러뜨리면 보상을 고르고, 열린 출구에 닿으면 다음 층으로 올라갑니다." },
-    5: { title: "첫 쉼터", copy: "시설 가까이에서 E를 누르거나 시설을 클릭하세요.\n게시판에서 의뢰를 받고, 상점에서 물건을 사고팔 수 있습니다. 가방 속 아이템은 클릭하면 바로 사용하거나 장착합니다.\n정비가 끝나면 ‘위층으로’ 문에 닿으세요." },
+  const seenCoaches = new Map();
+  const coach = {
+    dice: { target: "#entry-continue",
+      text: "이 버튼이나 Space로 전투를 시작하세요.", touchText: "주사위가 멈추면 이 버튼으로 전투를 시작하세요." },
+    movement: { target: "#keyboard-help .control-list > :first-child", touch: ".touch-movement",
+      text: "WASD나 방향키로 이동하세요.", touchText: "방향 버튼을 누르고 이동하세요." },
+    attack: { target: "#keyboard-help .control-list > :nth-child(2)", touch: '[data-action="attack"]',
+      text: "Space나 클릭으로 가장 가까운 적을 공격하세요.", touchText: "공격 버튼으로 가까운 적을 공격하세요." },
+    defense: { target: ".parry-readout", touch: '[data-action="parry"]',
+      text: "Shift로 대쉬하고, 적의 공격이 닿을 때 F로 패링하세요.", touchText: "대쉬로 피하고, 공격이 닿을 때 패링하세요." },
+    reward: { target: "#overlay-choices .route-choice", text: "장비 보상은 받는 즉시 착용합니다." },
+    route: { target: "#overlay-choices .route-choice", text: "다음 층에 적용할 통로 효과를 고르세요." },
+    departure: { target: "#objective", text: "열린 문에 닿으면 위층으로 바로 올라갑니다." },
+    status: { target: "#status-trigger",
+      text: "Q로 착용 중인 장비와 착용 가능한 장비를 확인하세요.", touchText: "상태창에서 착용 중인 장비와 착용 가능한 장비를 확인하세요." },
+    pack: { target: "#pack-panel > summary", text: "가방의 소모품은 눌러 사용하고, 장비는 눌러 착용하세요." },
+    town: { target: "#objective", text: "게시판에서 의뢰를 받고 상점에서 물건을 사고팔 수 있습니다." },
   };
   const swingDurations = [0.24, 0.27, 0.32];
   const terrainCycles = {
@@ -74,19 +89,19 @@
   };
   const playerWeapons = {
     sword: { reach: 1.8, angle: .38 },
-    hammer: { reach: 1.65, angle: .36, interval: 1.30, impact: .53, stagger: .20 },
+    hammer: { reach: 1.65, angle: .36, interval: 1.30, intervalOffset: .06, minimum: .18, impact: .53, stagger: .20 },
     rapier: { reach: 2.28, angle: .73, impact: .33, step: .17, power: .96 },
     daggers: { reach: 1.26, angle: .54, impact: .27, step: .12, power: .92 },
-    maul: { reach: 1.76, angle: .36, interval: 1.49, impact: .62, stagger: .30, power: 1.15 },
-    poleaxe: { reach: 2.58, angle: .65, interval: 1.28, impact: .48, stagger: .16 },
+    maul: { reach: 1.76, angle: .36, interval: 1.49, intervalOffset: .10, minimum: .25, impact: .62, stagger: .30, power: 1.15 },
+    poleaxe: { reach: 2.58, angle: .65, interval: 1.28, intervalOffset: .05, minimum: .16, impact: .48, stagger: .16 },
     sabre: { reach: 2.11, angle: .18, power: .97 },
-    greatsword: { reach: 2.35, angle: .44, interval: 1.36, impact: .56, pierce: .17, power: 1.07 },
+    greatsword: { reach: 2.35, angle: .44, interval: 1.36, intervalOffset: .05, minimum: .15, impact: .56, pierce: .17, power: 1.07 },
     twinblades: { reach: 1.42, angle: .55, step: .23, impact: .28, power: .89 },
     hooks: { reach: 1.62, angle: .56, impact: .39, counter: .22, power: .92 },
-    staff: { reach: 6.7, interval: 1.87, minimum: .32, swing: .39, impact: .55, projectile: "spell", speed: 9.5, power: .82 },
-    orb: { reach: 7.15, interval: 1.98, minimum: .34, swing: .43, impact: .55, projectile: "spell", speed: 10, pierce: .13, power: .81 },
-    bow: { reach: 6.05, interval: 1.62, minimum: .27, swing: .35, impact: .51, projectile: "arrow", speed: 13.5, power: .86 },
-    crossbow: { reach: 6.55, interval: 1.80, minimum: .29, swing: .36, impact: .43, projectile: "arrow", speed: 15, pierce: .10, power: .86 },
+    staff: { reach: 6.7, interval: 1.87, intervalOffset: .10, minimum: .32, swing: .39, impact: .55, projectile: "spell", speed: 9.5, power: .82 },
+    orb: { reach: 7.15, interval: 1.98, intervalOffset: .10, minimum: .34, swing: .43, impact: .55, projectile: "spell", speed: 10, pierce: .13, power: .81 },
+    bow: { reach: 6.05, interval: 1.62, intervalOffset: .10, minimum: .27, swing: .35, impact: .51, projectile: "arrow", speed: 13.5, power: .86 },
+    crossbow: { reach: 6.55, interval: 1.80, intervalOffset: .10, minimum: .29, swing: .36, impact: .43, projectile: "arrow", speed: 15, pierce: .10, power: .86 },
     gauntlets: { reach: .95, angle: .58, impact: .24, step: .10, stagger: .12, power: .94 },
     tonfa: { reach: 1.12, angle: .46, impact: .30, step: .13, stagger: .18, power: .92 },
   };
@@ -109,6 +124,8 @@
   let reducedMotion = motionPreference?.matches ?? false;
   let previousTime = performance.now();
   let trackName = "";
+  let activeCoach;
+  let coachAnchor;
 
   function randomFrom(seed) {
     let value = seed;
@@ -364,10 +381,6 @@
       case "branch":
         chooseRoute(state.branchOffers);
         break;
-      case "tutorial":
-        enterPlayableScene();
-        showTutorial();
-        break;
       default:
         enterPlayableScene();
         break;
@@ -378,16 +391,21 @@
   function restoreCheckpoint(saved) {
     adminRun = false;
     try {
-      for (const entry of saved.run.rewards) {
-        if (entry.kind === "gear") {
-          const version = entry.item.id.lastIndexOf("@");
-          rpg.rewardGear({ ...entry.item, id: entry.item.id.slice(0, version) });
-        }
-      }
       const { storyChoices, scenesSeen, localPlans, ...runData } = saved.run;
-      run = { ...runData, difficulty: normalizeDifficulty(runData.difficulty),
-        classId: saved.run.classId ?? null, quests: village.migrateQuests(saved.run.quests), villageVisits: saved.run.villageVisits ?? {},
-        random: randomFrom(saved.randomSeed), stats: village.applyClass(rpg.getStats(saved.run.progress), saved.run.classId) };
+      const equipped = new Set(runData.progress.gearIds);
+      let legacyRecovery = 0;
+      const inventory = runData.rewards.map((entry) => {
+        if (entry.kind !== "gear") return entry;
+        if (equipped.delete(entry.item.id)) legacyRecovery += entry.item.bonus?.healOnKill ?? 0;
+        const item = rewards.storedGear(entry.item);
+        const version = item.id.lastIndexOf("@");
+        rpg.rewardGear({ ...item, id: item.id.slice(0, version) });
+        return { ...entry, item };
+      });
+      const progress = rpg.gainStat(runData.progress, "healOnKill", legacyRecovery);
+      run = { ...runData, progress, rewards: inventory, difficulty: normalizeDifficulty(runData.difficulty),
+        classId: runData.classId ?? null, quests: village.migrateQuests(runData.quests), villageVisits: runData.villageVisits ?? {},
+        random: randomFrom(saved.randomSeed), stats: village.applyClass(rpg.getStats(progress), runData.classId) };
       renderGear();
       if (hasSavedScene(saved)) {
         restoreScene(saved.scene);
@@ -442,7 +460,7 @@
   }
 
   function setDetailList(name, entries) {
-    elements[name].replaceChildren(...entries.flatMap(([label, value]) => {
+    elements[name]?.replaceChildren(...entries.flatMap(([label, value]) => {
       const term = document.createElement("dt");
       const detail = document.createElement("dd");
       term.textContent = label;
@@ -465,14 +483,22 @@
     ]);
     const equipped = rpg.equippedBySlot(progress);
     setDetailList("status-gear", [["전투 무기", weapon.label + " · " + weapon.attackLabel],
-      ...rpg.slots.map(({ id, title }) => [title, equipped.get(id)?.title ?? "비어 있음"])]);
+      ...rpg.slots.map(({ id, title }) => {
+        const item = equipped.get(id);
+        return [title, item ? [item.title, item.tag].filter(Boolean).join(" · ") : "비어 있음"];
+      })]);
+    const availableGear = packEntries(equipped).filter(({ kind }) => kind === "gear").map(({ item }) => {
+      const slot = rpg.slots.find(({ id }) => id === item.slot);
+      return [item.title, [slot?.title ?? "장비", item.tag].filter(Boolean).join(" · ")];
+    });
+    setDetailList("status-available-gear", availableGear.length ? availableGear : [["보유 장비", "가방에 장비가 없습니다."]]);
     setDetailList("status-stats", [
       ...rpg.attributes.map(({ id, title }) => [title, statValue(id, (progress.build[id] ?? 0) + (progress.earnedAttributes?.[id] ?? 0))]),
       ["기본 타격", statValue("damage", currentAttackDamage(battleWeapon, route))],
       ["사거리", statValue("attackRange", currentAttackRange(battleWeapon, route))],
       ["공격 간격", statValue("attackCooldown", currentAttackInterval(battleWeapon, route))],
       ["이동 속도", statValue("speed", run.stats.speed * (route.speedMultiplier ?? 1))],
-      ["처치 시 회복", statValue("healOnKill", killRecovery(route))],
+      ["처치 시 회복", statValue("healOnKill", killRecovery()) + " / " + rpg.killRecoveryCap],
       ["받는 피해 감소", statValue("damageReduction", Math.min(.70, run.stats.damageReduction + (route.damageReductionBonus ?? 0)))],
     ]);
     const quests = run.quests.map((quest) => {
@@ -737,6 +763,7 @@
 
   function openEntry() {
     if (state.mode !== "rolling" || state.entryPhase !== "settle" || window.TowerAdmin?.isOpen()) return;
+    if (state.floor === 1 && !hasSeenCoach("dice")) markCoachSeen("dice");
     state.entryPhase = "open";
     state.entryDuration = state.entryOpenAt + (reducedMotion ? 180 : 550);
     clearInput();
@@ -794,24 +821,123 @@
     if (state.ward) messages.push("보호막 " + state.ward);
     if (state.overclock) messages.push("공급품 공격력 +" + state.overclock);
     notify(messages.join(" · "));
-    showTutorial();
   }
 
-  function showTutorial() {
-    const floor = state.floor;
-    const tutorial = tutorials[floor];
-    if (adminRun || !tutorial || seenTutorials.has(floor)) return;
-    const key = "brassen-tutorial-" + floor;
-    try {
-      if (localStorage.getItem(key)) return;
-    } catch {}
-    state.mode = "tutorial";
-    notify(null);
-    panel({ ...tutorial, kicker: floor + "층 · 안내", primary: "확인", activate: () => {
-      seenTutorials.add(floor);
-      try { localStorage.setItem(key, "1"); } catch {}
-      enterPlayableScene();
-    } });
+  function guideForScene() {
+    if (!run || adminRun || hasRunDialog()) return [];
+    if (state.floor === 1) {
+      if (state.mode === "rolling" && state.entryPhase === "settle") return ["dice"];
+      if (state.mode === "gear") return ["reward"];
+      if (state.mode === "branch") return ["route"];
+      if (state.mode === "playing") return state.departure ? ["departure"] : ["movement", "attack", "defense"];
+    }
+    if (state.mode !== "playing") return [];
+    if (state.floor === 2 && !state.combatComplete) return ["status", "pack"];
+    if (state.floor === 5 && state.shelter && !state.departure) return ["town"];
+    return [];
+  }
+
+  function hasSeenCoach(id) {
+    if (!seenCoaches.has(id)) {
+      let dismissed = false;
+      try { dismissed = localStorage.getItem("brassen-coach-" + id) === "1"; } catch {}
+      seenCoaches.set(id, dismissed);
+    }
+    return seenCoaches.get(id);
+  }
+
+  function markCoachSeen(id) {
+    seenCoaches.set(id, true);
+    try { localStorage.setItem("brassen-coach-" + id, "1"); } catch {}
+  }
+
+  function positionCoach() {
+    if (!coachAnchor) return;
+    const tip = elements["coach-tip"];
+    const bounds = coachAnchor.getBoundingClientRect();
+    const width = document.documentElement.clientWidth;
+    const height = window.innerHeight;
+    tip.hidden = !bounds.width || !bounds.height;
+    if (tip.hidden) return;
+
+    const edge = 8;
+    const gap = 12;
+    const box = tip.getBoundingClientRect();
+    const rect = {
+      left: Math.max(edge, Math.min(width - edge, bounds.left)),
+      right: Math.max(edge, Math.min(width - edge, bounds.right)),
+      top: Math.max(edge, Math.min(height - edge, bounds.top)),
+      bottom: Math.max(edge, Math.min(height - edge, bounds.bottom)),
+    };
+    const centerX = (rect.left + rect.right) / 2;
+    const centerY = (rect.top + rect.bottom) / 2;
+    const options = {
+      top: { x: centerX - box.width / 2, y: rect.top - gap - box.height },
+      bottom: { x: centerX - box.width / 2, y: rect.bottom + gap },
+      left: { x: rect.left - gap - box.width, y: centerY - box.height / 2 },
+      right: { x: rect.right + gap, y: centerY - box.height / 2 },
+    };
+    const order = activeCoach === "pack" && bounds.top < height && bounds.bottom > 0
+      ? ["left", "right", "top", "bottom"] : ["top", "bottom", "left", "right"];
+    const fits = {
+      top: options.top.y >= edge,
+      bottom: options.bottom.y + box.height <= height - edge,
+      left: options.left.x >= edge,
+      right: options.right.x + box.width <= width - edge,
+    };
+    const side = order.find((candidate) => fits[candidate]) ?? (centerY >= height / 2 ? "top" : "bottom");
+    const x = Math.max(edge, Math.min(width - box.width - edge, options[side].x));
+    const y = Math.max(edge, Math.min(height - box.height - edge, options[side].y));
+    const vertical = side === "top" || side === "bottom";
+    const offset = vertical ? centerX - x : centerY - y;
+    const limit = (vertical ? box.width : box.height) - 12;
+    tip.dataset.side = side;
+    tip.style.setProperty("--coach-left", x + "px");
+    tip.style.setProperty("--coach-top", y + "px");
+    tip.style.setProperty("--coach-arrow", Math.max(12, Math.min(limit, offset)) + "px");
+  }
+
+  function refreshCoach() {
+    const tip = elements["coach-tip"];
+    if (!tip) return;
+    const remaining = guideForScene().filter((id) => !hasSeenCoach(id));
+    const id = remaining[0];
+    if (id === activeCoach) return;
+    coachAnchor?.classList.remove("coach-target");
+    coachAnchor = undefined;
+    activeCoach = id;
+    tip.hidden = true;
+    if (!id) {
+      delete tip.dataset.guide;
+      return;
+    }
+    const step = coach[id];
+    const touch = window.matchMedia?.("(pointer: coarse)")?.matches;
+    coachAnchor = document.querySelector((touch && step.touch) || step.target);
+    if (!coachAnchor) return;
+    coachAnchor.classList.add("coach-target");
+    tip.dataset.guide = id;
+    setText("coach-next", remaining.length > 1 ? "다음" : "확인");
+    setText("coach-text", (touch && step.touchText) || step.text);
+    positionCoach();
+  }
+
+  function nextCoach() {
+    if (!activeCoach) return;
+    const previous = coachAnchor;
+    markCoachSeen(activeCoach);
+    refreshCoach();
+    if (coachAnchor) {
+      const rect = coachAnchor.getBoundingClientRect();
+      if (rect.top < 0 || rect.bottom > window.innerHeight) {
+        coachAnchor.scrollIntoView({ block: "nearest" });
+        positionCoach();
+      }
+    } else if (!activeCoach && previous?.matches("button, summary")) {
+      previous.focus({ preventScroll: true });
+    } else if (!activeCoach && state.mode === "playing") {
+      canvas.focus({ preventScroll: true });
+    }
   }
 
   function openShelter(floor, health) {
@@ -832,7 +958,6 @@
     renderFloorSteps();
     enterPlayableScene();
     syncHUD();
-    showTutorial();
   }
 
   function livingEnemies() {
@@ -1125,9 +1250,19 @@
     return Object.entries(effects).map(([key, value]) => descriptions[key] + (key === "gold" ? goldText(value) : value)).join(" · ");
   }
 
+  function packEntries(equipped) {
+    if (!run) return [];
+    const worn = new Set(Array.from(equipped.values(), ({ id }) => id));
+    return run.rewards.filter((entry) => {
+      if (entry.kind === "gear") return !worn.delete(entry.item.id);
+      return entry.kind !== "gold";
+    }).reverse();
+  }
+
   function renderPack() {
     const pack = elements["pack-list"];
-    const entries = run?.rewards.filter((entry) => entry.kind !== "gold").slice().reverse() ?? [];
+    const equipped = run && rpg.equippedBySlot(run.progress);
+    const entries = packEntries(equipped);
     if (elements["pack-count"]) setText("pack-count", String(entries.length));
     if (!entries.length) {
       const empty = document.createElement("p");
@@ -1144,10 +1279,10 @@
       const title = document.createElement("strong");
       const detail = document.createElement("small");
       title.textContent = entry.item.title;
-      const equipped = entry.kind === "gear" && run.progress.gearIds.includes(entry.item.id);
-      button.disabled = !safe || equipped || entry.kind === "upgrade";
+      const duplicate = entry.kind === "gear" && equipped.get(entry.item.slot)?.id === entry.item.id;
+      button.disabled = !safe || duplicate || entry.kind === "upgrade";
       detail.textContent = entry.kind === "gear"
-        ? rpg.slots.find(({ id }) => id === entry.item.slot).title + " · " + entry.item.power + "층 보상" + (equipped ? " · 장착 중" : "")
+        ? rpg.slots.find(({ id }) => id === entry.item.slot).title + " · " + entry.item.power + "층 보상" + (duplicate ? " · 같은 장비 장착 중" : "")
         : entry.kind === "supply" ? describeSupply(entry.item) : "공격력 +6 · 적용 중";
       button.append(title, detail);
       button.addEventListener("click", () => useOwnedReward(entry));
@@ -1206,8 +1341,17 @@
     return player.hp - before;
   }
 
-  function killRecovery(route) {
-    return run.stats.healOnKill + (route.healOnKillBonus ?? 0);
+  function killRecovery() {
+    return run.progress.earned.healOnKill ?? 0;
+  }
+
+  function recoveryAllowance(draw) {
+    const remaining = rpg.killRecoveryCap - killRecovery();
+    return remaining > 0 && draw() < killRecoveryOfferChance ? remaining : 0;
+  }
+
+  function applyGearRecovery(progress, item) {
+    return item.killRecovery ? rpg.gainStat(progress, "healOnKill", item.killRecovery) : progress;
   }
 
   function awardXp(amount) {
@@ -1299,7 +1443,8 @@
   }
 
   function currentAttackInterval(weapon, route, stats = run.stats) {
-    return Math.max(weapon.minimum ?? 0, rpg.attackInterval(stats, (route.attackCooldownMultiplier ?? 1) * (weapon.interval ?? 1)));
+    const multiplier = (route.attackCooldownMultiplier ?? 1) * (weapon.interval ?? 1);
+    return Math.max(weapon.minimum ?? 0, rpg.attackInterval(stats, multiplier, weapon.intervalOffset));
   }
 
   function comparisonStats(progress) {
@@ -1313,6 +1458,13 @@
     return (run.stats.damage + (route.damageBonus ?? 0) + state.overclock + workshopPower) * (weapon.power ?? 1);
   }
 
+  function compareGearOffer(item) {
+    const gear = rpg.rewardGear(rewards.storedGear(item));
+    const { replaced, changes } = rpg.compareGear(run.progress, gear.id, comparisonStats);
+    const recoveryChange = rpg.compareStats(run.progress, applyGearRecovery(run.progress, item), comparisonStats);
+    return { gear, replaced, changes: changes.concat(recoveryChange) };
+  }
+
   function waitingForCombatStart(delay) {
     return !state.shelter && !state.combatComplete && state.elapsed + 0.000001 < delay;
   }
@@ -1320,7 +1472,7 @@
   function attack() {
     const player = state.player;
     if (state.mode !== "playing" || state.shelter || state.combatComplete || waitingForCombatStart(playerStartDelay) ||
-        player.attackCooldown > 0.000001 || player.pendingStrike || player.dashRemaining > 0) return;
+        player.attackCooldown > Number.EPSILON || player.pendingStrike || player.dashRemaining > 0) return;
     const route = state.routeEffects ?? {};
     const weapon = playerWeapons[player.weapon] ?? playerWeapons.sword;
     const ranged = Boolean(weapon.projectile);
@@ -1371,7 +1523,7 @@
       enemy.windup = 0;
       addEffect("fall", enemy, 0.42);
       if (enemy.elite || enemy.kind === "boss") addEffect("loot", enemy, 0.52);
-      const recovery = recoverHealth(killRecovery(route));
+      const recovery = recoverHealth(killRecovery());
       if (recovery > 0) addEffect("recovery", player, 0.7, recovery);
       awardXp(rpg.killXp(enemy));
       trackQuests({ type: "kill", kind: enemy.kind, faction: enemy.faction, elite: enemy.elite });
@@ -1582,19 +1734,25 @@
     }
     const visit = visitDetails();
     const equipment = run.progress.gearIds;
+    const shopSeed = (run.floorSeeds[state.floor - 1] ?? 0) ^ 0x4dad31c2;
+    const allowance = page === "buy" ? recoveryAllowance(randomFrom(shopSeed)) : 0;
     const options = page === "buy"
-      ? village.shopStock(state.floor, run.floorSeeds[state.floor - 1]).map(({ id, item, price }) => {
+      ? village.shopStock(state.floor, run.floorSeeds[state.floor - 1]).map(({ id, item: stockItem, price }) => {
+        const item = rewards.withKillRecovery(stockItem, allowance);
         const sold = visit.purchases.includes(id);
-        const gear = item.kind === "gear" ? rpg.rewardGear(item) : null;
-        const detail = gear
-          ? rpg.compareGear(run.progress, gear.id, comparisonStats).changes
-            .map(({ key, label, delta }) => label + " " + statValue(key, delta, true)).join(" · ")
-          : describeSupply(item);
+        const comparison = item.kind === "gear" ? compareGearOffer(item) : null;
+        const detail = comparison
+          ? comparison.changes.map(({ key, label, delta }) => label + " " + statValue(key, delta, true)).join(" · ")
+          : item.kind === "stat" ? item.description : describeSupply(item);
         return { id: "buy-" + id, title: item.title, description: sold ? "품절" : detail || "장착 능력치 동일",
           price: goldText(price) + " 금화", disabled: sold || run.gold < price, choose: () => {
             if (visit.purchases.includes(id) || run.gold < price) return;
             spendGold(price);
-            recordReward(item.kind, gear ?? item);
+            if (item.kind === "stat") updateProgress(rpg.gainStat(run.progress, item.stat, item.amount));
+            else {
+              recordReward(item.kind, comparison?.gear ?? item);
+              if (item.killRecovery) updateProgress(applyGearRecovery(run.progress, item), true);
+            }
             visit.purchases.push(id);
             saveVillage();
             villageShop("buy");
@@ -2428,8 +2586,7 @@
     let equipped = "";
     let detail = item.description;
     if (item.kind === "gear") {
-      const gear = rpg.rewardGear(item);
-      const comparison = rpg.compareGear(run.progress, gear.id, comparisonStats);
+      const comparison = compareGearOffer(item);
       changes = comparison.changes;
       equipped = comparison.replaced?.title || "빈 슬롯";
     } else if (item.kind === "stat") {
@@ -2448,9 +2605,9 @@
     action = () => {
       if (state.mode !== "gear") return;
       if (item.kind === "gear") {
-        const gear = rpg.rewardGear(item);
+        const gear = rpg.rewardGear(rewards.storedGear(item));
         recordReward("gear", gear);
-        updateProgress(rpg.equip(run.progress, gear.id), true);
+        updateProgress(applyGearRecovery(rpg.equip(run.progress, gear.id), item), true);
         run.pendingGear = item.title;
         renderGear();
       } else if (item.kind === "stat") {
@@ -2464,12 +2621,18 @@
   }
 
   function chooseReward(xp, trial, gains = []) {
-    const candidates = rpg.rewardChoices(rewards.createFloorPool(state.floor), run.random);
+    const allowance = recoveryAllowance(run.random);
+    const pool = rewards.createFloorPool(state.floor).map((item) => rewards.withKillRecovery(item, allowance));
+    const candidates = rpg.rewardChoices(pool, run.random);
     state.rewardOffer = { candidates, xp, trial, gains };
     presentReward(state.rewardOffer);
   }
 
-  function presentReward({ candidates, xp, trial, gains }, selectedId) {
+  function presentReward(offer, selectedId) {
+    const { xp, trial, gains } = offer;
+    const remaining = rpg.killRecoveryCap - killRecovery();
+    const candidates = offer.candidates.map((item) => rewards.withKillRecovery(item, remaining));
+    state.rewardOffer = { candidates, xp, trial, gains };
     state.mode = "gear";
     const options = candidates.map((item) => {
       const slot = rpg.slots.find((entry) => entry.id === item.slot);
@@ -2664,6 +2827,7 @@
     }
     if (now >= notificationUntil && !elements.notification.hidden) elements.notification.hidden = true;
     syncHUD();
+    refreshCoach();
     drawMinimap();
     if (state.mode === "title") titleRenderer.draw(canvas, now, reducedMotion);
     else renderer.draw(canvas, state, now);
@@ -2672,6 +2836,10 @@
 
   elements["primary-action"].addEventListener("click", () => action?.());
   elements["entry-continue"].addEventListener("click", openEntry);
+  elements["coach-next"]?.addEventListener("click", nextCoach);
+  window.addEventListener("resize", positionCoach);
+  window.addEventListener("scroll", positionCoach, true);
+  elements.overlay.addEventListener("animationend", positionCoach);
   elements["status-trigger"].addEventListener("click", () => toggleRunDialog(elements["status-dialog"]));
   elements["status-close"].addEventListener("click", () => elements["status-dialog"].close());
   elements["pause-trigger"].addEventListener("click", () => toggleRunDialog(elements["pause-dialog"]));

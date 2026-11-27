@@ -100,6 +100,7 @@
   const integers = new Set(["maxHp", "damage", "healOnKill", "dashStrike", "finishingDamage"]);
   const percentages = new Set(["damageReduction", "guardBreak"]);
   const spatialStats = new Set(["speed", "attackRange"]);
+  const rewardScale = (power) => 1 + 0.085 * (power - 1);
   const statCaps = {
     attackCooldown: 0.15,
     dashCooldown: 0.45,
@@ -130,14 +131,60 @@
     const sign = amount < 0 ? "−" : "+";
     const percent = percentages.has(key);
     const time = cooldowns.has(key) || key === "dashGrace";
-    const value = percent ? Number((Math.abs(amount) * 100).toFixed(1)) : Math.abs(amount);
+    const magnitude = Math.abs(amount);
+    const value = percent ? Number((magnitude * 100).toFixed(1))
+      : key === "healOnKill" ? Number(magnitude.toFixed(6)) : magnitude;
     const unit = percent ? "%p" : time ? "초" : key === "attackRange" ? "칸" : key === "speed" ? "칸/초" : "";
     return `${statLabels[key]} ${sign}${value}${unit}`;
   }
 
+  function describedGear(item, bonus) {
+    const description = Object.entries(bonus).map(([stat, amount]) => describeStat(stat, amount)).join(" · ") || "추가 능력치 없음";
+    return { ...item, bonus, description, tag: description };
+  }
+
+  function storedGear(item) {
+    if (item.kind !== "gear") return item;
+    const { killRecovery, bonus: oldBonus, ...gear } = item;
+    const { healOnKill, ...bonus } = oldBonus ?? {};
+    return describedGear(gear, bonus);
+  }
+
+  function statReward(item, stat, amount) {
+    return { ...item, kind: "stat", stat, amount, description: describeStat(stat, amount) + " · 이번 등반 동안 유지" };
+  }
+
+  function withKillRecovery(item, allowance = 0) {
+    const limit = Number.isFinite(allowance) ? Math.max(0, Math.min(10, allowance)) : 0;
+    const recovery = item.kind === "gear" ? item.killRecovery ?? item.bonus?.healOnKill
+      : item.kind === "stat" && item.stat === "healOnKill" ? item.amount : 0;
+    if (!(recovery > 0)) return item;
+
+    const amount = Math.min(limit, recovery);
+    const scale = rewardScale(Math.max(1, item.power ?? 1));
+    if (item.kind === "stat") {
+      if (amount) return statReward(item, "healOnKill", amount);
+      return statReward({ ...item, title: "야전 방호 훈련" }, "damageReduction", scaledStat("damageReduction", 0.036, scale));
+    }
+
+    const gear = storedGear(item);
+    if (Object.keys(gear.bonus).length) {
+      if (!amount) return gear;
+      return { ...gear, killRecovery: amount,
+        description: `${gear.description} · ${describeStat("healOnKill", amount)} (획득 보너스 · 이번 등반 동안 유지)` };
+    }
+    if (!amount) {
+      return describedGear({ ...gear, id: `${gear.id}-protection`, title: "작은 방호 부적" }, {
+        maxHp: scaledStat("maxHp", 7, scale),
+      });
+    }
+    const { id, title, rarity, power } = item;
+    return statReward({ id, title, rarity, power }, "healOnKill", amount);
+  }
+
   function buildPool(floor, replacements) {
     const power = Number.isFinite(floor) ? Math.max(1, Math.trunc(floor)) : 1;
-    const scale = 1 + 0.085 * (power - 1);
+    const scale = rewardScale(power);
     const floorTemplate = (template) => replacements?.get(template[0]) ?? template;
     const equipment = Object.entries(gear).flatMap(([slot, entries]) => entries.map(floorTemplate).map(([key, title, rarity, stats, downside]) => {
       const bonus = Object.fromEntries(Object.entries(stats).map(([stat, amount]) => [stat, scaledStat(stat, amount, scale)]));
@@ -160,5 +207,5 @@
 
   const createPool = (floor) => buildPool(floor);
   const createFloorPool = (floor) => buildPool(floor, floorReplacements);
-  window.TowerRewards = { createPool, createFloorPool };
+  window.TowerRewards = { createPool, createFloorPool, withKillRecovery, storedGear };
 })();

@@ -601,6 +601,7 @@ kbd {
 }
 .status-detail-list dt { padding-inline-end: 5px; color: #c9d8c9; }
 .status-detail-list dd { font-weight: 720; text-align: end; }
+.status-quests { grid-column: 1 / -1; }
 .status-quest-list { display: grid; gap: 6px; padding: 0; list-style: none; font-size: .8rem; overflow-wrap: anywhere; }
 .status-quest-list li { padding: 5px 0; border-top: 1px solid #384d41; }
 .status-quest-list li > * { display: block; }
@@ -612,6 +613,60 @@ kbd {
 @media (max-width: 520px) {
   .status-dialog-body { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 8px; }
 }
+
+.coach-tip {
+  --coach-edge: #86bb9f;
+  --coach-surface: #142720;
+  position: fixed;
+  z-index: 25;
+  left: var(--coach-left, 10px);
+  top: var(--coach-top, 10px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: min(300px, calc(100vw - 24px));
+  padding: 7px 8px 7px 12px;
+  border: 1px solid var(--coach-edge);
+  background: var(--coach-surface);
+  color: var(--text);
+  box-shadow: 0 4px 18px #060c0ab0;
+  font-size: .87rem;
+  line-height: 1.35;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.coach-tip:is([data-side="top"], [data-side="bottom"], [data-side="left"], [data-side="right"])::after {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border: solid var(--coach-edge);
+  border-width: 0 1px 1px 0;
+  background: var(--coach-surface);
+  pointer-events: none;
+  content: "";
+}
+
+.coach-tip[data-side="top"]::after { bottom: -5px; left: var(--coach-arrow, 50%); transform: translateX(-50%) rotate(45deg); }
+.coach-tip[data-side="bottom"]::after { top: -5px; left: var(--coach-arrow, 50%); transform: translateX(-50%) rotate(225deg); }
+.coach-tip[data-side="left"]::after { right: -5px; top: var(--coach-arrow, 50%); transform: translateY(-50%) rotate(-45deg); }
+.coach-tip[data-side="right"]::after { left: -5px; top: var(--coach-arrow, 50%); transform: translateY(-50%) rotate(135deg); }
+
+.coach-next {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 4px 8px;
+  border: 1px solid #5f9075;
+  background: #294639;
+  color: #edf9eb;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.coach-next:is(:hover, :focus-visible) { border-color: var(--patina); background: #355749; }
+.coach-target { outline: 2px solid var(--patina); outline-offset: 3px; }
+.coach-target:focus-visible { outline-color: var(--text); outline-offset: 5px; }
 
 .overlay {
   --accent: var(--brass);
