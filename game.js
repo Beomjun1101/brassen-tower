@@ -28,6 +28,8 @@
   const minimapSection = elements.minimap.closest(".map-section");
 
   const playerRadius = 0.29;
+  const playerStartDelay = 0.5;
+  const enemyStartDelay = 1;
   const challengeGold = 12;
   const parryWindow = 0.125;
   const failedParryCooldown = 5;
@@ -36,8 +38,8 @@
   const checkpointKey = "brass-spire-campaign-v1";
   const seenTutorials = new Set();
   const tutorials = {
-    1: { title: "첫 전투", copy: "WASD 또는 방향키로 움직이고, 스페이스바를 한 번씩 누르거나 클릭해 공격합니다.\nShift로 대쉬하고, 적의 공격이 닿는 순간 F로 패링하세요.\n터치 화면에서는 아래 조작 버튼을 쓰세요. 적을 모두 쓰러뜨리면 보상 하나를 고릅니다." },
-    5: { title: "첫 쉼터", copy: "시설 가까이에서 E를 누르거나 시설을 클릭하세요.\n게시판에서 의뢰를 받고, 상점에서 물건을 사고팔 수 있습니다. 가방 속 아이템은 클릭하면 바로 사용하거나 장착합니다.\n정비가 끝나면 ‘위층으로’ 표지로 가세요." },
+    1: { title: "첫 전투", copy: "WASD 또는 방향키로 움직이고, 스페이스바를 한 번씩 누르거나 클릭해 공격합니다.\nShift로 대쉬하고, 적의 공격이 닿는 순간 F로 패링하세요.\n터치 화면에서는 아래 조작 버튼을 쓰세요. 적을 모두 쓰러뜨리면 보상을 고르고, 열린 출구에 닿으면 다음 층으로 올라갑니다." },
+    5: { title: "첫 쉼터", copy: "시설 가까이에서 E를 누르거나 시설을 클릭하세요.\n게시판에서 의뢰를 받고, 상점에서 물건을 사고팔 수 있습니다. 가방 속 아이템은 클릭하면 바로 사용하거나 장착합니다.\n정비가 끝나면 ‘위층으로’ 문에 닿으세요." },
   };
   const swingDurations = [0.24, 0.27, 0.32];
   const terrainCycles = {
@@ -148,6 +150,7 @@
   function isOpen(x, y, radius) {
     if (x < radius || y < radius || x > state.map.width - radius || y > state.map.height - radius) return false;
     return state.obstacles.every((wall) => {
+      if (wall.gateLeaf && state.gateMarker?.openProgress >= 1) return true;
       const gapX = Math.max(0, Math.abs(x - wall.x) - wall.w / 2);
       const gapY = Math.max(0, Math.abs(y - wall.y) - wall.h / 2);
       return gapX * gapX + gapY * gapY >= radius * radius;
@@ -288,11 +291,20 @@
       state.sparkLocations = locations.slice(offset).concat(locations.slice(0, offset));
       state.sparkCycle = -1;
     }
-    if (stage.gateMarker) state.gateMarker = { ...stage.gateMarker, type: "sluice", active: false, openProgress: 0 };
+    installCombatExit();
     renderFloorSteps();
     if (stage.rolls.length) startEntry();
     else beginFloor();
     syncHUD();
+  }
+
+  function installCombatExit(occupants) {
+    const position = content.combatExit(stage, occupants);
+    const marker = position ?? stage.spawn;
+    state.gateMarker = { ...marker, type: "departure", active: false, openProgress: 0 };
+    state.obstacles = state.obstacles.filter((wall) => !wall.gateDecor);
+    if (position) state.obstacles.push(...content.exitGateWalls(position));
+    state.items = state.items.filter((entry) => entry.kind !== "exit");
   }
 
   function saveCheckpoint(floor, health, route, scene) {
@@ -337,6 +349,9 @@
     notify(null);
     stage = savedStage;
     state = savedState;
+    if (!state.shelter && state.gateMarker?.type !== "departure") {
+      installCombatExit([state.player, ...livingEnemies()]);
+    }
     state.cameraShakeEnabled = !reducedMotion;
     renderFloorSteps();
     switch (state.mode) {
@@ -457,6 +472,7 @@
       ["사거리", statValue("attackRange", currentAttackRange(battleWeapon, route))],
       ["공격 간격", statValue("attackCooldown", currentAttackInterval(battleWeapon, route))],
       ["이동 속도", statValue("speed", run.stats.speed * (route.speedMultiplier ?? 1))],
+      ["처치 시 회복", statValue("healOnKill", killRecovery(route))],
       ["받는 피해 감소", statValue("damageReduction", Math.min(.70, run.stats.damageReduction + (route.damageReductionBonus ?? 0)))],
     ]);
     const quests = run.quests.map((quest) => {
@@ -626,7 +642,7 @@
     syncHUD();
     panel({
       kicker: "새 등반",
-      title: "능력치 배분",
+      title: "스탯 배분",
       copy: "",
       primary: "등반 시작",
       activate: () => {
@@ -937,19 +953,21 @@
       mapPolygon(context, [[x, y - size - 1], [x + size, y + size], [x - size, y + size]],
         enemy.marked ? "#ffd482" : ["sentry", "marksman", "mortar", "saboteur"].includes(enemy.kind) ? "#ef9af0" : "#f08c75");
     }
+    const gate = state.gateMarker ?? state.stations?.find(({ kind }) => kind === "departure");
+    if (gate) {
+      const [x, y] = point(gate.x, gate.y);
+      const open = state.shelter || gate.active;
+      context.strokeStyle = open ? "#c5f7ae" : "#c1cbb9";
+      if (open) {
+        context.fillStyle = "#9ad879";
+        context.fillRect(x - 3, y - 3, 6, 6);
+      }
+      context.strokeRect(x - 3, y - 3, 6, 6);
+    }
     for (const item of state.items) {
       if (item.collected) continue;
       const [x, y] = point(item.x, item.y);
-      if (item.kind === "exit") {
-        context.strokeStyle = item.active ? "#c5f7ae" : "#c1cbb9";
-        if (item.active) {
-          context.fillStyle = "#9ad879";
-          context.fillRect(x - 3, y - 3, 6, 6);
-        }
-        context.strokeRect(x - 3, y - 3, 6, 6);
-      } else {
-        mapPolygon(context, [[x, y - 4], [x + 4, y], [x, y + 4], [x - 4, y]], "#ffda8b", "#553c28");
-      }
+      mapPolygon(context, [[x, y - 4], [x + 4, y], [x, y + 4], [x - 4, y]], "#ffda8b", "#553c28");
     }
     const [x, y] = point(state.player.x, state.player.y);
     context.beginPath();
@@ -1015,7 +1033,7 @@
     const hasStatus = Boolean(run) && dialogModes.has(state.mode);
     elements["status-trigger"].hidden = !hasStatus;
     elements["pause-trigger"].hidden = !hasStatus;
-    setText("objective", state.revealed ? stage.objective : "");
+    setText("objective", state.revealed ? (state.departure && !state.shelter ? "열린 출구로 이동하세요." : stage.objective) : "");
     if (minimapSection.hidden !== !state.revealed) minimapSection.hidden = !state.revealed;
     setText("health-label", Math.ceil(state.player.hp) + " / " + maxHp);
     setText("gold-value", goldText(run?.gold));
@@ -1146,7 +1164,7 @@
       const { gold, heal, xp, ward, overclock } = entry.item.effects;
       run.rewards = run.rewards.filter((record) => record !== entry);
       creditGold(gold);
-      if (heal) state.player.hp = Math.min(state.player.maxHp, state.player.hp + heal);
+      if (heal) recoverHealth(heal);
       if (xp) awardXp(xp);
       run.nextWard += ward ?? 0;
       run.nextPower += overclock ?? 0;
@@ -1180,13 +1198,30 @@
     player.weapon = village.weaponFor(run.classId).id;
   }
 
+  function recoverHealth(amount) {
+    const player = state.player;
+    if (player.hp <= 0 || amount <= 0) return 0;
+    const before = player.hp;
+    player.hp = Math.min(player.maxHp, before + amount);
+    return player.hp - before;
+  }
+
+  function killRecovery(route) {
+    return run.stats.healOnKill + (route.healOnKillBonus ?? 0);
+  }
+
   function awardXp(amount) {
     const previous = run.progress;
-    updateProgress(rpg.gainXp(previous, Math.round(amount * (1 + run.stats.xpBonus)), run.random));
+    const progress = rpg.gainXp(previous, Math.round(amount * (1 + run.stats.xpBonus)), run.random);
+    updateProgress(progress, true);
+    const levelsGained = progress.level - previous.level;
+    const recovery = recoverHealth(state.player.maxHp * .05 * levelsGained);
     const gains = rpg.levelAttributeGains(previous, run.progress).map(({ title, amount }) => title + " +" + amount);
     if (gains.length) {
       addEffect("level", state.player, 0.76);
-      notify(["레벨 상승 · Lv. " + run.progress.level, ...gains].join(" · "), 3300);
+      const messages = ["레벨 상승 · Lv. " + progress.level, ...gains];
+      if (recovery > 0) messages.push("체력 " + statValue("maxHp", recovery, true));
+      notify(messages.join(" · "), 3300);
     }
     return gains;
   }
@@ -1202,9 +1237,9 @@
     notificationUntil = performance.now() + duration;
   }
 
-  function addEffect(kind, actor, life) {
+  function addEffect(kind, actor, life, amount) {
     state.effects.push({
-      kind, x: actor.x, y: actor.y, life, maxLife: life,
+      kind, x: actor.x, y: actor.y, life, maxLife: life, amount,
       facingX: actor.facingX, facingY: actor.facingY,
     });
   }
@@ -1254,13 +1289,23 @@
       .sort((a, b) => distance(player, a) - distance(player, b));
   }
 
-  function currentAttackRange(weapon, route) {
-    const reach = weapon.reach + run.stats.attackRange - 1.8 + (route.attackRangeBonus ?? 0);
-    return Math.max(.75, Math.min(weapon.projectile ? 8.6 : 3.15, reach)) * (state.hazard === "mist" ? 0.85 : 1);
+  function weaponAttackRange(weapon, stats, bonus = 0) {
+    const reach = weapon.reach + stats.attackRange - 1.8 + bonus;
+    return Math.max(.75, Math.min(weapon.projectile ? 8.6 : 3.15, reach));
   }
 
-  function currentAttackInterval(weapon, route) {
-    return Math.max(weapon.minimum ?? 0, rpg.attackInterval(run.stats, (route.attackCooldownMultiplier ?? 1) * (weapon.interval ?? 1)));
+  function currentAttackRange(weapon, route) {
+    return weaponAttackRange(weapon, run.stats, route.attackRangeBonus) * (state.hazard === "mist" ? 0.85 : 1);
+  }
+
+  function currentAttackInterval(weapon, route, stats = run.stats) {
+    return Math.max(weapon.minimum ?? 0, rpg.attackInterval(stats, (route.attackCooldownMultiplier ?? 1) * (weapon.interval ?? 1)));
+  }
+
+  function comparisonStats(progress) {
+    const stats = currentClassStats(progress);
+    const weapon = playerWeapons[village.weaponFor(run.classId).id] ?? playerWeapons.sword;
+    return { ...stats, attackRange: weaponAttackRange(weapon, stats), attackCooldown: currentAttackInterval(weapon, {}, stats) };
   }
 
   function currentAttackDamage(weapon, route) {
@@ -1268,9 +1313,13 @@
     return (run.stats.damage + (route.damageBonus ?? 0) + state.overclock + workshopPower) * (weapon.power ?? 1);
   }
 
+  function waitingForCombatStart(delay) {
+    return !state.shelter && !state.combatComplete && state.elapsed + 0.000001 < delay;
+  }
+
   function attack() {
     const player = state.player;
-    if (state.mode !== "playing" || state.shelter || state.combatComplete ||
+    if (state.mode !== "playing" || state.shelter || state.combatComplete || waitingForCombatStart(playerStartDelay) ||
         player.attackCooldown > 0.000001 || player.pendingStrike || player.dashRemaining > 0) return;
     const route = state.routeEffects ?? {};
     const weapon = playerWeapons[player.weapon] ?? playerWeapons.sword;
@@ -1322,13 +1371,10 @@
       enemy.windup = 0;
       addEffect("fall", enemy, 0.42);
       if (enemy.elite || enemy.kind === "boss") addEffect("loot", enemy, 0.52);
+      const recovery = recoverHealth(killRecovery(route));
+      if (recovery > 0) addEffect("recovery", player, 0.7, recovery);
       awardXp(rpg.killXp(enemy));
       trackQuests({ type: "kill", kind: enemy.kind, faction: enemy.faction, elite: enemy.elite });
-      const healOnKill = run.stats.healOnKill + (route.healOnKillBonus ?? 0);
-      if (healOnKill > 0 && player.hp < player.maxHp) {
-        player.hp = Math.min(player.maxHp, player.hp + healOnKill);
-        addEffect("pickup", player, 0.28);
-      }
     }
     return true;
   }
@@ -1387,7 +1433,7 @@
 
   function dash() {
     const player = state.player;
-    if (state.mode !== "playing" || player.dashCooldown > 0) return;
+    if (state.mode !== "playing" || waitingForCombatStart(playerStartDelay) || player.dashCooldown > 0) return;
     const aim = inputDirection() || { x: player.facingX, y: player.facingY };
     setFacing(player, aim);
     player.pendingStrike = undefined;
@@ -1541,7 +1587,7 @@
         const sold = visit.purchases.includes(id);
         const gear = item.kind === "gear" ? rpg.rewardGear(item) : null;
         const detail = gear
-          ? rpg.compareGear(run.progress, gear.id, currentClassStats).changes
+          ? rpg.compareGear(run.progress, gear.id, comparisonStats).changes
             .map(({ key, label, delta }) => label + " " + statValue(key, delta, true)).join(" · ")
           : describeSupply(item);
         return { id: "buy-" + id, title: item.title, description: sold ? "품절" : detail || "장착 능력치 동일",
@@ -1577,7 +1623,7 @@
 
   function applyVillageEffects({ gold, heal, xp, ward, overclock } = {}) {
     creditGold(gold);
-    if (heal) state.player.hp = Math.min(state.player.maxHp, state.player.hp + heal);
+    if (heal) recoverHealth(heal);
     if (xp) awardXp(xp);
     run.nextWard += ward ?? 0;
     run.nextPower += overclock ?? 0;
@@ -1623,6 +1669,7 @@
   }
 
   function useShelterStation(station) {
+    if (station.kind === "departure") return;
     if (!stationInReach(station)) {
       notify("표시된 시설에 다가가 상호작용하세요.", 1300);
       return;
@@ -1647,16 +1694,6 @@
       notify("모닥불 · 체력 +" + Math.ceil(restored));
       return;
     }
-    if (station.kind === "departure") {
-      if (!adminRun && state.floor >= previewFloorLimit && run.previewComplete) {
-        showPreviewComplete();
-        return;
-      }
-      run.cleared = state.floor;
-      run.totalClears++;
-      chooseReward(0, "");
-      return;
-    }
     if (station.kind !== "workbench") return;
     const visit = visitDetails();
     if (visit.service) {
@@ -1678,7 +1715,7 @@
 
   function interact() {
     if (state.mode !== "playing" || !state.shelter) return;
-    const station = state.stations.filter(stationInReach)
+    const station = state.stations.filter((entry) => entry.kind !== "departure" && stationInReach(entry))
       .sort((a, b) => distance(state.player, a) - distance(state.player, b))[0];
     if (station) useShelterStation(station);
   }
@@ -1694,7 +1731,7 @@
     const player = state.player;
     const now = state.elapsed + Math.min(1 / 30, Math.max(0, performance.now() - previousTime) / 1000);
     if (state.mode !== "playing" || state.shelter || state.combatComplete || player.hp <= 0 ||
-        player.parryExpiresAt !== null || player.parryReadyAt > now) return;
+        waitingForCombatStart(playerStartDelay) || player.parryExpiresAt !== null || player.parryReadyAt > now) return;
     const hit = player.pendingHits.findIndex((entry) => entry.contactCount === state.hitCount && now <= entry.deadline);
     if (hit !== -1) {
       player.pendingHits.splice(hit, 1);
@@ -2258,13 +2295,17 @@
       endRun(false);
       return;
     }
-    const walking = stairDirection(player, inputDirection());
+    const playerWaiting = waitingForCombatStart(playerStartDelay);
     player.moving = false;
-    if (player.dashRemaining > 0) {
+    if (playerWaiting) {
+      player.velocityX = 0;
+      player.velocityY = 0;
+    } else if (player.dashRemaining > 0) {
       const step = Math.min(delta, player.dashRemaining) * 12.3;
       player.moving = move(player, player.dashX * step, player.dashY * step, playerRadius);
       player.dashRemaining = Math.max(0, player.dashRemaining - delta);
     } else {
+      const walking = stairDirection(player, inputDirection());
       const speed = run.stats.speed * (state.routeEffects?.speedMultiplier ?? 1) * (player.swingLife > 0 ? 0.82 : 1);
       const blend = 1 - Math.exp(-(walking ? 20 : 28) * delta);
       player.velocityX += ((walking?.x ?? 0) * speed - player.velocityX) * blend;
@@ -2277,11 +2318,16 @@
 
     for (const effect of state.effects) effect.life -= delta;
     state.effects = state.effects.filter((effect) => effect.life > 0);
-    if (state.shelter) return;
+    if (state.shelter || state.combatComplete) {
+      advanceDeparture();
+      return;
+    }
 
-    advanceStrike();
-    advancePlayerProjectiles(delta);
-    if (attackPointer !== null || [...touchPointers.values()].includes("attack")) attack();
+    if (!playerWaiting) {
+      advanceStrike();
+      advancePlayerProjectiles(delta);
+      if (attackPointer !== null || [...touchPointers.values()].includes("attack")) attack();
+    }
 
     updateAlarm();
     updateCombatWave(livingEnemies().length);
@@ -2293,10 +2339,12 @@
       return;
     }
 
-    for (const enemy of alive) updateEnemy(enemy, alive, delta);
-    updateBolts(delta);
-    updateMortars(delta);
-    updateBossShock(boss, delta);
+    if (!waitingForCombatStart(enemyStartDelay)) {
+      for (const enemy of alive) updateEnemy(enemy, alive, delta);
+      updateBolts(delta);
+      updateMortars(delta);
+      updateBossShock(boss, delta);
+    }
     updateSparks();
     updateTerrain();
     if (state.hazard === "pressure" && state.elapsed >= 20 && state.elapsed - delta < 20) {
@@ -2313,10 +2361,6 @@
     state.bossTargets = [];
     state.hazardTiles = [];
     for (const surface of state.terrain) surface.status = "idle";
-    if (state.gateMarker) {
-      state.gateMarker.active = true;
-      state.gateMarker.openProgress = 1;
-    }
     finishFloorRewards();
   }
 
@@ -2335,8 +2379,7 @@
     const xp = baseXp + Math.max(0, state.floor - 3) * 3 + (state.routeEffects?.clearXpBonus ?? 0);
     const earnedXp = Math.round(xp * (1 + run.stats.xpBonus));
     const gains = awardXp(xp);
-    const recovery = state.routeEffects?.clearHeal ?? 0;
-    if (recovery) state.player.hp = Math.min(state.player.maxHp, state.player.hp + recovery);
+    recoverHealth(state.routeEffects?.clearHeal ?? 0);
     chooseReward(earnedXp, trial, gains);
   }
 
@@ -2386,11 +2429,11 @@
     let detail = item.description;
     if (item.kind === "gear") {
       const gear = rpg.rewardGear(item);
-      const comparison = rpg.compareGear(run.progress, gear.id, currentClassStats);
+      const comparison = rpg.compareGear(run.progress, gear.id, comparisonStats);
       changes = comparison.changes;
       equipped = comparison.replaced?.title || "빈 슬롯";
     } else if (item.kind === "stat") {
-      changes = rpg.compareStats(run.progress, rpg.gainStat(run.progress, item.stat, item.amount), currentClassStats);
+      changes = rpg.compareStats(run.progress, rpg.gainStat(run.progress, item.stat, item.amount), comparisonStats);
     } else {
       detail = describeSupply(item) + " · 가방에서 클릭해 사용";
     }
@@ -2456,17 +2499,13 @@
   function chooseRoute(savedOffers) {
     run.selectedReward = undefined;
     delete state.rewardOffer;
-    if (!adminRun && state.floor >= previewFloorLimit) {
-      showPreviewComplete();
-      return;
-    }
-    if (state.floor === content.floorCount) {
-      endRun(true);
+    if ((!adminRun && state.floor >= previewFloorLimit) || state.floor === content.floorCount) {
+      queueDeparture(null);
       return;
     }
     const nextFloor = state.floor + 1;
     if (content.isShelterFloor(nextFloor)) {
-      enterFloor(nextFloor, state.player.hp);
+      queueDeparture(nextFloor);
       return;
     }
     const player = state.player;
@@ -2494,10 +2533,59 @@
           if (goldCost > run.gold) return;
           if (goldCost) spendGold(goldCost);
           run.lastRouteOffers = offered;
-          enterFloor(nextFloor, Math.min(player.maxHp, player.hp + heal), route.id);
+          queueDeparture(nextFloor, route.id, heal);
         },
       })),
     });
+  }
+
+  function queueDeparture(floor, route, heal = 0) {
+    state.departure = { floor, route, heal };
+    if (state.gateMarker) {
+      state.combatComplete = true;
+      state.gateMarker.active = true;
+      state.gateMarker.openSince = state.elapsed;
+      state.gateMarker.openProgress = reducedMotion ? 1 : 0;
+    }
+    enterPlayableScene();
+    if (!state.shelter) {
+      const message = "출구 개방 · 열린 문으로 이동하세요.";
+      notify(message);
+      setText("live-status", message);
+    }
+  }
+
+  function advanceDeparture() {
+    const player = state.player;
+    if (state.shelter) {
+      const gate = state.stations.find(({ kind }) => kind === "departure");
+      if (!gate || distance(player, gate) > .80 || !closeReach(player, gate)) return;
+      if (!state.departure) {
+        if (!adminRun && state.floor >= previewFloorLimit && run.previewComplete) {
+          showPreviewComplete();
+          return;
+        }
+        run.cleared = state.floor;
+        run.totalClears++;
+        chooseReward(0, "");
+        return;
+      }
+    } else {
+      if (!state.departure) return;
+      const gate = state.gateMarker;
+      gate.openProgress = reducedMotion ? 1 : Math.min(1, (state.elapsed - gate.openSince) / .54);
+      const threshold = { x: gate.x + .64, y: gate.y };
+      if (gate.openProgress < 1 || Math.abs(player.x - threshold.x) > playerRadius + .23 ||
+          Math.abs(player.y - threshold.y) > .59 || !closeReach(player, threshold)) return;
+    }
+    const { floor, route, heal } = state.departure;
+    if (floor === null) {
+      if (adminRun) endRun(true);
+      else showPreviewComplete();
+      return;
+    }
+    recoverHealth(heal);
+    enterFloor(floor, player.hp, route);
   }
 
   function showPreviewComplete() {

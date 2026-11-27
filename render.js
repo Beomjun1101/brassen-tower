@@ -121,7 +121,7 @@
   function frameCamera(canvas, bounds, state, theme, now, reduced) {
     const camera = cameraFor(bounds.width, bounds.height, state.map, state.player, state.elevation);
     const story = state.mode === "story" && (state.incident?.points.find((entry) => entry.choice && entry.done) ?? state.storyPoint);
-    const gate = !reduced && state.mode === "playing" && state.gateMarker?.active && state.gateMarker;
+    const gate = !reduced && state.mode === "playing" && state.gateMarker?.type === "sluice" && state.gateMarker.active && state.gateMarker;
     const key = `${theme}:${state.floor}:${state.map.width}:${state.map.height}:${bounds.width}:${bounds.height}:${Boolean(story)}`;
     if (story) {
       const focus = state.storyShot === "player" ? state.player : story;
@@ -4907,6 +4907,17 @@
       }
     } else if (entry.kind === "danger") {
       groundRing(context, camera, entry.x, entry.y, 0.6 + (1 - alpha) * 0.67, "#f8905a40", "#ffad85", 1.9);
+    } else if (entry.kind === "recovery") {
+      const [px, py] = point(camera, entry.x, entry.y, 2.2 + (reduced ? 0 : (1 - alpha) * 0.7));
+      const amount = Number(entry.amount.toFixed(2));
+      const text = amount > 0 ? "+" + amount : "+<0.01";
+      context.font = "bold " + Math.max(13, unit * 0.28) + "px system-ui";
+      context.textAlign = "center";
+      context.lineWidth = 3;
+      context.strokeStyle = "#10291f";
+      context.fillStyle = "#b8ffdb";
+      context.strokeText(text, px, py);
+      context.fillText(text, px, py);
     } else if (entry.kind === "level" || entry.kind === "loot") {
       rewardEffect(context, camera, entry, alpha);
     } else if (entry.kind === "charge") {

@@ -245,7 +245,7 @@
     speedMultiplier: (value) => `이동 속도 ${routePercent(value)}`,
     attackCooldownMultiplier: (value) => `공격 간격 ${routePercent(value)}`,
     damageReductionBonus: (value) => `피해 감소 ${signedRouteValue(value * 100)}%p`,
-    healOnKillBonus: (value) => `처치 시 체력 ${signedRouteValue(value)}`,
+    healOnKillBonus: (value) => `다음 층 처치 시 회복 ${signedRouteValue(value)}`,
     attackRangeBonus: (value) => `공격 거리 ${signedRouteValue(value)}칸`,
     clearHeal: (value) => `통과 시 체력 ${signedRouteValue(value)}`,
     entryGold: (value) => `입장 금화 ${signedRouteValue(value)}`,
@@ -1024,10 +1024,8 @@
       laneBias: Math.max(-1, Math.min(1, boundedOffset(plan.laneBias))) };
   }
 
-  function reachableLayout(stage) {
+  function layoutAccess(stage, spacing = 0.8, radius = 0.55) {
     const { width, height, elevation, terrain, obstacles, spawn } = stage;
-    const spacing = 0.8;
-    const radius = 0.55;
     const columns = Math.floor(width / spacing);
     const rows = Math.floor(height / spacing);
     const cells = columns * rows;
@@ -1044,7 +1042,7 @@
     const link = (from, to, clearance) => open(to.x, to.y, clearance)
       && open((from.x + to.x) / 2, (from.y + to.y) / 2, clearance)
       && canTraverse(elevation, from.x, from.y, to.x, to.y);
-    if (!open(spawn.x, spawn.y, 0.29)) return false;
+    if (!open(spawn.x, spawn.y, 0.29)) return null;
     const nearby = ({ x, y }, accept) => {
       const col = Math.floor(x / spacing);
       const row = Math.floor(y / spacing);
@@ -1070,12 +1068,25 @@
         if (next >= 0 && next < cells && !reached[next] && link(from, point(next), radius)) enqueue(next);
       }
     }
+    const reaches = (target, clearance) => nearby(target, (index, from) => reached[index] && link(from, target, clearance));
+    return { reaches, link, points: () => queue.map(point) };
+  }
+
+  function layoutTargets(stage) {
     const targets = [...stage.items, ...stage.enemies, ...stage.wave, ...stage.reinforcements];
     if (stage.hold) targets.push(stage.hold);
     if (stage.storySocket) targets.push(stage.storySocket);
     if (stage.gateMarker) targets.push(stage.gateMarker);
-    return targets.every((target) => nearby(target, (index, from) => reached[index]
-      && link(from, target, target.kind === "boss" ? 0.58 : 0.44)));
+    return targets;
+  }
+
+  function targetClearance(target) {
+    return target.kind === "boss" ? 0.58 : 0.44;
+  }
+
+  function reachableLayout(stage) {
+    const access = layoutAccess(stage);
+    return access !== null && layoutTargets(stage).every((target) => access.reaches(target, targetClearance(target)));
   }
 
   function exitGateWalls(exit) {
@@ -1085,6 +1096,51 @@
       { x, y: exit.y - 0.86, w: 0.29, h: 0.54, gateDecor: true },
       { x, y: exit.y + 0.86, w: 0.29, h: 0.54, gateDecor: true },
     ];
+  }
+
+  function combatExit(stage, occupants = []) {
+    const { width, height, elevation, terrain, obstacles, spawn, roomGraph } = stage;
+    const existing = stage.gateMarker ?? stage.items.find(({ kind }) => kind === "exit");
+    const end = roomGraph?.rooms.find(({ id }) => id === roomGraph.exit);
+    const preferred = end ? { x: end.right - 1.75, y: end.y } : { x: width - 2, y: height * 0.56 };
+    const targets = layoutTargets(stage);
+    const clearance = 0.33;
+
+    function find(spacing, radius) {
+      const access = layoutAccess(stage, spacing, radius);
+      if (!access) return null;
+      const reachable = targets.filter((target) => access.reaches(target, targetClearance(target)));
+      const spawnDistance = (point) => Math.hypot(point.x - spawn.x, point.y - spawn.y);
+      const preference = (point) => Math.hypot(point.x - preferred.x, point.y - preferred.y);
+      const canPlace = (point) => {
+        const { x, y } = point;
+        if (spawnDistance(point) < 3.5 || !access.reaches(point, clearance)) return false;
+        const footprint = { x: x + 0.49, y, w: 1.1, h: 2.42 };
+        if (x + 1.19 > width - clearance || y - 1.21 < clearance || y + 1.21 > height - clearance
+            || !clearOfElevationEdges(elevation, footprint, clearance)
+            || obstacles.some((wall) => overlaps(wall, footprint, 0.08))) return false;
+        for (const side of [-1, 1]) {
+          if (!isDry(elevation, terrain, x + 0.64, y + side * 1.16, clearance)) return false;
+        }
+        const threshold = { x: x + 0.64, y };
+        const beyond = { x: x + 1.19, y };
+        if (!access.link(point, threshold, clearance) || !access.link(threshold, beyond, clearance)) return false;
+
+        const walls = exitGateWalls(point);
+        if (occupants.some((actor) => walls.some((wall) => overlaps(wall, { ...actor, w: 0, h: 0 }, 0.58)))) {
+          return false;
+        }
+        const closed = layoutAccess({ ...stage, obstacles: [...obstacles, ...walls] }, spacing, radius);
+        return closed !== null && closed.reaches(point, clearance)
+          && reachable.every((target) => closed.reaches(target, targetClearance(target)));
+      };
+
+      const direct = [existing, preferred].find((point) => point && canPlace(point));
+      return direct ?? access.points().sort((a, b) => preference(a) - preference(b)).find(canPlace) ?? null;
+    }
+
+    const anchor = find(0.8, 0.55) ?? find(0.5, clearance);
+    return anchor ? { x: anchor.x, y: anchor.y } : null;
   }
 
   function rebuildLayout(base, context) {
@@ -1554,5 +1610,5 @@
   }
 
   window.TowerContent = { floorCount, shelterInterval, frontierFloor, isShelterFloor, isBossFloor, getRegion, createFloor,
-    heightAt, canTraverse, isDry, exitGateWalls, routes, routeOptions };
+    heightAt, canTraverse, isDry, exitGateWalls, combatExit, routes, routeOptions };
 })();
