@@ -49,9 +49,9 @@
   const dialogModes = new Set(["playing", "rolling", "tutorial", "shelter", "gear", "branch"]);
   const dialogFocus = new WeakMap();
   const difficulties = {
-    easy: { name: "쉬움", health: 1, damage: 1, speed: 1, interval: 1, windup: 1, shots: 2, mines: 2, bossExtra: 0 },
-    normal: { name: "보통", health: 1.20, damage: 1.12, speed: 1.04, interval: .93, windup: .98, shots: 2, mines: 3, bossExtra: 1 },
-    hard: { name: "어려움", health: 1.45, damage: 1.28, speed: 1.09, interval: .85, windup: .94, shots: 3, mines: 3, bossExtra: 2 },
+    easy: { name: "쉬움", health: 1, damage: 1, speed: 1, interval: 1, windup: 1, shots: 2, mines: 2, bossExtra: 0, campfireRecovery: 1 },
+    normal: { name: "보통", health: 1.20, damage: 1.12, speed: 1.04, interval: .93, windup: .98, shots: 2, mines: 3, bossExtra: 1, campfireRecovery: 2 / 3 },
+    hard: { name: "어려움", health: 1.45, damage: 1.28, speed: 1.09, interval: .85, windup: .94, shots: 3, mines: 3, bossExtra: 2, campfireRecovery: 1 / 3 },
   };
   const enemyTypes = {
     guard: { hp: 84, speed: 2.57, damage: 24, range: 1.95, windup: 0.56, cooldown: 0.65, radius: 0.32 },
@@ -223,7 +223,8 @@
       : rpg.createProgress(adminRun ? undefined : allocation);
     const classId = survivor?.classId ?? null;
     const stats = village.applyClass(rpg.getStats(progress), classId);
-    const difficulty = normalizeDifficulty(survivor?.difficulty ?? (adminRun ? "easy" : elements["run-difficulty"].value));
+    const selectedDifficulty = elements["run-difficulty"].querySelector("input:checked")?.value;
+    const difficulty = normalizeDifficulty(survivor?.difficulty ?? (adminRun ? "easy" : selectedDifficulty));
     return { random: randomFrom(seeds[0]), floorSeeds: seeds.slice(1), gold: survivor?.gold ?? 0, seconds: 0, cleared: 0,
       rewards: survivor?.rewards ?? [], totalClears: survivor?.totalClears ?? 0, nextRewardId: survivor?.nextRewardId ?? 0,
       trials: [], progress, stats, classId, difficulty, quests: [], villageVisits: {}, nextWard: 0, nextPower: 0 };
@@ -616,7 +617,8 @@
     rpg.removeGear(rpg.createProgress(), new Set());
     stage = null;
     allocation = Object.fromEntries(rpg.attributes.map(({ id }) => [id, 0]));
-    elements["run-difficulty"].value = "easy";
+    const defaultDifficulty = elements["run-difficulty"].querySelector('input[value="easy"]');
+    defaultDifficulty.checked = true;
     state = viewFloor(1, entrance, previewStats.maxHp, "menu");
     notify(null);
     renderGear();
@@ -655,7 +657,7 @@
       return row;
     }));
     updateBuild();
-    elements["build-stats"].querySelector("button[data-step='1']")?.focus({ preventScroll: true });
+    defaultDifficulty.focus({ preventScroll: true });
   }
 
   function enterPlayableScene() {
@@ -1630,15 +1632,19 @@
     if (station.kind === "shrine") return villageShrine();
     if (station.kind === "campfire") {
       const visit = visitDetails();
-      if (visit.campfire || state.player.hp >= state.player.maxHp) {
+      const { player } = state;
+      if (visit.campfire || player.hp >= player.maxHp) {
         notify(visit.campfire ? "이미 모닥불에서 쉬었습니다." : "체력이 가득 찼습니다.");
         return;
       }
-      state.player.hp = Math.min(state.player.maxHp, state.player.hp + state.player.maxHp / 3);
+      const { campfireRecovery } = difficultyRules();
+      const healing = campfireRecovery === 1 ? player.maxHp : Math.round(player.maxHp * campfireRecovery);
+      const restored = Math.min(healing, player.maxHp - player.hp);
+      player.hp = Math.min(player.maxHp, player.hp + healing);
       visit.campfire = true;
       saveVillage();
       addEffect("loot", station, 0.6);
-      notify("모닥불에서 최대 체력의 1/3만큼 회복했습니다.");
+      notify("모닥불 · 체력 +" + Math.ceil(restored));
       return;
     }
     if (station.kind === "departure") {

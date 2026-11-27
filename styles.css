@@ -810,32 +810,44 @@ kbd {
 
 .build-editor { margin-top: 12px; }
 .build-settings {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px 8px;
-  padding: 0 5px 5px;
+  position: relative;
+  padding: 0 3px 5px;
   border-bottom: 1px solid #9c8556;
 }
-.build-difficulty, .build-budget {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.build-difficulty { min-width: 0; margin: 0; padding: 0; border: 0; }
+.build-difficulty legend, .build-budget {
   color: #d9cfb9;
   font-size: .77rem;
   font-weight: 720;
+}
+.build-difficulty legend { margin-bottom: 4px; padding: 0; }
+.build-difficulty legend span { margin-inline-start: 5px; color: var(--muted); font-size: .7rem; }
+.build-budget { position: absolute; top: 0; right: 3px; display: flex; align-items: center; gap: 6px; }
+.difficulty-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.difficulty-option { position: relative; display: grid; min-width: 0; cursor: pointer; }
+.difficulty-option input { position: absolute; top: 50%; left: 50%; width: 1px; height: 1px; margin: 0; opacity: 0; }
+.difficulty-card {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 2px;
+  min-height: 44px;
+  padding: 4px 3px;
+  border: 1px solid #718879;
+  background: linear-gradient(145deg, #2c3e32, #202e25);
+  color: var(--text);
+  font-size: .86rem;
+  font-weight: 780;
+  line-height: 1.2;
   white-space: nowrap;
 }
-#run-difficulty {
-  min-height: 38px;
-  padding-inline: 6px;
-  border: 1px solid #819a85;
-  border-radius: 3px;
-  background: #263b30;
-  color: var(--text);
-  font: inherit;
-  font-size: 1rem;
-}
+.difficulty-card strong { display: flex; align-items: center; gap: 4px; }
+.difficulty-card strong::before { width: 8px; height: 8px; border: 1px solid currentColor; border-radius: 50%; content: ""; }
+.difficulty-card small { color: #c8dacd; font-size: .68rem; font-weight: 650; }
+.difficulty-option input:checked + .difficulty-card { border-color: #a1d6bc; background: #314f42; color: #ecfff3; }
+.difficulty-option input:checked + .difficulty-card strong::before { border-color: var(--patina); background: var(--patina); }
+.difficulty-option input:focus-visible + .difficulty-card { outline: 2px solid var(--patina); outline-offset: -4px; }
+@media (hover: hover) { .difficulty-option:hover .difficulty-card { border-color: var(--patina); } }
 
 #build-points { color: var(--brass); font: 800 .98rem/1.1 var(--mono); font-variant-numeric: tabular-nums; }
 .build-stats { display: grid; gap: 3px; margin-top: 6px; }
