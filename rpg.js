@@ -18,7 +18,9 @@
   ];
 
   const gearById = new Map();
-  const gearSlotCapacity = 2;
+  function gearSlotCapacity(progress, slot) {
+    return 2 + (progress?.extraGearSlots ?? []).filter((id) => id === slot).length;
+  }
   const statLabels = {
     damage: "공격력",
     maxHp: "최대 체력",
@@ -122,7 +124,7 @@
       const item = gearById.get(id);
       if (!item) continue;
       const entries = equipped.get(item.slot) ?? [];
-      if (entries.length >= gearSlotCapacity) continue;
+      if (entries.length >= gearSlotCapacity(progress, item.slot)) continue;
       entries.push(item);
       equipped.set(item.slot, entries);
     }
@@ -180,7 +182,7 @@
     if (!item) return progress;
     const equipped = equippedBySlot(progress);
     const entries = equipped.get(item.slot) ?? [];
-    if (entries.length >= gearSlotCapacity) entries.shift();
+    if (entries.length >= gearSlotCapacity(progress, item.slot)) entries.shift();
     equipped.set(item.slot, [...entries, item]);
     return { ...progress, gearIds: [...equipped.values()].flat().map((entry) => entry.id) };
   }
@@ -228,11 +230,12 @@
     const item = gearById.get(gearId);
     if (!item) return null;
     const entries = equippedBySlot(progress).get(item.slot) ?? [];
-    const replaced = entries.length >= gearSlotCapacity ? entries[0] : null;
+    const replaced = entries.length >= gearSlotCapacity(progress, item.slot) ? entries[0] : null;
     return { item, replaced, changes: compareStats(progress, equip(progress, gearId), resolveStats) };
   }
 
-  window.TowerRpg = { startingPoints, killRecoveryCap, attributes, slots, createProgress, gainXp, levelAttributeGains, killXp, getLevelStatus,
-    rewardChoices, rewardGear, removeGear, equippedBySlot, gearSlotCapacity, equip, unequip, getStats, attackInterval, compareGear, compareStats,
+  window.TowerRpg = { startingPoints, killRecoveryCap, attributes, slots, gearSlotCapacity,
+    createProgress, gainXp, levelAttributeGains, killXp, getLevelStatus,
+    rewardChoices, rewardGear, removeGear, equippedBySlot, equip, unequip, getStats, attackInterval, compareGear, compareStats,
     gainStat, retainEarnedStats };
 })();

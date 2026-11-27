@@ -331,7 +331,8 @@
     const stats = village.applyClass(rpg.getStats(progress), classId);
     const selectedDifficulty = elements["run-difficulty"].querySelector("input:checked")?.value;
     const difficulty = normalizeDifficulty(survivor?.difficulty ?? (adminRun ? "easy" : selectedDifficulty));
-    return { random: randomFrom(seeds[0]), floorSeeds: seeds.slice(1), gold: survivor?.gold ?? 0, seconds: 0, cleared: 0,
+    return { random: randomFrom(seeds[0]), floorSeeds: seeds.slice(1), gearSlotMilestones: 0,
+      gold: survivor?.gold ?? 0, seconds: 0, cleared: 0,
       rewards: survivor?.rewards ?? [], totalClears: survivor?.totalClears ?? 0, nextRewardId: survivor?.nextRewardId ?? 0,
       trials: [], progress, stats, classId, difficulty, quests: [], villageVisits: {}, nextWard: 0, nextPower: 0 };
   }
@@ -367,9 +368,25 @@
     };
   }
 
+  function awardGearSlots(activeRun, floor) {
+    const reached = Math.floor(floor / 100);
+    const previous = activeRun.gearSlotMilestones ?? 0;
+    if (reached <= previous) return false;
+    const extraGearSlots = [...(activeRun.progress.extraGearSlots ?? [])];
+    for (let milestone = previous + 1; milestone <= reached; milestone++) {
+      const seed = (activeRun.floorSeeds[milestone * 100 - 1] ?? milestone) ^ 0x4dad31c2;
+      const index = Math.floor(randomFrom(seed)() * rpg.slots.length);
+      extraGearSlots.push(rpg.slots[index].id);
+    }
+    activeRun.gearSlotMilestones = reached;
+    activeRun.progress = { ...activeRun.progress, extraGearSlots };
+    return true;
+  }
+
   function enterFloor(number, health, routeId) {
     clearInput();
     elements["entry-continue"].hidden = true;
+    if (awardGearSlots(run, number)) renderGear();
     saveCheckpoint(number, health, routeId);
     if (content.isShelterFloor(number)) {
       openShelter(number, health);
@@ -522,6 +539,7 @@
         previewComplete: Boolean(runData.previewComplete) && saved.floor >= previewFloorLimit,
         classId: runData.classId ?? null, quests: village.migrateQuests(runData.quests), villageVisits: runData.villageVisits ?? {},
         random: randomFrom(saved.randomSeed), stats: village.applyClass(rpg.getStats(progress), runData.classId) };
+      awardGearSlots(run, saved.floor);
       renderGear();
       if (hasSavedScene(saved)) {
         restoreScene(saved.scene);
@@ -641,14 +659,15 @@
       ...rpg.slots.flatMap(({ id, title }) => {
         const items = equipped.get(id) ?? [];
         return items.length ? items.map((item, index) =>
-          [title + " " + (index + 1), [item.title, item.tag].filter(Boolean).join(" · ")]) : [[title, "비어 있음"]];
+          [title + " " + (index + 1) + " / " + rpg.gearSlotCapacity(progress, id), [item.title, item.tag].filter(Boolean).join(" · ")])
+          : [[title + " 0 / " + rpg.gearSlotCapacity(progress, id), "비어 있음"]];
       })]);
     const bag = packEntries(equipped);
     if (elements["status-auto-equip"]) elements["status-auto-equip"].disabled = !packAvailable();
     renderStatusItems("status-available-gear", bag.filter(({ kind }) => kind === "gear"), (item) => {
       const slot = rpg.slots.find(({ id }) => id === item.slot);
       const items = equipped.get(item.slot) ?? [];
-      const replacement = items.length >= rpg.gearSlotCapacity ? items[0].title + " 교체" : "";
+      const replacement = items.length >= rpg.gearSlotCapacity(run.progress, item.slot) ? items[0].title + " 교체" : "";
       return [slot?.title ?? "장비", item.tag, replacement].filter(Boolean).join(" · ");
     }, "가방에 장비가 없습니다.");
     renderStatusItems("status-usable-items", bag.filter(({ kind }) => kind === "supply"),
@@ -1388,7 +1407,7 @@
       emblem.textContent = slot.icon;
       emblem.setAttribute("aria-hidden", "true");
       const label = document.createElement("small");
-      label.textContent = slot.title + " " + items.length + " / " + rpg.gearSlotCapacity;
+      label.textContent = slot.title + " " + items.length + " / " + rpg.gearSlotCapacity(run?.progress, slot.id);
       const info = document.createElement("div");
       info.className = "gear-slot-items";
       info.append(label);
@@ -1490,7 +1509,7 @@
       const detail = document.createElement("small");
       title.textContent = entry.item.title;
       const items = entry.kind === "gear" ? equipped.get(entry.item.slot) ?? [] : [];
-      const replaced = items.length >= rpg.gearSlotCapacity ? items[0] : null;
+      const replaced = entry.kind === "gear" && items.length >= rpg.gearSlotCapacity(run.progress, entry.item.slot) ? items[0] : null;
       button.disabled = !safe || entry.kind === "upgrade";
       detail.textContent = entry.kind === "gear"
         ? rpg.slots.find(({ id }) => id === entry.item.slot).title + " · " + entry.item.power + "층 보상" +
@@ -1694,6 +1713,26 @@
           score = value;
         }
       };
+      const capacity = rpg.gearSlotCapacity(result, slot);
+      if (capacity > 2) {
+        const owned = new Map();
+        for (const { id } of candidates) owned.set(id, (owned.get(id) ?? 0) + 1);
+        for (let pass = 0; pass < capacity; pass++) {
+          const before = result;
+          const equipped = rpg.equippedBySlot(before).get(slot) ?? [];
+          const removals = [...new Set(equipped.map(({ id }) => id))];
+          const bases = removals.map((id) => rpg.unequip(before, id));
+          if (equipped.length < capacity) bases.push(before);
+          for (const base of bases) {
+            consider(base);
+            for (const [id, count] of owned) {
+              if (equippedCount(base, id) < count) consider(rpg.equip(base, id));
+            }
+          }
+          if (result === before) break;
+        }
+        continue;
+      }
       consider(empty);
       for (const [index, item] of candidates.entries()) {
         const first = rpg.equip(empty, item.id);
@@ -3460,6 +3499,8 @@
     const { healOnKill, ...earned } = progress.earned;
     const levelStatsLost = Object.values(progress.earnedAttributes ?? {}).some((value) => value !== 0);
     const rewardStatsLost = Object.values(earned).some((value) => value !== 0);
+    const extra = progress.extraGearSlots ?? [];
+    progress = { ...progress, extraGearSlots: extra.slice(0, Math.floor(extra.length / 3)) };
     updateProgress(rpg.retainEarnedStats(rpg.removeGear(progress, ownedGearIds())));
     return { itemsLost, goldLost: recentGold + oldGoldLost, levelStatsLost, rewardStatsLost, recoveryLost: healOnKill > 0 };
   }
@@ -3488,6 +3529,7 @@
       loss.levelStatsLost ? "레벨업 스탯 60% 손실 · 기본 배분 유지" : "기본 배분 유지",
       ...(loss.rewardStatsLost ? ["보상으로 얻은 스탯 초기화"] : []),
       ...(loss.recoveryLost ? ["처치 시 회복 초기화"] : []),
+      ...((run.progress.extraGearSlots?.length ?? 0) > 0 ? ["계승한 장비칸 " + run.progress.extraGearSlots.length + "개"] : []),
       "남은 보유품 " + run.rewards.filter((entry) => entry.kind !== "gold").length + "개 · 금화 " + goldText(run.gold),
     ];
     panel({ kicker: "등반 종료", title: state.floor + "층에서 쓰러졌습니다", copy: report.join("\n"),
