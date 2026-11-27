@@ -2550,7 +2550,7 @@
     }
   }
 
-  function mortarSalvo(enemy, player) {
+  function mortarSalvo(enemy, player, attackRate) {
     const mark = (x, y, remaining) => ({
       x: Math.max(playerRadius, Math.min(state.map.width - playerRadius, x)),
       y: Math.max(playerRadius, Math.min(state.map.height - playerRadius, y)),
@@ -2563,13 +2563,13 @@
         const x = player.x + aim.x * 1.15 - aim.y * side * 2.15;
         const y = player.y + aim.y * 1.15 + aim.x * side * 2.15;
         if (!walkable(x, y, 0.38) || !withinTier(player, { x, y })) continue;
-        state.mortarTargets.push({ ...mark(x, y, enemy.windup + (side < 0 ? 0.24 : 0.43)), radius: 1.20 });
+        state.mortarTargets.push({ ...mark(x, y, enemy.windup + (side < 0 ? 0.24 : 0.43) / attackRate), radius: 1.20 });
       }
       return;
     }
     if (state.floor >= 8) {
       const aim = inputDirection() || direction(player.x - enemy.x, player.y - enemy.y) || { x: 1, y: 0 };
-      state.mortarTargets.push(mark(player.x + aim.x * 2.6, player.y + aim.y * 2.6, enemy.windup + 0.28));
+      state.mortarTargets.push(mark(player.x + aim.x * 2.6, player.y + aim.y * 2.6, enemy.windup + 0.28 / attackRate));
     }
   }
 
@@ -2694,6 +2694,7 @@
     const ranged = enemy.kind === "sentry" || marksman;
     const runner = enemy.kind === "runner";
     const mortar = enemy.kind === "mortar";
+    const attackRate = ranged || mortar ? Math.min(1.5, 1 + (state.floor - 1) * 0.01) : 1;
     const lancer = enemy.kind === "lancer";
     const boss = enemy.kind === "boss";
     const signatureBoss = boss && Boolean(enemy.bossProfile?.sequence?.length);
@@ -2711,7 +2712,7 @@
       const side = (enemy.id + enemy.volleyShots) % 2 ? 1 : -1;
       fireAimedBolt(enemy, side * 0.085);
       enemy.volleyShots--;
-      enemy.volleyAt = enemy.volleyShots > 0 ? state.elapsed + 0.24 : undefined;
+      enemy.volleyAt = enemy.volleyShots > 0 ? state.elapsed + 0.24 / attackRate : undefined;
     }
 
     if (signatureBoss && state.bossTargets.length) {
@@ -2749,7 +2750,7 @@
           fireAimedBolt(enemy);
           if (marksman) {
             enemy.volleyShots = difficulty.shots - 1;
-            enemy.volleyAt = state.elapsed + 0.24;
+            enemy.volleyAt = state.elapsed + 0.24 / attackRate;
           }
           return;
         }
@@ -2795,7 +2796,7 @@
     const reach = cue?.reach ?? enemy.attackRange;
     if (!signatureBoss && sight && gap <= reach * 0.94 && enemy.cooldown <= 0
         && (ranged || mortar || lancer || hasLineOfSight(enemy, player))) {
-      const windup = cue?.windup ?? type.windup * difficulty.windup * (enraged ? 0.86 : 1);
+      const windup = (cue?.windup ?? type.windup * difficulty.windup * (enraged ? 0.86 : 1)) / attackRate;
       const nearbyWindup = !ranged && !mortar && !lancer && !boss && allies.some((ally) => ally !== enemy
         && Math.abs(ally.windup - windup) < 0.14 && distance(ally, player) < 2.4);
       if (nearbyWindup) return;
@@ -2804,7 +2805,7 @@
       enemy.attackRange = reach;
       enemy.patternTurn = (enemy.patternTurn ?? 0) + 1;
       enemy.cooldown = windup + Math.max(0.38, type.cooldown * difficulty.interval * (pressured ? 0.77 : 1)
-        * (creature ? 0.88 : 1) * (enraged ? 0.83 : 1));
+        * (creature ? 0.88 : 1) * (enraged ? 0.83 : 1)) / attackRate;
       enemy.guarded = false;
       if (cue) {
         aimEnemyPattern(enemy, cue, player, aim, gap, type.radius);
@@ -2816,7 +2817,7 @@
         enemy.aimX = enemy.x + aim.x * travel;
         enemy.aimY = enemy.y + aim.y * travel;
       }
-      if (mortar) mortarSalvo(enemy, player);
+      if (mortar) mortarSalvo(enemy, player, attackRate);
       return;
     }
     const pursue = !sight || gap > (ranged || mortar || saboteur ? type.range * 0.86 : Math.min(enemy.attackRange * 0.76, 1.42));
