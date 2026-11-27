@@ -289,10 +289,11 @@ button:disabled { cursor: default; }
 @media (pointer: coarse) { .entry-continue kbd { display: none; } }
 @media (pointer: coarse) and (orientation: landscape) and (max-height: 390px) {
   .entry-continue { bottom: max(12%, calc(6% + 391px - 100svh)); }
-  .game-stage[data-mode="menu"] { height: max(182px, calc(100svh - 151px)); }
-  .overlay[data-mode="menu"] { padding-block: 7px; }
-  .overlay[data-mode="menu"] .overlay-panel { padding-block: 8px; }
-  .overlay[data-mode="menu"] .build-editor { margin-top: 8px; }
+  .game-stage[data-mode="menu"] { height: max(182px, calc(100svh - 138px)); }
+  .overlay[data-mode="menu"] { padding-block: 4px; }
+  .overlay[data-mode="menu"] .overlay-panel { padding-block: 4px; }
+  .overlay[data-mode="menu"] .overlay-heading h2 { font-size: 1.25rem; }
+  .overlay[data-mode="menu"] .build-editor { margin-top: 4px; }
 }
 .combat-hotbar {
   display: flex;
