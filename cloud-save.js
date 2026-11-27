@@ -82,27 +82,31 @@
       if (error) throw error;
     },
     async load(expectedUser) {
-      const id = requireUser(expectedUser);
-      const client = await requireClient();
-      requireUser(id);
-      const { data, error } = await client.from("brassen_campaigns").select("checkpoint, revision").eq("user_id", id).maybeSingle();
-      requireUser(id);
-      if (error) throw error;
-      return data;
+      return campaignRequest("load", expectedUser);
     },
     async save(checkpoint, expectedRevision, expectedUser) {
-      const id = requireUser(expectedUser);
-      const client = await requireClient();
-      requireUser(id);
-      const { data, error } = await client.rpc("save_brassen_campaign", {
-        p_checkpoint: checkpoint,
-        p_expected_revision: expectedRevision,
-        p_expected_user_id: id,
-      });
-      requireUser(id);
-      if (error) throw error;
-      if (!Number.isSafeInteger(data) || data < 1) throw new Error("클라우드 저장 결과를 확인할 수 없습니다.");
-      return data;
+      const { revision } = await campaignRequest("save", expectedUser, { checkpoint, revision: expectedRevision });
+      if (!Number.isSafeInteger(revision) || revision < 1) throw new Error("클라우드 저장 결과를 확인할 수 없습니다.");
+      return revision;
     },
   };
+
+  async function campaignRequest(action, expectedUser, fields = {}) {
+    const id = requireUser(expectedUser);
+    const client = await requireClient();
+    const { data: session, error: sessionError } = await client.auth.getSession();
+    requireUser(id);
+    if (sessionError) throw sessionError;
+    if (session.session?.user?.id !== id) throw new Error("현재 GitHub 계정으로 다시 로그인해 주세요.");
+    const { data, error } = await client.functions.invoke("campaign", {
+      headers: { Authorization: "Bearer " + session.session.access_token },
+      body: { action, user: id, ...fields },
+    });
+    requireUser(id);
+    if (error) {
+      if (error.context?.status === 409) throw Object.assign(new Error("클라우드 저장 충돌"), { code: "PT409" });
+      throw error;
+    }
+    return data;
+  }
 })();
