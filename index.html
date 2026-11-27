@@ -242,6 +242,17 @@
           <button id="status-close" class="dialog-close" type="button" autofocus>닫기</button>
         </header>
         <div class="status-dialog-body">
+          <section aria-labelledby="status-available-gear-title">
+            <div class="status-inventory-heading">
+              <h3 id="status-available-gear-title">장착 가능 장비</h3>
+              <button id="status-auto-equip" class="dialog-close status-auto-equip" type="button" disabled>최강 장비 자동 장착</button>
+            </div>
+            <ul id="status-available-gear" class="status-action-list"></ul>
+          </section>
+          <section aria-labelledby="status-usable-items-title">
+            <h3 id="status-usable-items-title">사용 가능 물품</h3>
+            <ul id="status-usable-items" class="status-action-list"></ul>
+          </section>
           <section aria-labelledby="status-summary-title">
             <h3 id="status-summary-title">등반가</h3>
             <dl id="status-summary" class="status-detail-list"></dl>
@@ -254,14 +265,6 @@
             <h3 id="status-gear-title">착용 중인 장비</h3>
             <dl id="status-gear" class="status-detail-list"></dl>
           </section>
-          <section aria-labelledby="status-available-gear-title">
-            <h3 id="status-available-gear-title">장착 가능 장비</h3>
-            <ul id="status-available-gear" class="status-action-list"></ul>
-          </section>
-          <section aria-labelledby="status-usable-items-title">
-            <h3 id="status-usable-items-title">사용 가능 품목</h3>
-            <ul id="status-usable-items" class="status-action-list"></ul>
-          </section>
           <p id="status-item-feedback" class="visually-hidden" role="status"></p>
           <section class="status-quests" aria-labelledby="status-quests-title">
             <h3 id="status-quests-title">의뢰</h3>
@@ -271,12 +274,44 @@
       </dialog>
 
       <dialog id="pause-dialog" class="game-dialog pause-dialog" aria-labelledby="pause-title">
-        <header class="game-dialog-header"><h2 id="pause-title">일시정지</h2></header>
-        <div class="pause-actions">
-          <button id="pause-resume" class="primary-action" type="button" autofocus>계속하기</button>
-          <button id="pause-exit" class="dialog-close" type="button">저장하고 나가기</button>
-          <p id="pause-save-error" class="overlay-copy" role="alert" hidden>저장하지 못했습니다. 계속하거나 다시 시도할 수 있습니다.</p>
-        </div>
+        <section id="pause-main-panel" aria-labelledby="pause-title">
+          <header class="game-dialog-header"><h2 id="pause-title">일시정지</h2></header>
+          <div class="pause-actions">
+            <button id="pause-resume" class="primary-action" type="button" autofocus>계속하기</button>
+            <button id="pause-settings" class="dialog-close" type="button" aria-controls="settings-panel">설정</button>
+            <button id="pause-exit" class="dialog-close" type="button">저장하고 나가기</button>
+            <p id="pause-save-error" class="overlay-copy" role="alert" hidden>저장하지 못했습니다. 계속하거나 다시 시도할 수 있습니다.</p>
+          </div>
+        </section>
+        <section id="settings-panel" aria-labelledby="settings-title" hidden>
+          <header class="game-dialog-header">
+            <h2 id="settings-title">설정</h2>
+            <button id="settings-back" class="dialog-close" type="button">뒤로</button>
+          </header>
+          <div class="settings-controls">
+            <div class="settings-volume">
+              <label class="settings-label" for="volume-setting">전체 음량</label>
+              <output id="volume-value" for="volume-setting" aria-hidden="true">100%</output>
+              <input id="volume-setting" type="range" min="0" max="100" step="1" value="100">
+            </div>
+            <label class="settings-toggle" for="auto-aim-setting">
+              <span>
+                <strong id="auto-aim-label" class="settings-label">자동 조준</strong>
+                <small id="auto-aim-help">가까운 적을 향해 공격 방향을 맞춥니다.</small>
+              </span>
+              <input id="auto-aim-setting" class="visually-hidden" type="checkbox" role="switch" aria-labelledby="auto-aim-label" aria-describedby="auto-aim-help" checked>
+              <span class="settings-switch" aria-hidden="true"></span>
+            </label>
+            <label class="settings-toggle" for="auto-equip-setting">
+              <span>
+                <strong id="auto-equip-label" class="settings-label">자동 장착</strong>
+                <small id="auto-equip-help">층 보상으로 더 좋은 장비를 받으면 장착합니다.</small>
+              </span>
+              <input id="auto-equip-setting" class="visually-hidden" type="checkbox" role="switch" aria-labelledby="auto-equip-label" aria-describedby="auto-equip-help" checked>
+              <span class="settings-switch" aria-hidden="true"></span>
+            </label>
+          </div>
+        </section>
       </dialog>
 
       <aside id="coach-tip" class="coach-tip" aria-label="플레이 안내" hidden>

@@ -16,8 +16,15 @@
   };
   const themeKeys = new Set(["sluice", "relay", "forge"]);
   const preference = "brassen-tower-sound";
+  const volumePreference = "brassen-tower-volume";
+  const maxOutputGain = 0.62;
   let enabled = true;
+  let masterVolume = 100;
   try { enabled = localStorage.getItem(preference) !== "off"; } catch {}
+  try {
+    const savedVolume = localStorage.getItem(volumePreference);
+    if (savedVolume?.trim()) masterVolume = normalizeVolume(Number(savedVolume));
+  } catch {}
   let context;
   let output;
   let noise;
@@ -55,6 +62,21 @@
     return enabled && visible && context?.state === "running";
   }
 
+  function normalizeVolume(value) {
+    return Number.isFinite(value) ? Math.round(Math.max(0, Math.min(100, value))) : masterVolume;
+  }
+
+  function outputLevel() {
+    return enabled && visible ? maxOutputGain * masterVolume / 100 : 0;
+  }
+
+  function setVolume(value) {
+    masterVolume = normalizeVolume(value);
+    try { localStorage.setItem(volumePreference, String(masterVolume)); } catch {}
+    if (output) output.gain.setTargetAtTime(outputLevel(), context.currentTime, 0.035);
+    return masterVolume;
+  }
+
   function unlock() {
     if (!enabled) return Promise.resolve(false);
     try {
@@ -63,7 +85,7 @@
         if (!Audio) return Promise.resolve(false);
         context = new Audio();
         output = context.createGain();
-        output.gain.value = 0.62;
+        output.gain.value = outputLevel();
         const limiter = context.createDynamicsCompressor();
         limiter.threshold.value = -14;
         limiter.ratio.value = 3;
@@ -79,7 +101,7 @@
       }
       return context.resume().then(() => {
         if (!enabled || !visible) return false;
-        output.gain.setTargetAtTime(0.62, context.currentTime, 0.035);
+        output.gain.setTargetAtTime(outputLevel(), context.currentTime, 0.035);
         timer ??= window.setInterval(pump, 42);
         pump();
         return active();
@@ -102,7 +124,7 @@
   function setVisible(value) {
     visible = Boolean(value);
     if (!context || !enabled) return;
-    output.gain.setTargetAtTime(visible ? 0.62 : 0, context.currentTime, 0.026);
+    output.gain.setTargetAtTime(outputLevel(), context.currentTime, 0.026);
     if (visible) pump();
   }
 
@@ -231,5 +253,6 @@
     }
   }
 
-  window.TowerAudio = { active, cue, dieTick, deviceSignal, setEnabled, setVisible, unlock, wantsSound: () => enabled };
+  window.TowerAudio = { active, cue, dieTick, deviceSignal, setEnabled, setVisible, setVolume, unlock,
+    volume: () => masterVolume, wantsSound: () => enabled };
 })();

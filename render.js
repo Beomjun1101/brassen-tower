@@ -3457,28 +3457,49 @@
     boss: [10.7, 0.22, 0.19],
   };
   const swingProfiles = [
-    { duration: 0.24, coil: -1.18, pass: 1.05, reach: 0.14, cutY: -0.03 },
-    { duration: 0.27, coil: 1.32, pass: -1.08, reach: 0.20, cutY: 0.08 },
-    { duration: 0.32, coil: -1.64, pass: 0.62, reach: 0.29, cutY: 0.20 },
+    { duration: 0.24, coil: -1.18, pass: 1.05 },
+    { duration: 0.27, coil: 1.32, pass: -1.08 },
+    { duration: 0.32, coil: -1.64, pass: 0.62 },
   ];
 
   const heroWeapons = {
-    sword: {},
-    hammer: { style: "overhead", length: .90, lift: .71 },
+    sword: { style: "cut" },
+    hammer: { style: "slam", length: .90 },
     rapier: { style: "thrust", length: 1.22 },
     daggers: { style: "dual", length: .61 },
-    maul: { style: "overhead", length: 1.19, lift: 1, twoHands: true },
-    poleaxe: { style: "overhead", length: 1.34, lift: .79, twoHands: true },
-    sabre: { length: 1.08, sweep: 1.22 },
-    greatsword: { style: "overhead", length: 1.24, lift: .90, twoHands: true },
-    twinblades: { style: "dual", length: .86 },
-    hooks: { style: "dual", length: .73, sweep: 1.18 },
-    staff: { style: "cast", length: 1.20 },
-    orb: { style: "cast", length: .54 },
-    bow: { style: "draw", length: .64, twoHands: true },
-    crossbow: { style: "draw", length: .77, twoHands: true },
+    maul: { style: "slam", action: "maul", length: 1.19, twoHands: true },
+    poleaxe: { style: "chop", length: 1.34, twoHands: true },
+    sabre: { style: "cut", action: "sabre", length: 1.08, sweep: 1.24 },
+    greatsword: { style: "heavy", length: 1.24, twoHands: true },
+    twinblades: { style: "dual", action: "twinblades", length: .86, sweep: 1.12 },
+    hooks: { style: "dual", action: "hooks", length: .73, sweep: .67 },
+    staff: { style: "staff", length: 1.20 },
+    orb: { style: "orb", length: .54 },
+    bow: { style: "bow", length: .64, twoHands: true },
+    crossbow: { style: "crossbow", length: .77, twoHands: true },
     gauntlets: { style: "fist", length: .41, dual: true },
-    tonfa: { style: "fist", length: .69, dual: true },
+    tonfa: { style: "fist", action: "tonfa", length: .69, dual: true },
+  };
+
+  // Hand reach, hand drop, weapon angle, torso lean, knee bend, and foot stagger.
+  // Key poses are windup, exact contact, and follow-through. Angles mirror with facing.
+  const heroAttackPoses = {
+    cut: [[.01, -.13, 0, -.075, .015, .035], [.26, -.054, 0, .11, 0, .06], [.17, .10, 0, .08, .04, .045]],
+    sabre: [[-.04, -.10, -.31, -.09, .04, .07], [.31, .02, 0, .125, .025, .12], [.23, -.08, .25, .11, .078, .08]],
+    dual: [[-.15, -.16, -.14, -.055, .08, .06], [.23, -.12, 0, .11, .07, .08], [.015, -.09, .18, .03, .065, .06]],
+    twinblades: [[-.07, -.025, .06, -.095, .065, .09], [.35, -.025, 0, .19, .06, .15], [.18, .10, .08, .10, .10, .08]],
+    hooks: [[.02, .01, -.63, -.03, .045, .07], [.23, -.034, -.03, .095, .045, .09], [-.15, -.12, .26, -.07, .085, .08]],
+    heavy: [[-.045, -.21, -1.49, -.15, -.05, .15], [.32, -.047, .12, .155, .07, .19], [.13, .115, .94, .12, .115, .10]],
+    slam: [[.03, -.34, -1.78, -.07, -.075, .12], [.235, .15, .70, .13, .12, .155], [.12, .21, 1.05, .085, .149, .105]],
+    maul: [[-.05, -.34, -1.85, -.12, -.075, .19], [.31, .174, .77, .17, .13, .21], [.16, .231, 1.10, .09, .16, .14]],
+    chop: [[-.05, -.28, -1.38, -.11, -.046, .12], [.38, .037, .33, .18, .077, .21], [.27, .102, .69, .11, .105, .14]],
+    thrust: [[-.16, -.10, -.31, -.13, .062, .08], [.39, -.145, 0, .22, .08, .21], [.16, -.079, -.13, .105, .075, .08]],
+    fist: [[-.16, -.13, -.18, -.09, .052, .09], [.33, -.11, 0, .185, .039, .145], [-.015, -.099, .35, -.025, .048, .08]],
+    tonfa: [[-.045, -.20, -1.05, -.085, .063, .07], [.253, -.021, .08, .14, .058, .12], [.078, .072, .79, .049, .069, .081]],
+    staff: [[-.04, -.27, -1.27, -.075, -.050, .07], [.245, -.146, -.07, .065, -.023, .085], [.12, -.098, .08, -.025, .028, .05]],
+    orb: [[-.02, -.17, -.49, -.072, .02, .055], [.355, -.109, -.016, .108, -.009, .09], [.12, .025, .21, -.032, .023, .052]],
+    bow: [[.245, -.19, -.026, -.065, .012, .06], [.315, -.169, 0, -.032, .026, .075], [.23, -.106, .23, -.03, .026, .057]],
+    crossbow: [[.17, -.22, -.03, -.046, .031, .085], [.24, -.205, 0, -.02, .025, .09], [-.06, -.245, -.29, -.105, .06, .09]],
   };
 
   function beginMotionFrame(canvas, state, now, reduced) {
@@ -3642,84 +3663,107 @@
     }
   }
 
-  function swordPose(at, size, armSide, idleAngle, strikeAngle, profile, weapon, progress, reduced, carrySwing) {
-    const active = progress !== null;
-    let sweep = 0;
-    let extension = 0;
-    let dip = 0;
-    if (active && reduced) {
-      sweep = profile.pass * 0.15;
-      extension = profile.reach * 0.6;
-    } else if (active && progress < 0.18) {
-      const coil = eased(progress / 0.18);
-      sweep = profile.coil * coil;
-      dip = -0.08 * coil;
-    } else if (active && progress < 0.37) {
-      const cut = (progress - 0.18) / 0.19;
-      sweep = profile.coil * (1 - cut ** 1.6);
-      extension = profile.reach * cut ** 1.45;
-      dip = -0.08 + (profile.cutY + 0.08) * cut;
-    } else if (active && progress < 0.62) {
-      const pass = (progress - 0.37) / 0.25;
-      sweep = profile.pass * (1 - (1 - pass) ** 1.8);
-      extension = profile.reach * (1 - 0.31 * pass);
-      dip = profile.cutY;
-    } else if (active) {
-      const settle = 1 - eased((progress - 0.62) / 0.38);
-      sweep = profile.pass * settle;
-      extension = profile.reach * 0.69 * settle;
-      dip = profile.cutY * settle;
+  function heroAction(weapon, profile, progress, reduced) {
+    const idle = [0, 0, 0, 0, 0, 0];
+    if (progress === null) return idle;
+    let [windup, contact, follow] = heroAttackPoses[weapon.action ?? weapon.style];
+    if (weapon.style === "cut" || weapon.style === "dual") {
+      const sweep = weapon.sweep ?? 1;
+      windup = [...windup];
+      windup[2] += profile.coil * sweep;
+      follow = [...follow];
+      follow[2] += profile.pass * sweep;
     }
-    sweep *= weapon.sweep ?? 1;
-    if (active && ["thrust", "draw", "fist", "cast"].includes(weapon.style)) {
-      const forward = progress < .37 ? eased((progress - .16) / .21) : 1 - eased((progress - .37) / .54);
-      const pullback = progress < .16 ? eased(progress / .16) : 1 - eased((progress - .16) / .20);
-      const casting = weapon.style === "cast";
-      const holding = weapon.style === "draw";
-      sweep = casting ? sweep * .23 : sweep * .07;
-      extension = reduced ? .30 : forward * (holding ? .34 : .42) - pullback * (holding ? -.11 : .17);
-      dip = casting ? -.30 * (pullback + .42 * forward) : -.055 * forward - (holding ? .14 : 0);
-    } else if (active && weapon.style === "overhead") {
-      const side = Math.sign(armSide) || 1;
-      const lift = progress < .19 ? eased(progress / .19) : 1 - eased((progress - .19) / .22);
-      const fall = progress < .45 ? eased((progress - .26) / .19) : 1 - eased((progress - .45) / .55);
-      if (!reduced) {
-        sweep = -side * lift * (1.12 + weapon.lift * .60) + side * fall * .68 + sweep * .23;
-        dip += fall * .18 - lift * weapon.lift * .60;
-        extension *= .80;
-      }
+    if (reduced) return progress < .37 ? windup : contact;
+    const blend = (from, to, weight) => from.map((value, index) => value + (to[index] - value) * weight);
+    const load = weapon.style === "bow" || weapon.style === "crossbow" ? .30 :
+      weapon.style === "slam" || weapon.style === "heavy" ? .22 : .17;
+    if (progress <= load) return blend(idle, windup, eased(progress / load));
+    if (progress <= .37) return blend(windup, contact, ((progress - load) / (.37 - load)) ** 1.44);
+    const release = weapon.style === "crossbow" || weapon.style === "fist" ? .48 : .63;
+    if (progress <= release) {
+      const elapsed = (progress - .37) / (release - .37);
+      return blend(contact, follow, 1 - (1 - elapsed) ** 1.7);
     }
-    const weight = active ? Math.min(eased(progress / 0.18), eased((1 - progress) / 0.38)) : 0;
-    const difference = strikeAngle - idleAngle;
-    const angle = idleAngle + Math.atan2(Math.sin(difference), Math.cos(difference)) * weight;
-    const [forwardX, forwardY] = unitVector(angle);
-    const [edgeX, edgeY] = unitVector(angle + sweep);
-    const shoulder = at(armSide * 0.223, -0.762);
-    const target = at(armSide * (weapon.twoHands ? .14 : .205) + edgeX * (0.105 + extension * (weapon.style ? .69 : .55)),
-      -0.485 + forwardY * 0.041 + edgeY * 0.094 + dip * 0.73 + carrySwing * (1 - weight));
-    const joints = armJoints(shoulder, target, size, -armSide * 0.76);
+    return blend(follow, idle, eased((progress - release) / (1 - release)));
+  }
+
+  function heroHand(at, size, armSide, idleAngle, strikeAngle, weapon, motion, progress, carry, reduced) {
+    const [reach, drop, turn] = motion;
+    const sign = Math.sign(armSide) || 1;
+    const rotate = progress === null ? 0 : reduced ? 1 : Math.min(eased(progress / .17), eased((1 - progress) / .30));
+    const facing = idleAngle + Math.atan2(Math.sin(strikeAngle - idleAngle), Math.cos(strikeAngle - idleAngle)) * rotate;
+    const [fx, fy] = unitVector(facing);
+    const idleTilt = weapon.style === "staff" ? -.95 : weapon.style === "chop" ? -.32 :
+      weapon.style === "crossbow" || weapon.style === "bow" ? .32 : .035;
+    let edgeAngle = facing + sign * (turn + idleTilt * (1 - rotate));
+    if (turn < -.7 && (weapon.style === "slam" || weapon.style === "chop" || weapon.style === "heavy" || weapon.style === "staff")) {
+      const lift = eased((-turn - .7) / (.53));
+      const up = -Math.PI / 2 - sign * .38;
+      edgeAngle += Math.atan2(Math.sin(up - edgeAngle), Math.cos(up - edgeAngle)) * lift;
+    }
+    const [tx, ty] = unitVector(edgeAngle);
+    const shoulder = at(armSide * .223, -.762);
+    const target = at(armSide * (weapon.twoHands ? .144 : .184) + fx * (reach + .12) + (tx - fx) * .071,
+      -.49 + fy * (.066 + reach * .14) + ty * .071 + drop + carry * (1 - rotate));
+    const joints = armJoints(shoulder, target, size, -armSide * (reach > .21 ? .45 : .76), .269, .238);
     const hand = joints[2];
-    const reach = weapon.length ?? 1;
-    const tip = [hand[0] + edgeX * size * 0.735 * reach, hand[1] + edgeY * size * 0.585 * reach];
+    const span = size * .738 * (weapon.length ?? 1);
+    const tip = [hand[0] + tx * span, hand[1] + ty * span * .83];
     return { joints, hand, tip };
   }
 
-  function swordTrail(context, progress, sample, style) {
-    const end = Math.min(progress, 0.62);
-    const start = Math.max(0.18, progress - 0.23);
-    if (end <= start) return;
-    const inner = [];
-    const outer = [];
-    for (let index = 0; index <= 7; index++) {
-      const { hand, tip } = sample(start + (end - start) * index / 7);
-      outer.push(tip);
-      inner.push([hand[0] * 0.36 + tip[0] * 0.64, hand[1] * 0.36 + tip[1] * 0.64]);
+  function heroSwingCue(context, progress, sample, style, size, reduced) {
+    if (progress === null) return;
+    const short = style === "fist" || style === "thrust";
+    const ranged = style === "staff" || style === "orb" || style === "bow" || style === "crossbow";
+    const heavy = style === "slam" || style === "heavy" || style === "chop";
+    if (!reduced && !short && !ranged) {
+      const start = Math.max(.18, progress - .21);
+      const finish = Math.min(.66, progress);
+      if (start < finish) {
+        const core = [];
+        const ends = [];
+        for (let i = 0; i <= 6; i++) {
+          const { hand, tip } = sample(start + (finish - start) * i / 6);
+          ends.push(tip);
+          core.push([hand[0] * .31 + tip[0] * .69, hand[1] * .31 + tip[1] * .69]);
+        }
+        context.save();
+        context.globalAlpha *= .78 * (1 - eased((progress - .56) / .28));
+        poly(context, [...ends, ...core.reverse()], heavy ? "#ffcb874a" : "#83efd746",
+          heavy ? "#ffe2bda9" : "#e4fff4b0", Math.max(.78, size * .030));
+        context.restore();
+      }
     }
+
+    if (progress < .37 || progress > .67) return;
+    const contact = sample(.37);
+    const dx = contact.tip[0] - contact.hand[0];
+    const dy = contact.tip[1] - contact.hand[1];
+    const magnitude = Math.hypot(dx, dy) || 1;
+    const ux = dx / magnitude;
+    const uy = dy / magnitude;
+    const relative = (point, length, spread) => [point[0] + size * (ux * length - uy * spread),
+      point[1] + size * (uy * length + ux * spread)];
+    const fade = 1 - eased((progress - .37) / .30);
+    const cast = style === "staff" || style === "orb";
+    const color = cast ? "#c7fcff" : heavy || style === "crossbow" ? "#ffe3a9" : "#e5fff3";
+    const center = style === "fist" ? relative(contact.hand, .19, 0) :
+      style === "bow" ? relative(contact.hand, .13, 0) : contact.tip;
     context.save();
-    context.globalAlpha *= 0.76 * (1 - eased((progress - 0.53) / 0.27));
-    if (style === "thrust") line(context, outer, "#dcfff5b5", 1.4);
-    else poly(context, [...outer, ...inner.reverse()], style === "overhead" ? "#ffcf984a" : "#80f3c441",
-      style === "overhead" ? "#ffe6c5b5" : "#dcfff5ad", 0.85);
+    context.globalAlpha *= fade * (reduced ? .65 : .85);
+    if (style === "thrust") {
+      for (const offset of [-.068, .069]) {
+        line(context, [relative(center, -.32, offset), relative(center, .025, offset * .40)], color, size * .034);
+      }
+    } else {
+      for (const spread of [-.10, .08]) {
+        line(context, [relative(center, .005, spread * .43),
+          relative(center, cast ? .23 : heavy ? .14 : .116, spread * 1.51)], color, size * (heavy ? .043 : .032));
+      }
+      if (cast) ellipse(context, ...center, size * .09, size * .075, null, color, Math.max(.9, size * .032));
+    }
     context.restore();
   }
 
@@ -3791,7 +3835,7 @@
     const metal = (shape, fill, border = dark) => poly(context, shape.map(([u, v]) => at(u, v)), fill, border, outline);
     const draw = (points, color, width) => line(context, points.map(([u, v]) => at(u, v)), color, Math.max(.65, unit * width));
     const blade = heroWeaponEdges[name];
-    const charge = progress === null ? 0 : Math.sin(Math.PI * Math.min(1, progress / .74));
+    const charge = progress === null ? 0 : progress < .37 ? eased(progress / .32) : 1 - eased((progress - .37) / .20);
     if (blade) {
       const width = name === "greatsword" ? .16 : name === "daggers" ? .07 : .10;
       draw([[-.22,0],[.19,0]], "#4b3938", .083);
@@ -3829,6 +3873,14 @@
       if (name === "orb") {
         ellipse(context, x, y, radius * 1.38, radius * .70, null, "#f7d38ba3", 1.1);
       }
+      if (charge > .08) {
+        const ring = radius * (1.24 + charge * .31);
+        ellipse(context, x, y, ring, ring * .76, null, "#b8f6dc9b", Math.max(.68, unit * .021));
+        for (const sign of [-1, 1]) {
+          const star = [x + sign * ring * .89, y - sign * ring * .39];
+          line(context, [[star[0], star[1] - .055 * unit], [star[0], star[1] + .055 * unit]], "#e3ffec", Math.max(.68, unit * .024));
+        }
+      }
     } else if (name === "bow" || name === "crossbow") {
       const crossbow = name === "crossbow";
       const arc = crossbow ? [[.29,-.27],[.62,-.176],[.59,0],[.62,.176],[.29,.27]]
@@ -3839,9 +3891,17 @@
       }
       draw(arc, dark, .09);
       draw(arc, "#bc8d5a", .045);
-      const pull = support && progress !== null && progress < .37 ? support : null;
+      const cocked = progress !== null && progress < .37;
+      const pull = !crossbow && cocked ? support : null;
       const nock = pull ?? at(crossbow ? .28 : -.27);
       line(context, [at(...arc[0]), nock, at(...arc[arc.length - 1])], "#f1dfac", Math.max(.72, unit * .022));
+      if (cocked) {
+        const release = at(crossbow ? .76 : .37);
+        const tail = crossbow ? at(.04) : nock;
+        line(context, [tail, release], "#d3c197", Math.max(.86, unit * .029));
+        const point = crossbow ? .63 : .27;
+        metal([[point, -.045], [point + .15, 0], [point, .045]], "#deebcf");
+      }
     } else if (name === "tonfa") {
       metal([[-.42,-.053],[.58,-.057],[.86,-.030],[.86,.054],[.55,.087],[-.42,.066]], "#936747");
       draw([[.16,-.162],[.16,.052]], dark, .092);
@@ -3864,20 +3924,22 @@
     const weapon = heroWeapons[weaponName];
     const dual = weapon.style === "dual" || weapon.dual;
     const variant = Number.isInteger(actor.attackVariant) && swingProfiles[actor.attackVariant] ? actor.attackVariant : 0;
-    const armSide = weapon.style === "fist" && variant === 1 ? -pose.armSide : pose.armSide;
+    const armSide = dual && variant === 1 ? -pose.armSide : pose.armSide;
     const profile = swingProfiles[variant];
     const length = actor.swingDuration > 0 ? actor.swingDuration : actor.swingLife !== undefined ? profile.duration : 0.20;
     const time = pose.swingRemaining > 0 ? clamp(1 - pose.swingRemaining / length, 0, 1) : null;
     const impact = Number.isFinite(actor.swingImpact) ? clamp(actor.swingImpact, .08, .88) : .37;
     const progress = time === null ? null : time < impact ? .37 * time / impact : .37 + .63 * (time - impact) / (1 - impact);
-    const burst = weapon.style === "thrust" || weapon.style === "fist" ? .17 : .089;
-    const thrust = progress === null || reduced ? 0 : Math.sin(progress * Math.PI) * burst;
+    const action = heroAction(weapon, profile, progress, reduced);
+    const [,,, lean, knee, stagger] = action;
+    const strikeFacing = unitVector(pose.swingAngle);
     const tuck = pose.dashing * 0.082;
     const flinch = reduced ? 0 : pose.impact;
-    const bob = pose.breath - Math.abs(stride) * 0.21 + tuck + flinch * 0.10;
+    const bob = pose.breath - Math.abs(stride) * 0.21 + tuck + flinch * 0.10 + knee;
     const base = (horizontal, vertical) => [x + horizontal * unit, y + vertical * unit];
     const ground = (horizontal, vertical) => [x + horizontal * unit, y + vertical * unit - footing * camera.unit];
-    const at = (horizontal, vertical) => base(horizontal + fx * (thrust + tuck * 0.70 - flinch * 0.14), vertical + bob);
+    const at = (horizontal, vertical) => base(horizontal + strikeFacing[0] * lean * (.48 - vertical * .38)
+      + fx * (tuck * .70 - flinch * .14), vertical + bob + strikeFacing[1] * lean * .25);
     const cloth = ["#25413f", "#45867b", "#8bc1ab"];
     const scarf = ["#265654", "#50a998", "#a7e7c7"];
     const brass = ["#664b3e", "#b98a57", "#e3ba7b"];
@@ -3892,38 +3954,52 @@
     if (actor.wet > 0 && pose.gait > 0.30 && !reduced) {
       groundRing(context, camera, actor.x, actor.y, 0.48 + Math.abs(stride) * 0.62, null, "#a7f4eb92", 1.15);
     }
-    legStride(context, ground, at, unitVector(pose.travel), pose, unit, "#3d454b", boot[1], 0, true);
+    const steps = progress === null ? unitVector(pose.travel) : strikeFacing;
+    const planted = progress === null ? pose : { ...pose, stepLength: pose.stepLength * .38 };
+    legStride(context, ground, at, steps, planted, unit, "#3d454b", boot[1], side * stagger, true);
 
     const idleAngle = pose.look + stride * 0.24;
     const swordArm = (u, v) => at(u, v + armDepth);
     const carry = stride * .12 - tuck * .58;
-    const sampleSwing = (phase) => swordPose(swordArm, unit, armSide, idleAngle, pose.swingAngle, profile, weapon, phase, reduced, carry);
-    const { joints, hand, tip } = sampleSwing(progress);
+    const sampleSwing = (phase) => heroHand(swordArm, unit, armSide, idleAngle, pose.swingAngle, weapon,
+      heroAction(weapon, profile, phase, reduced), phase, carry, reduced);
+    const { joints, hand, tip } = heroHand(swordArm, unit, armSide, idleAngle, pose.swingAngle, weapon,
+      action, progress, carry, reduced);
     const backArm = (u, v) => at(u, v - armDepth);
     const supportShoulder = backArm(-armSide * .218, -.775);
     const lampTarget = backArm(-armSide * .33 - stride * .16, -.48 + stride * .12 - tuck * .48);
     let supportArm;
     if (dual) {
-      const reverse = { ...profile, coil: -profile.coil * .84, pass: -profile.pass };
-      const offhandPhase = weapon.style === "fist" ? null : progress;
-      const offhand = swordPose(backArm, unit, -armSide, idleAngle - side * .96,
-        pose.swingAngle, reverse, weapon, offhandPhase, reduced, carry);
+      // The rear hand stays in guard while the lead hand strikes. Alternate leads for the combo.
+      const supporting = progress === null ? [0, -.11, .29] :
+        [-.14, -.19 + .26 * Math.abs(knee), .30 + .21 * Math.abs(lean)];
+      const offhand = heroHand(backArm, unit, -armSide, idleAngle - side * .73,
+        pose.swingAngle - side * .51, weapon, supporting, progress, carry, reduced);
       supportArm = offhand.joints;
       paintArm(context, supportArm, unit, cloth, "#182b2f");
       heroWeapon(context, weaponName, offhand.hand, offhand.tip, null, unit, progress);
+      ellipse(context, ...supportArm[2], unit * .072, unit * .068, boot[1], "#30282b", .73);
     } else if (weapon.twoHands) {
       const length = Math.hypot(tip[0] - hand[0], tip[1] - hand[1]) || 1;
-      const nock = weapon.style === "draw" && progress !== null && progress < .37
-        ? .12 + eased(progress / .24) * .18 : .13;
+      const aiming = progress === null ? 0 : progress <= .37 ? eased(progress / .27) : 1 - eased((progress - .37) / .44);
+      const nock = weapon.style === "bow" ? .20 + .39 * aiming : weapon.style === "crossbow" ? .16 : .22;
+      const gripHeight = weapon.style === "crossbow" ? .067 : 0;
       const target = [hand[0] - (tip[0] - hand[0]) * unit * nock / length,
-        hand[1] - (tip[1] - hand[1]) * unit * nock / length];
+        hand[1] - (tip[1] - hand[1]) * unit * nock / length + gripHeight * unit];
       supportArm = armJoints(supportShoulder, target, unit, armSide * .63, .31, .29);
+      paintArm(context, supportArm, unit, cloth, "#182b2f");
+    } else if ((weapon.style === "staff" || weapon.style === "orb") && progress !== null) {
+      const signal = progress <= .37 ? eased(progress / .23) : 1 - eased((progress - .37) / .52);
+      const target = backArm(-armSide * .11 + strikeFacing[0] * (.065 + signal * .19),
+        -.53 - signal * .18 + strikeFacing[1] * .07);
+      supportArm = armJoints(supportShoulder, target, unit, armSide * .63);
       paintArm(context, supportArm, unit, cloth, "#182b2f");
     } else {
       supportArm = armJoints(supportShoulder, lampTarget, unit, armSide * .64);
       paintArm(context, supportArm, unit, cloth, "#182b2f");
     }
-    const grip = dual || weapon.twoHands ? at(-armSide * .269, -.41) : supportArm[2];
+    const carriesLantern = !dual && !weapon.twoHands && (weapon.style !== "orb" && weapon.style !== "staff" || progress === null);
+    const grip = carriesLantern ? supportArm[2] : at(-armSide * .269, -.41);
     forgedPlate(context, [at(-0.29, -0.80), at(-0.16, -0.92), at(0.17, -0.92), at(0.28, -0.76),
       at(0.22, -0.51), at(0.33, -0.24), at(0.15, -0.165), at(-0.01, -0.252), at(-0.22, -0.18), at(-0.30, -0.35)],
     cloth, palette, unit, 0.28);
@@ -3942,20 +4018,18 @@
     forgedPlate(context, [at(-0.20, -0.926), at(-0.10, -0.94), at(0.05, -0.904), at(0.21, -0.933),
       at(0.20, -0.846), at(0.064, -0.792), at(-0.13, -0.817)], scarf, palette, unit, 0.25);
 
-    if (!reduced && progress !== null && weapon.style !== "draw" && weapon.style !== "cast") {
-      swordTrail(context, progress, sampleSwing, weapon.style);
-    }
+    heroSwingCue(context, progress, sampleSwing, weapon.style, unit, reduced);
     paintArm(context, joints, unit, brass, "#312b2e");
     const sleeveCap = (u, v) => swordArm(armSide * 0.223 + u, v);
     forgedPlate(context, [sleeveCap(-0.114, -.827), sleeveCap(-0.053, -.872), sleeveCap(0.084, -.856),
       sleeveCap(0.124, -.766), sleeveCap(0.062, -.695), sleeveCap(-0.095, -.71)], brass, palette, unit, .26);
     heroWeapon(context, weaponName, hand, tip, supportArm[2], unit, progress);
     ellipse(context, ...hand, unit * 0.08, unit * 0.083, boot[1], "#30282b", Math.max(.75, unit * .017));
-    if (weapon.twoHands) ellipse(context, ...supportArm[2], unit * .067, unit * .066, boot[1], "#30282b", .76);
+    if (!dual && !carriesLantern) ellipse(context, ...supportArm[2], unit * .067, unit * .066, boot[1], "#30282b", .76);
 
     const [lampX, lampY] = grip;
     if (carryingCartridge) cartridge(context, lampX - side * unit * .062, lampY + unit * .097, unit * .92, -side * .32);
-    if (!dual && !weapon.twoHands) ellipse(context, lampX, lampY, unit * .083, unit * .076, boot[1], "#332928", .85);
+    if (carriesLantern) ellipse(context, lampX, lampY, unit * .083, unit * .076, boot[1], "#332928", .85);
     if (carryingCartridge) {
       context.restore();
       return;

@@ -23,7 +23,8 @@
     "audio-toggle", "music-track", "back-to-title", "region-label",
     "elevation-label", "elevation-legend",
     "status-dialog", "status-trigger", "status-close", "status-summary", "status-gear", "status-available-gear", "status-usable-items", "status-item-feedback", "status-stats", "status-quests",
-    "pause-dialog", "pause-trigger", "pause-resume", "pause-exit", "pause-save-error",
+    "pause-dialog", "pause-trigger", "pause-resume", "pause-exit", "pause-save-error", "pause-main-panel", "pause-settings",
+    "settings-panel", "settings-back", "volume-setting", "volume-value", "auto-aim-setting", "auto-equip-setting", "status-auto-equip",
     "coach-tip", "coach-text", "coach-next",
   ].map((id) => [id, document.getElementById(id)]));
   const minimapSection = elements.minimap.closest(".map-section");
@@ -39,6 +40,8 @@
   const motionPreference = window.matchMedia?.("(prefers-reduced-motion: reduce)");
   const dieRebounds = [0.38, 0.49, 0.61, 0.73];
   const checkpointKey = "brass-spire-campaign-v1";
+  const settingsKey = "brassen-tower-settings";
+  const preferences = readSettings();
   const seenCoaches = new Map();
   const coach = {
     dice: { target: "#entry-continue",
@@ -49,11 +52,11 @@
       text: "Space나 클릭으로 가장 가까운 적을 공격하세요.", touchText: "공격 버튼으로 가까운 적을 공격하세요." },
     defense: { target: ".parry-readout", touch: '[data-action="parry"]',
       text: "Shift로 대쉬하고, 적의 공격이 닿을 때 F로 패링하세요.", touchText: "대쉬로 피하고, 공격이 닿을 때 패링하세요." },
-    reward: { target: "#overlay-choices .route-choice", text: "장비 보상은 받는 즉시 착용합니다." },
+    reward: { target: "#overlay-choices .route-choice", text: "장비 보상은 자동 장착 설정에 따라 장착하거나 가방에 보관합니다." },
     route: { target: "#overlay-choices .route-choice", text: "다음 층에 적용할 통로 효과를 고르세요." },
     departure: { target: "#objective", text: "열린 출구의 발판에 올라서면 위층으로 이동합니다." },
     status: { target: "#status-trigger",
-      text: "Q로 장착 가능 장비와 사용 가능 품목을 확인하세요.", touchText: "상태창에서 장착 가능 장비와 사용 가능 품목을 확인하세요." },
+      text: "Q로 장착 가능 장비와 사용 가능 물품을 확인하세요.", touchText: "상태창에서 장착 가능 장비와 사용 가능 물품을 확인하세요." },
     pack: { target: "#pack-panel > summary", text: "가방의 소모품은 눌러 사용하고, 장비는 눌러 착용하세요." },
     town: { target: "#objective", text: "게시판에서 의뢰를 받고 상점에서 물건을 사고팔 수 있습니다." },
   };
@@ -114,6 +117,7 @@
   const keys = new Set();
   const touchPointers = new Map();
   let attackPointer = null;
+  let attackPointerPosition = null;
   let run;
   let stage;
   let state;
@@ -127,6 +131,37 @@
   let trackName = "";
   let activeCoach;
   let coachAnchor;
+
+  function readSettings() {
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem(settingsKey)); } catch {}
+    return { autoAim: saved?.autoAim !== false, autoEquip: saved?.autoEquip !== false };
+  }
+
+  function saveSettings() {
+    try { localStorage.setItem(settingsKey, JSON.stringify(preferences)); } catch {}
+  }
+
+  function renderSettings() {
+    const volume = audio.volume?.() ?? 100;
+    elements["volume-setting"].value = String(volume);
+    setText("volume-value", volume + "%");
+    elements["auto-aim-setting"].checked = preferences.autoAim;
+    elements["auto-equip-setting"].checked = preferences.autoEquip;
+  }
+
+  function showPauseSettings(open) {
+    const panel = elements["settings-panel"];
+    if (!panel) return;
+    panel.hidden = !open;
+    elements["pause-main-panel"].hidden = open;
+    elements["pause-dialog"].setAttribute("aria-labelledby", open ? "settings-title" : "pause-title");
+    elements["pause-dialog"].scrollTop = 0;
+    if (open) renderSettings();
+    if (elements["pause-dialog"].open) {
+      elements[open ? "settings-back" : "pause-settings"].focus({ preventScroll: true });
+    }
+  }
 
   function randomFrom(seed) {
     let value = seed;
@@ -451,6 +486,7 @@
     keys.clear();
     touchPointers.clear();
     attackPointer = null;
+    attackPointerPosition = null;
   }
 
   function hasRunDialog() {
@@ -528,6 +564,7 @@
           [title + " " + (index + 1), [item.title, item.tag].filter(Boolean).join(" · ")]) : [[title, "비어 있음"]];
       })]);
     const bag = packEntries(equipped);
+    if (elements["status-auto-equip"]) elements["status-auto-equip"].disabled = !packAvailable();
     renderStatusItems("status-available-gear", bag.filter(({ kind }) => kind === "gear"), (item) => {
       const slot = rpg.slots.find(({ id }) => id === item.slot);
       const items = equipped.get(item.slot) ?? [];
@@ -564,6 +601,10 @@
 
   function toggleRunDialog(dialog) {
     if (dialog.open) {
+      if (dialog === elements["pause-dialog"] && elements["settings-panel"]?.hidden === false) {
+        showPauseSettings(false);
+        return;
+      }
       dialog.close();
       return;
     }
@@ -574,10 +615,12 @@
       if (elements["status-item-feedback"]) setText("status-item-feedback", "");
       renderStatusDialog();
     } else {
+      showPauseSettings(false);
       elements["pause-save-error"].hidden = true;
       setText("pause-exit", adminRun ? "나가기" : "저장하고 나가기");
     }
     dialog.showModal();
+    dialog.scrollTop = 0;
   }
 
   function returnFromDialog({ currentTarget }) {
@@ -1527,6 +1570,70 @@
     return { ...stats, attackRange: weaponAttackRange(weapon, stats), attackCooldown: currentAttackInterval(weapon, {}, stats) };
   }
 
+  function equipmentScore(progress) {
+    const stats = comparisonStats(progress);
+    const damagePerSecond = Math.max(1, stats.damage) / stats.attackCooldown;
+    const effectiveHealth = stats.maxHp / (1 - stats.damageReduction);
+    return Math.log(damagePerSecond) * 100 + Math.log(effectiveHealth) * 80 +
+      Math.log(stats.speed) * 35 + Math.log(stats.attackRange) * 22 -
+      Math.log(stats.dashCooldown) * 12 + stats.guardBreak * 12 +
+      stats.finishingDamage * 0.35 + stats.dashStrike * 0.24 + stats.dashGrace * 10;
+  }
+
+  function bestEquipment(progress, onlySlot, newGear) {
+    const inventory = run.rewards.filter(({ kind }) => kind === "gear").map(({ item }) => item);
+    if (newGear) inventory.push(newGear);
+    let result = progress;
+    for (const { id: slot } of rpg.slots) {
+      if (onlySlot && slot !== onlySlot) continue;
+      const candidates = inventory.filter((item) => item.slot === slot);
+      const worn = new Set((rpg.equippedBySlot(result).get(slot) ?? []).map(({ id }) => id));
+      const empty = { ...result, gearIds: result.gearIds.filter((id) => !worn.has(id)) };
+      let score = equipmentScore(result);
+      const consider = (option) => {
+        const value = equipmentScore(option);
+        if (value > score + 0.00001) {
+          result = option;
+          score = value;
+        }
+      };
+      consider(empty);
+      for (const [index, item] of candidates.entries()) {
+        const first = rpg.equip(empty, item.id);
+        consider(first);
+        for (let second = index + 1; second < candidates.length; second++) {
+          consider(rpg.equip(first, candidates[second].id));
+        }
+      }
+    }
+    return result;
+  }
+
+  function equippedCount(progress, id) {
+    return progress.gearIds.filter((gearId) => gearId === id).length;
+  }
+
+  function equipBestFromStatus() {
+    if (!elements["status-dialog"].open || !packAvailable()) return;
+    const best = bestEquipment(run.progress);
+    const changed = best !== run.progress;
+    if (changed) {
+      updateProgress(best, true);
+      renderGear();
+      renderPack();
+      if (state.mode === "gear" && run.selectedReward) showRewardComparison(run.selectedReward);
+      if (state.mode === "branch") {
+        setText("overlay-copy", "체력 " + Math.ceil(state.player.hp) + " / " + state.player.maxHp + " · 금화 " + goldText(run.gold));
+      }
+      if (state.mode === "playing" && state.shelter) saveVillage();
+      syncHUD();
+      renderStatusDialog();
+    }
+    const message = changed ? "추천 장비를 장착했습니다." : "이미 추천 장비를 장착 중입니다.";
+    if (elements["status-item-feedback"]) setText("status-item-feedback", message);
+    notify(message);
+  }
+
   function currentAttackDamage(weapon, route) {
     const workshopPower = run.rewards.filter((entry) => entry.kind === "upgrade").length * 6;
     return (run.stats.damage + (route.damageBonus ?? 0) + state.overclock + workshopPower) * (weapon.power ?? 1);
@@ -1551,8 +1658,10 @@
     const weapon = playerWeapons[player.weapon] ?? playerWeapons.sword;
     const ranged = Boolean(weapon.projectile);
     const range = currentAttackRange(weapon, route);
-    const target = enemiesInReach(range, ranged)[0];
-    if (target) setFacing(player, direction(target.x - player.x, target.y - player.y));
+    const target = preferences.autoAim ? enemiesInReach(range, ranged)[0] : null;
+    const manual = !preferences.autoAim && attackPointerPosition;
+    const aimPoint = target ?? (manual ? renderer.screenToWorld(canvas, manual.x, manual.y, state) : null);
+    if (aimPoint) setFacing(player, direction(aimPoint.x - player.x, aimPoint.y - player.y));
     player.attackCooldown = currentAttackInterval(weapon, route);
     player.attackVariant = state.elapsed < player.nextComboUntil ? (player.attackVariant + 1) % 3 : 0;
     player.nextComboUntil = state.elapsed + 0.62;
@@ -1561,8 +1670,8 @@
     player.swingLife = player.swingDuration;
     player.attackFlash = player.swingDuration;
     player.pendingStrike = { at: state.elapsed + player.swingDuration * player.swingImpact, range, weapon,
-      x: player.facingX, y: player.facingY, altitude: target ? elevationAt(target) : elevationAt(player),
-      targetDistance: target ? distance(player, target) : range };
+      x: player.facingX, y: player.facingY, altitude: aimPoint ? elevationAt(aimPoint) : elevationAt(player),
+      targetDistance: aimPoint ? distance(player, aimPoint) : range };
   }
 
   function applyPlayerStrike(enemy, weapon, aim) {
@@ -2660,12 +2769,23 @@
     let changes = [];
     let equipped = "";
     let detail = item.description;
+    let autoSelected = false;
     if (item.kind === "gear") {
       const comparison = compareGearOffer(item);
       changes = comparison.changes;
       equipped = comparison.replaced?.title || "빈 슬롯";
       setText("compare-heading", comparison.replaced ? "교체 미리보기" : "추가 착용 미리보기");
       setText("compare-current-label", comparison.replaced ? "교체할 장비" : "착용할 자리");
+      if (preferences.autoEquip) {
+        const suggested = bestEquipment(run.progress, comparison.gear.slot, comparison.gear);
+        autoSelected = equippedCount(suggested, comparison.gear.id) > equippedCount(run.progress, comparison.gear.id);
+        changes = rpg.compareStats(run.progress, applyGearRecovery(suggested, item), comparisonStats);
+        const after = rpg.equippedBySlot(suggested).get(comparison.gear.slot) ?? [];
+        equipped = after.map(({ title }) => title).join(" · ") || "빈 슬롯";
+        setText("compare-heading", "보상 수령 후");
+        setText("compare-current-label", "자동 장착 결과");
+      }
+      if (!autoSelected) detail += " · 수령 후 가방에 보관";
     } else if (item.kind === "stat") {
       changes = rpg.compareStats(run.progress, rpg.gainStat(run.progress, item.stat, item.amount), comparisonStats);
     } else {
@@ -2678,14 +2798,16 @@
     elements["compare-stats"].replaceChildren(...changes.map(comparisonRow));
     const confirm = elements["primary-action"];
     confirm.disabled = false;
-    setText("primary-action", item.kind === "gear" ? "받고 장착" : "보상 받기");
+    setText("primary-action", autoSelected ? "받고 장착" : "보상 받기");
     action = () => {
       if (state.mode !== "gear") return;
       if (item.kind === "gear") {
         const gear = rpg.rewardGear(rewards.storedGear(item));
         recordReward("gear", gear);
-        updateProgress(applyGearRecovery(rpg.equip(run.progress, gear.id), item), true);
-        run.pendingGear = item.title;
+        const previousCount = equippedCount(run.progress, gear.id);
+        const suggested = preferences.autoEquip ? bestEquipment(run.progress, gear.slot) : run.progress;
+        updateProgress(applyGearRecovery(suggested, item), true);
+        if (equippedCount(run.progress, gear.id) > previousCount) run.pendingGear = item.title;
         renderGear();
       } else if (item.kind === "stat") {
         updateProgress(rpg.gainStat(run.progress, item.stat, item.amount));
@@ -2926,8 +3048,24 @@
   elements.overlay.addEventListener("animationend", positionCoach);
   elements["status-trigger"].addEventListener("click", () => toggleRunDialog(elements["status-dialog"]));
   elements["status-close"].addEventListener("click", () => elements["status-dialog"].close());
+  elements["status-auto-equip"]?.addEventListener("click", equipBestFromStatus);
   elements["pause-trigger"].addEventListener("click", () => toggleRunDialog(elements["pause-dialog"]));
   elements["pause-resume"].addEventListener("click", () => elements["pause-dialog"].close());
+  elements["pause-settings"]?.addEventListener("click", () => showPauseSettings(true));
+  elements["settings-back"]?.addEventListener("click", () => showPauseSettings(false));
+  elements["volume-setting"]?.addEventListener("input", ({ currentTarget }) => {
+    const value = audio.setVolume?.(Number(currentTarget.value)) ?? Number(currentTarget.value);
+    setText("volume-value", value + "%");
+  });
+  for (const [control, preference] of [["auto-aim-setting", "autoAim"], ["auto-equip-setting", "autoEquip"]]) {
+    elements[control]?.addEventListener("change", ({ currentTarget }) => {
+      preferences[preference] = currentTarget.checked;
+      saveSettings();
+      if (preference === "autoEquip" && state.mode === "gear" && run.selectedReward) {
+        showRewardComparison(run.selectedReward);
+      }
+    });
+  }
   elements["pause-exit"].addEventListener("click", () => {
     if (!adminRun && !saveCheckpoint(state.floor, state.player.hp, state.routeId, { version: 1, stage, state })) {
       elements["pause-save-error"].hidden = false;
@@ -3028,11 +3166,18 @@
       return;
     }
     attackPointer = event.pointerId;
+    attackPointerPosition = { x: event.clientX, y: event.clientY };
     attack();
+  });
+  window.addEventListener("pointermove", (event) => {
+    if (event.pointerId === attackPointer) attackPointerPosition = { x: event.clientX, y: event.clientY };
   });
   function releasePointer(event) {
     touchPointers.delete(event.pointerId);
-    if (attackPointer === event.pointerId) attackPointer = null;
+    if (attackPointer === event.pointerId) {
+      attackPointer = null;
+      attackPointerPosition = null;
+    }
   }
   window.addEventListener("pointerup", releasePointer);
   window.addEventListener("pointercancel", releasePointer);
