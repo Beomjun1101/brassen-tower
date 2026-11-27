@@ -290,6 +290,9 @@ button:disabled { cursor: default; }
 @media (pointer: coarse) and (orientation: landscape) and (max-height: 390px) {
   .entry-continue { bottom: max(12%, calc(6% + 391px - 100svh)); }
   .game-stage[data-mode="menu"] { height: max(182px, calc(100svh - 151px)); }
+  .overlay[data-mode="menu"] { padding-block: 7px; }
+  .overlay[data-mode="menu"] .overlay-panel { padding-block: 8px; }
+  .overlay[data-mode="menu"] .build-editor { margin-top: 8px; }
 }
 .combat-hotbar {
   display: flex;
@@ -821,16 +824,15 @@ kbd {
   font-weight: 720;
 }
 .build-difficulty legend { margin-bottom: 4px; padding: 0; }
-.build-difficulty legend span { margin-inline-start: 5px; color: var(--muted); font-size: .7rem; }
 .build-budget { position: absolute; top: 0; right: 3px; display: flex; align-items: center; gap: 6px; }
 .difficulty-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
 .difficulty-option { position: relative; display: grid; min-width: 0; cursor: pointer; }
 .difficulty-option input { position: absolute; top: 50%; left: 50%; width: 1px; height: 1px; margin: 0; opacity: 0; }
 .difficulty-card {
-  display: grid;
-  align-content: center;
-  justify-items: center;
-  gap: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   min-height: 44px;
   padding: 4px 3px;
   border: 1px solid #718879;
@@ -841,11 +843,9 @@ kbd {
   line-height: 1.2;
   white-space: nowrap;
 }
-.difficulty-card strong { display: flex; align-items: center; gap: 4px; }
-.difficulty-card strong::before { width: 8px; height: 8px; border: 1px solid currentColor; border-radius: 50%; content: ""; }
-.difficulty-card small { color: #c8dacd; font-size: .68rem; font-weight: 650; }
+.difficulty-card::before { width: 8px; height: 8px; border: 1px solid currentColor; border-radius: 50%; content: ""; }
 .difficulty-option input:checked + .difficulty-card { border-color: #a1d6bc; background: #314f42; color: #ecfff3; }
-.difficulty-option input:checked + .difficulty-card strong::before { border-color: var(--patina); background: var(--patina); }
+.difficulty-option input:checked + .difficulty-card::before { border-color: var(--patina); background: var(--patina); }
 .difficulty-option input:focus-visible + .difficulty-card { outline: 2px solid var(--patina); outline-offset: -4px; }
 @media (hover: hover) { .difficulty-option:hover .difficulty-card { border-color: var(--patina); } }
 
