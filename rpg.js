@@ -36,7 +36,7 @@
     dashGrace: "대쉬 무적 시간",
   };
   const lowerIsBetter = new Set(["attackCooldown", "dashCooldown"]);
-  const baseAttackInterval = 0.10;
+  const baseAttackInterval = 0.125;
   const killRecoveryCap = 7.5;
 
   const levelThresholds = [0, 50, 100, 175, 265, 395, 555, 755, 1000, 1300, 1665, 2110];

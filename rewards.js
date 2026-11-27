@@ -100,6 +100,7 @@
   const integers = new Set(["maxHp", "damage", "healOnKill", "dashStrike", "finishingDamage"]);
   const percentages = new Set(["damageReduction", "guardBreak"]);
   const spatialStats = new Set(["speed", "attackRange"]);
+  const itemPowerMultiplier = 0.9;
   const rewardScale = (power) => 1 + 0.085 * (power - 1);
   const statCaps = {
     attackCooldown: 0.15,
@@ -143,9 +144,19 @@
     return { ...item, bonus, description, tag: description };
   }
 
+  function balanceGear(item) {
+    if (item.balanceVersion === 1) return item;
+    const bonus = Object.fromEntries(Object.entries(item.bonus ?? {}).map(([stat, amount]) => {
+      const improves = cooldowns.has(stat) ? amount < 0 : amount > 0;
+      const adjusted = improves ? amount * itemPowerMultiplier : amount;
+      return [stat, integers.has(stat) ? Math.round(adjusted) : Number(adjusted.toFixed(3))];
+    }));
+    return describedGear({ ...item, balanceVersion: 1 }, bonus);
+  }
+
   function storedGear(item) {
     if (item.kind !== "gear") return item;
-    const { killRecovery, bonus: oldBonus, ...gear } = item;
+    const { killRecovery, bonus: oldBonus, ...gear } = balanceGear(item);
     const { healOnKill, ...bonus } = oldBonus ?? {};
     return describedGear(gear, bonus);
   }
@@ -156,6 +167,7 @@
 
   function withKillRecovery(item, allowance = 0) {
     const limit = Number.isFinite(allowance) ? Math.max(0, Math.min(window.TowerRpg.killRecoveryCap, allowance)) : 0;
+    if (item.kind === "gear") item = balanceGear(item);
     const recovery = item.kind === "gear" ? item.killRecovery ?? item.bonus?.healOnKill
       : item.kind === "stat" && item.stat === "healOnKill" ? item.amount : 0;
     if (!(recovery > 0)) return item;
@@ -175,7 +187,7 @@
     }
     if (!amount) {
       return describedGear({ ...gear, id: `${gear.id}-protection`, title: "작은 방호 부적" }, {
-        maxHp: scaledStat("maxHp", 7, scale),
+        maxHp: Math.round(scaledStat("maxHp", 7, scale) * itemPowerMultiplier),
       });
     }
     const { id, title, rarity, power } = item;
@@ -188,16 +200,15 @@
     const floorTemplate = (template) => replacements?.get(template[0]) ?? template;
     const equipment = Object.entries(gear).flatMap(([slot, entries]) => entries.map(floorTemplate).map(([key, title, rarity, stats, downside]) => {
       const bonus = Object.fromEntries(Object.entries(stats).map(([stat, amount]) => [stat, scaledStat(stat, amount, scale)]));
-      const description = Object.entries(bonus).map(([stat, amount]) => describeStat(stat, amount)).join(" · ");
-      return { id: "loot-" + key, title, description, tag: description, kind: "gear", slot, rarity, bonus, power, cost: 0,
-        ...(downside ? { compromised: true, downside } : {}) };
+      return balanceGear({ id: "loot-" + key, title, kind: "gear", slot, rarity, bonus, power, cost: 0,
+        ...(downside ? { compromised: true, downside } : {}) });
     }));
     const talents = events.map(([key, title, rarity, stat, base]) => {
       const amount = scaledStat(stat, base, scale);
       return { id: "event-" + key, title, description: describeStat(stat, amount) + " · 이번 등반 동안 유지", kind: "stat", rarity, stat, amount, power };
     });
     const consumables = supplies.map(floorTemplate).map(([key, title, rarity, stats, downside]) => {
-      const effects = Object.fromEntries(Object.entries(stats).map(([effect, amount]) => [effect, Math.round(amount * scale)]));
+      const effects = Object.fromEntries(Object.entries(stats).map(([effect, amount]) => [effect, Math.round(amount * scale * itemPowerMultiplier)]));
       const description = Object.entries(effects).map(([effect, amount]) => `${supplyLabels[effect]} +${amount}`).join(" · ");
       return { id: "supply-" + key, title, description, kind: "supply", rarity, effects, power,
         ...(downside ? { compromised: true, downside } : {}) };

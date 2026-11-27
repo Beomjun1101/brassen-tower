@@ -164,7 +164,7 @@
       const effects = Object.fromEntries(Object.entries(aid.effects).filter(([key]) => key !== "gold"));
       const description = Object.entries(effects).map(([key, amount]) => `${shopSupplyLabels[key]} +${amount}`).join(" · ");
       const stockAid = { ...aid, effects, description };
-      const entries = [ordinary, special, stockAid].map((item) => ({ id: `${floor}:${item.id}`, item, price: buyPrice(item) }));
+      const entries = [ordinary, special, stockAid].map((item) => ({ id: `${floor}:${item.id}`, item, price: buyPrice(item) * 2 }));
       latestShop = { floor, seed: seedValue, entries };
     }
     return latestShop.entries.map((entry) => {

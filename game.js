@@ -495,6 +495,7 @@
     notify(null);
     stage = savedStage;
     state = savedState;
+    if (state.player.maxHp !== run.stats.maxHp) updateProgress(run.progress, true);
     // Resumed fights keep the same curve for reinforcements as for their saved enemies.
     state.enemyScalingVersion ??= state.gradualFloorScaling ? 1 : 0;
     migrateSceneDifficulty(state);
@@ -679,9 +680,9 @@
       ["사거리", statValue("attackRange", currentAttackRange(battleWeapon, route))],
       ["공격 간격", statValue("attackCooldown", currentAttackInterval(battleWeapon, route))],
       ["대쉬 재사용", statValue("dashCooldown", currentDashCooldown(route))],
-      ["이동 속도", statValue("speed", run.stats.speed * (route.speedMultiplier ?? 1))],
+      ["이동 속도", statValue("speed", currentMoveSpeed(route))],
       ["처치 시 회복", statValue("healOnKill", killRecovery()) + " / " + rpg.killRecoveryCap],
-      ["받는 피해 감소", statValue("damageReduction", Math.min(.70, run.stats.damageReduction + (route.damageReductionBonus ?? 0)))],
+      ["받는 피해 감소", statValue("damageReduction", currentDamageReduction(route))],
     ]);
     const quests = run.quests.map((quest) => {
       const entry = document.createElement("li");
@@ -1682,6 +1683,14 @@
     return Math.max(weapon.minimum ?? 0, rpg.attackInterval(stats, multiplier, weapon.intervalOffset));
   }
 
+  function currentMoveSpeed(route = {}, stats = run.stats) {
+    return Math.max(1, Math.min(6, stats.speed * (route.speedMultiplier ?? 1)));
+  }
+
+  function currentDamageReduction(route = {}, stats = run.stats) {
+    return Math.max(0, Math.min(0.4, stats.damageReduction + (route.damageReductionBonus ?? 0)));
+  }
+
   function currentDashCooldown(route = {}, stats = run.stats) {
     const cooldown = stats.dashCooldown * (route.dashCooldownMultiplier ?? 1);
     return Math.max(dashDuration, cooldown - difficultyRules().dashCooldownReduction);
@@ -1691,7 +1700,8 @@
     const stats = currentClassStats(progress);
     const weapon = playerWeapons[village.weaponFor(run.classId).id] ?? playerWeapons.sword;
     return { ...stats, attackRange: weaponAttackRange(weapon, stats), attackCooldown: currentAttackInterval(weapon, {}, stats),
-      dashCooldown: currentDashCooldown({}, stats) };
+      dashCooldown: currentDashCooldown({}, stats), speed: currentMoveSpeed({}, stats),
+      damageReduction: currentDamageReduction({}, stats) };
   }
 
   function equipmentScore(progress) {
@@ -2076,14 +2086,14 @@
     const options = page === "buy"
       ? village.shopStock(state.floor, run.floorSeeds[state.floor - 1]).map(({ id, item: stockItem, price }) => {
         const item = rewards.withKillRecovery(stockItem, allowance);
-        const sold = visit.purchases.includes(id);
+        const sold = visit.purchases.length > 0;
         const comparison = item.kind === "gear" ? compareGearOffer(item) : null;
         const detail = comparison
           ? comparison.changes.map(({ key, label, delta }) => label + " " + statValue(key, delta, true)).join(" · ")
           : item.kind === "stat" ? item.description : describeSupply(item);
-        return { id: "buy-" + id, title: item.title, description: sold ? "품절" : detail || "장착 능력치 동일",
+        return { id: "buy-" + id, title: item.title, description: sold ? (visit.purchases.includes(id) ? "구매 완료" : "이 층의 구매 한도 도달") : detail || "장착 능력치 동일",
           price: goldText(price) + " 금화", disabled: sold || run.gold < price, choose: () => {
-            if (visit.purchases.includes(id) || run.gold < price) return;
+            if (visit.purchases.length > 0 || run.gold < price) return;
             spendGold(price);
             if (item.kind === "stat") updateProgress(rpg.gainStat(run.progress, item.stat, item.amount));
             else if (comparison) receiveGear(comparison.gear, item);
@@ -2113,7 +2123,8 @@
         } };
       });
     villagePanel(page === "buy" ? "잡화 구매" : "전리품 판매",
-      options.length ? gold : "판매할 전리품이 없습니다. · " + gold, options, () => villageShop());
+      page === "buy" ? gold + " · 층마다 1개 구매 가능"
+        : options.length ? gold : "판매할 전리품이 없습니다. · " + gold, options, () => villageShop());
   }
 
   function applyVillageEffects({ gold, heal, xp, ward, overclock } = {}) {
@@ -2270,7 +2281,7 @@
   function damagePlayer(amount, contactConfirmed = false) {
     const player = state.player;
     if ((!contactConfirmed && player.invulnerable > 0) || player.hp <= 0) return false;
-    const reduction = Math.min(0.70, run.stats.damageReduction + (state.routeEffects?.damageReductionBonus ?? 0));
+    const reduction = currentDamageReduction(state.routeEffects);
     const damage = Math.max(1, Math.round(amount * difficultyRules().damage * (1 - reduction)));
     const blocked = Math.min(state.ward, damage);
     state.ward -= blocked;
@@ -3152,7 +3163,7 @@
       player.dashRemaining = Math.max(0, player.dashRemaining - delta);
     } else {
       const walking = stairDirection(player, inputDirection());
-      const speed = run.stats.speed * (state.routeEffects?.speedMultiplier ?? 1) * (player.swingLife > 0 ? 0.82 : 1);
+      const speed = currentMoveSpeed(state.routeEffects) * (player.swingLife > 0 ? 0.82 : 1);
       const blend = 1 - Math.exp(-(walking ? 20 : 28) * delta);
       player.velocityX += ((walking?.x ?? 0) * speed - player.velocityX) * blend;
       player.velocityY += ((walking?.y ?? 0) * speed - player.velocityY) * blend;
