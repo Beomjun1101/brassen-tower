@@ -859,8 +859,10 @@
     const { x, y, kind, inhabited, cloth, trim } = entry;
     const p = (dx, dy, z = 0.025) => art.point(camera, x + dx, y + dy, z);
     const frame = inhabited ? cloth : "#596a67";
-    art.poly(context, art.rectangle(camera, x - 0.72, y - 0.55, 1.44, 1.10, 0.016), "#1b2928b0");
-    art.line(context, [p(-0.70, 0.55), p(0.70, 0.55)], trim + "9a", 1.4);
+    const plate = window.TowerContent.exitPlatforms.shelter;
+    art.poly(context, art.rectangle(camera, x + plate.near, y - plate.halfWidth,
+      plate.far - plate.near, plate.halfWidth * 2, 0.016), "#1b2928b0");
+    art.line(context, [p(plate.near + 0.02, plate.halfWidth), p(plate.far - 0.02, plate.halfWidth)], trim + "9a", 1.4);
     contact(context, camera, art, x, y, 1.2);
 
     const drawVillageProp = villageProps[kind];

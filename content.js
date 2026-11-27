@@ -1088,6 +1088,11 @@
     return access !== null && layoutTargets(stage).every((target) => access.reaches(target, targetClearance(target)));
   }
 
+  const exitPlatforms = {
+    combat: { near: -1.52, far: 0.38, halfWidth: 0.73 },
+    shelter: { near: -0.72, far: 0.72, halfWidth: 0.55 },
+  };
+
   function exitGateWalls(exit) {
     const x = exit.x + 0.64;
     return [
@@ -1609,5 +1614,5 @@
   }
 
   window.TowerContent = { floorCount, shelterInterval, frontierFloor, isShelterFloor, isBossFloor, getRegion, createFloor,
-    heightAt, canTraverse, isDry, exitGateWalls, combatExit, routes, routeOptions };
+    heightAt, canTraverse, isDry, exitPlatforms, exitGateWalls, combatExit, routes, routeOptions };
 })();

@@ -19,7 +19,7 @@
     "game-stage", "floor-steps", "hazard-label", "timer-label", "dash-state", "parry-state", "minimap",
     "gear-compare", "compare-equipped", "compare-candidate", "compare-stats", "compare-detail",
     "build-editor", "build-points", "build-stats", "run-difficulty",
-    "pack-panel", "pack-list", "pack-count", "compare-heading", "compare-candidate-label",
+    "pack-panel", "pack-list", "pack-count", "compare-heading", "compare-current-label", "compare-candidate-label",
     "audio-toggle", "music-track", "back-to-title", "region-label",
     "elevation-label", "elevation-legend",
     "status-dialog", "status-trigger", "status-close", "status-summary", "status-gear", "status-available-gear", "status-usable-items", "status-item-feedback", "status-stats", "status-quests",
@@ -29,6 +29,7 @@
   const minimapSection = elements.minimap.closest(".map-section");
 
   const playerRadius = 0.29;
+  const floorArrivalDuration = 0.72;
   const playerStartDelay = 0.5;
   const enemyStartDelay = 1;
   const challengeGold = 12;
@@ -50,7 +51,7 @@
       text: "Shift로 대쉬하고, 적의 공격이 닿을 때 F로 패링하세요.", touchText: "대쉬로 피하고, 공격이 닿을 때 패링하세요." },
     reward: { target: "#overlay-choices .route-choice", text: "장비 보상은 받는 즉시 착용합니다." },
     route: { target: "#overlay-choices .route-choice", text: "다음 층에 적용할 통로 효과를 고르세요." },
-    departure: { target: "#objective", text: "열린 문에 닿으면 위층으로 바로 올라갑니다." },
+    departure: { target: "#objective", text: "열린 출구의 발판에 올라서면 위층으로 이동합니다." },
     status: { target: "#status-trigger",
       text: "Q로 장착 가능 장비와 사용 가능 품목을 확인하세요.", touchText: "상태창에서 장착 가능 장비와 사용 가능 품목을 확인하세요." },
     pack: { target: "#pack-panel > summary", text: "가방의 소모품은 눌러 사용하고, 장비는 눌러 착용하세요." },
@@ -1202,7 +1203,7 @@
     const hasStatus = Boolean(run) && dialogModes.has(state.mode);
     elements["status-trigger"].hidden = !hasStatus;
     elements["pause-trigger"].hidden = !hasStatus;
-    setText("objective", state.revealed ? (state.departure && !state.shelter ? "열린 출구로 이동하세요." : stage.objective) : "");
+    setText("objective", state.revealed ? (state.departure && !state.shelter ? "열린 출구의 발판으로 이동하세요." : stage.objective) : "");
     if (minimapSection.hidden !== !state.revealed) minimapSection.hidden = !state.revealed;
     setText("health-label", Math.ceil(state.player.hp) + " / " + maxHp);
     setText("gold-value", goldText(run?.gold));
@@ -2788,17 +2789,23 @@
     }
     enterPlayableScene();
     if (!state.shelter) {
-      const message = "출구 개방 · 열린 문으로 이동하세요.";
+      const message = "출구 개방 · 출구 발판으로 이동하세요.";
       notify(message);
       setText("live-status", message);
     }
+  }
+
+  function atExitPlatform(player, gate, { near, far, halfWidth }) {
+    const depth = player.x - gate.x;
+    return depth >= near && depth <= far && Math.abs(player.y - gate.y) <= halfWidth &&
+      withinTier(player, gate, 0.18) && closeReach(player, gate);
   }
 
   function advanceDeparture() {
     const player = state.player;
     if (state.shelter) {
       const gate = state.stations.find(({ kind }) => kind === "departure");
-      if (!gate || distance(player, gate) > .80 || !closeReach(player, gate)) return;
+      if (!gate || !atExitPlatform(player, gate, content.exitPlatforms.shelter)) return;
       if (!state.departure) {
         if (!adminRun && state.floor >= previewFloorLimit && run.previewComplete) {
           showPreviewComplete();
@@ -2813,9 +2820,7 @@
       if (!state.departure) return;
       const gate = state.gateMarker;
       gate.openProgress = reducedMotion ? 1 : Math.min(1, (state.elapsed - gate.openSince) / .54);
-      const threshold = { x: gate.x + .64, y: gate.y };
-      if (gate.openProgress < 1 || Math.abs(player.x - threshold.x) > playerRadius + .23 ||
-          Math.abs(player.y - threshold.y) > .59 || !closeReach(player, threshold)) return;
+      if (gate.openProgress < 1 || !atExitPlatform(player, gate, content.exitPlatforms.combat)) return;
     }
     const { floor, route, heal } = state.departure;
     if (floor === null) {
@@ -2825,6 +2830,7 @@
     }
     recoverHealth(heal);
     enterFloor(floor, player.hp, route);
+    state.arrivalProgress = 0;
   }
 
   function showPreviewComplete() {
@@ -2895,6 +2901,9 @@
     previousTime = now;
     const paused = document.hidden || window.TowerAdmin?.isOpen() || hasRunDialog();
     state.cameraShake = Math.max(0, state.cameraShake - Math.max(0, delta));
+    if (!paused && state.arrivalProgress < 1) {
+      state.arrivalProgress = Math.min(1, state.arrivalProgress + delta / floorArrivalDuration);
+    }
     if (!paused && state.mode === "rolling") {
       advanceEntry(gap);
     } else if (state.mode === "playing" && delta > 0 && !paused) {

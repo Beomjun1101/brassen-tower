@@ -677,24 +677,30 @@
     [[0.20, 0.20], [0.59, 0.20], [0.20, 0.59]],
     [[0.17, 0.17], [0.61, 0.19], [0.19, 0.61], [0.33, 0.33]]];
 
-  function drawDie(context, x, y, size, rotation, shape, metal) {
-    const [pitch, yaw, roll] = rotation;
+  function dieRotation([pitch, yaw, roll]) {
     const cx = Math.cos(pitch);
     const sx = Math.sin(pitch);
     const cy = Math.cos(yaw);
     const sy = Math.sin(yaw);
     const cz = Math.cos(roll);
     const sz = Math.sin(roll);
-    const vertices = shape.vertices.map(([px, py, pz]) => {
-      const h = py * cx - pz * sx;
-      const d = py * sx + pz * cx;
-      const w = px * cy + d * sy;
-      return [w * cz - h * sz, w * sz + h * cz, d * cy - px * sy];
-    });
-    const project = ([horizontal, vertical, depth]) => {
-      const lens = size / (1 - depth * 0.102);
-      return [x + horizontal * lens, y + vertical * lens];
+    return ([px, py, pz]) => {
+      const groundY = py * cx - pz * sx;
+      const height = py * sx + pz * cx;
+      const groundX = px * cy + height * sy;
+      return [groundX * cz - groundY * sz, groundX * sz + groundY * cz, height * cy - px * sy];
     };
+  }
+
+  function drawDie(context, x, y, size, rotation, shape, metal, hop) {
+    const world = shape.vertices.map(dieRotation(rotation));
+    const bottom = Math.min(...world.map((vertex) => vertex[2]));
+    const trayTilt = 0.48;
+    const viewTilt = Math.sqrt(1 - trayTilt * trayTilt);
+    const vertices = world.map(([px, py, height]) =>
+      [px, py * trayTilt - height * viewTilt, py * viewTilt + height * trayTilt]);
+    const project = ([horizontal, vertical]) =>
+      [x + horizontal * size, y - hop + (vertical + bottom * viewTilt) * size];
     const faces = shape.faces.map((indices, index) => {
       const corners = indices.map((id) => vertices[id]);
       const middle = [0, 1, 2].map((axis) => corners.reduce((sum, corner) => sum + corner[axis], 0) / corners.length);
@@ -732,8 +738,7 @@
       const fall = progress / 0.34;
       return (0.23 + 0.82 * fall) * (1 - fall);
     }
-    for (const [from, to, height] of [[0.34, 0.59, 0.24], [0.59, 0.76, 0.125], [0.76, 0.88, 0.063],
-      [0.88, 1, 0.030]]) {
+    for (const [from, to, height] of [[0.34, 0.59, 0.24], [0.59, 0.76, 0.125], [0.76, 0.89, 0.041]]) {
       if (progress <= to) {
         const step = (progress - from) / (to - from);
         return height * 4 * step * (1 - step);
@@ -742,11 +747,21 @@
     return 0;
   }
 
-  function restRotation(shape, result, index) {
-    const face = shape.faces[shape.values.indexOf(result)];
-    const [x, y, z] = face.reduce((normal, vertex) =>
+  function dieFaceCenter(shape, faceIndex) {
+    return shape.faces[faceIndex].reduce((normal, vertex) =>
       normal.map((value, axis) => value + shape.vertices[vertex][axis]), [0, 0, 0]);
-    return [Math.atan2(y, z) + 0.17, -Math.atan2(x, Math.hypot(y, z)) + 0.14, (index - 1.5) * 0.11];
+  }
+
+  function restRotation(shape, result, index) {
+    const resultFace = shape.values.indexOf(result);
+    const tetrahedron = shape === pointDie;
+    const baseFace = (resultFace + 1) % shape.faces.length;
+    const [x, y, z] = tetrahedron ? dieFaceCenter(shape, baseFace).map((part) => -part) : dieFaceCenter(shape, resultFace);
+    const tilt = [Math.atan2(y, z), -Math.atan2(x, Math.hypot(y, z)), 0];
+    const spread = (index - 1.5) * 0.12;
+    if (!tetrahedron) return [tilt[0], tilt[1], spread];
+    const [frontX, frontY] = dieRotation(tilt)(dieFaceCenter(shape, resultFace));
+    return [tilt[0], tilt[1], Math.PI / 2 - Math.atan2(frontY, frontX) + spread];
   }
 
   function castingTray(context, centerX, centerY, radius, rolls, time, reduced, opening) {
@@ -788,7 +803,7 @@
       const spread = 1 - (1 - progress) ** 2.08;
       const slot = -0.67 + 1.34 * (index + 0.5) / count;
       const side = index % 2 === 0 ? -1 : 1;
-      const depth = (index % 2 === 0 ? -0.29 : 0.37) + noise(index, 21) * 0.13;
+      const depth = (index % 2 === 0 ? -0.29 : 0.30) + noise(index, 21) * 0.13;
       const x = side * (0.49 + noise(index, 67) * 0.24) * (1 - spread) + slot * spread
         + Math.sin(progress * tau + index) * progress * (1 - progress) * 0.28;
       const y = -0.55 * (1 - spread) + depth * spread;
@@ -798,23 +813,25 @@
       const starts = [0.41, 0.32, index * 0.73];
       const travel = [7.9 + noise(index, 86) * 5.4, side * (8.5 + noise(index, 9) * 6), 4.6 + noise(index, 60) * 5.6];
       const rest = restRotation(shape, value, index);
-      const settling = eased((progress - 0.74) / 0.26);
+      const settling = eased((progress - 0.65) / 0.28);
+      const rockPhase = clamp((progress - 0.76) / 0.19, 0, 1);
+      const rock = Math.sin(rockPhase * Math.PI * 3) * (1 - rockPhase) ** 2 * 0.24;
       const rotation = starts.map((start, axis) => {
         const from = start + rate * travel[axis];
         const to = rest[axis] + Math.round((start + travel[axis] - rest[axis]) / tau) * tau;
-        return from + (to - from) * settling;
+        return from + (to - from) * settling + (axis < 2 ? rock * (axis === 0 ? 1 : side * 0.6) : 0);
       });
       dice.push({ ground: plane(x, y), depth: y, hop, size, index, shape, rotation });
     }
     for (const { ground, hop, size } of dice) {
       context.save();
-      context.globalAlpha *= 0.74 - hop * 0.63;
-      ellipse(context, ...ground, size * (1.13 + hop * 0.78), size * (0.37 + hop * 0.27), "#060910b8");
+      context.globalAlpha *= 0.92 - hop * 1.15;
+      ellipse(context, ...ground, size * (1.08 + hop * 1.1), size * (0.40 + hop * 0.4), "#060910b8");
       context.restore();
     }
     dice.sort((a, b) => a.depth - b.depth);
     for (const { ground, hop, size, index, shape, rotation } of dice) {
-      drawDie(context, ground[0], ground[1] - radius * hop - size * 0.83, size, rotation, shape, index % 2 === 1);
+      drawDie(context, ground[0], ground[1], size, rotation, shape, index % 2 === 1, radius * hop);
     }
     context.restore();
   }
@@ -1958,7 +1975,8 @@
     const dy = length ? ry / length : 0;
     const at = (ahead, across, z = 0.02) => point(camera,
       gate.x + dx * ahead - dy * across, gate.y + dy * ahead + dx * across, z);
-    const frame = [at(-1.52, -0.73), at(0.38, -0.73), at(0.38, 0.73), at(-1.52, 0.73)];
+    const { near, far, halfWidth } = window.TowerContent.exitPlatforms.combat;
+    const frame = [at(near, -halfWidth), at(far, -halfWidth), at(far, halfWidth), at(near, halfWidth)];
     poly(context, frame, palette.materialShade + "ae", color + "ba", 1.45);
     poly(context, [at(-1.44, -0.63), at(0.23, -0.63), at(0.23, 0.63), at(-1.44, 0.63)],
       null, color + "6a", 0.9);
@@ -5070,6 +5088,46 @@
     }
   }
 
+  function drawFloorArrival(context, width, height, state, reduced) {
+    const arrival = state.arrivalProgress;
+    if (!(arrival >= 0 && arrival < 1)) return;
+
+    const alpha = 1 - eased((arrival - 0.42) / 0.58);
+    const x = width / 2;
+    const y = height * 0.26;
+    context.save();
+    if (!reduced) {
+      const veil = 1 - eased(arrival / 0.66);
+      context.globalAlpha = veil * 0.65;
+      context.fillStyle = "#0c1215";
+      context.fillRect(0, 0, width, height);
+      const opening = width * 0.38 * eased(arrival / 0.72);
+      const edgeY = height * 0.5;
+      context.globalAlpha = veil * 0.8;
+      context.strokeStyle = "#d4ac72";
+      context.beginPath();
+      context.moveTo(x - opening, edgeY - height * 0.16);
+      context.lineTo(x - opening, edgeY + height * 0.16);
+      context.moveTo(x + opening, edgeY - height * 0.16);
+      context.lineTo(x + opening, edgeY + height * 0.16);
+      context.stroke();
+    }
+    context.globalAlpha = alpha;
+    const size = Math.min(28, Math.max(17, height * 0.064));
+    const label = state.floor + "층";
+    context.font = "800 " + size + "px system-ui";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    const halfPlate = context.measureText(label).width / 2 + 18;
+    context.fillStyle = "#152126";
+    context.fillRect(x - halfPlate, y - size * 0.84, halfPlate * 2, size * 1.68);
+    context.strokeStyle = "#c6a06b";
+    context.strokeRect(x - halfPlate, y - size * 0.84, halfPlate * 2, size * 1.68);
+    context.fillStyle = "#f9dba2";
+    context.fillText(label, x, y);
+    context.restore();
+  }
+
   function draw(canvas, state, now = performance.now()) {
     const bounds = canvas.getBoundingClientRect();
     if (!(bounds.width > 0 && bounds.height > 0)) return;
@@ -5091,6 +5149,7 @@
       frameCameras.delete(canvas);
       motionFrames.delete(canvas);
       sealedRoom(context, bounds.width, bounds.height, state, reduced || story, quietDoor);
+      drawFloorArrival(context, bounds.width, bounds.height, state, reduced);
       return;
     }
     const fallback = fallbackThemes[(Math.max(1, state.floor || 1) - 1) % fallbackThemes.length];
@@ -5194,6 +5253,7 @@
     }
     if (state.mode === "playing") objectiveLabels(context, camera, state, visibleStoryActors);
     if (story) storyLighting(context, camera, state);
+    drawFloorArrival(context, bounds.width, bounds.height, state, reduced);
   }
 
   function screenToWorld(canvas, clientX, clientY, state) {
