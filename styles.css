@@ -1042,6 +1042,41 @@ kbd {
 .choice-comparison .stat-rise, .route-choice .stat-rise { color: #acedba; }
 .choice-comparison .stat-fall, .route-choice .stat-fall { color: var(--danger); }
 .route-choice .choice-price { color: #ffe2a8; font-size: .74rem; font-weight: 800; }
+.overlay-panel:has(.quest-card) { width: min(100%, 710px); }
+.overlay-choices:has(.quest-card) { grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); }
+.quest-card {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #4a6359;
+  background: #192a25;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+.quest-card-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 3px 8px; }
+.quest-card :is(h3, p) { margin: 0; }
+.quest-card h3 { font-size: .95rem; color: #f2ecdb; }
+.quest-card p { color: #dce8db; font-size: .83rem; }
+.quest-card small { color: #c8d3bf; font-size: .75rem; }
+.quest-status { color: #b2ded1; font-size: .74rem; }
+.quest-card[data-status="completed"] .quest-status { color: #f9d793; }
+.quest-card:is([data-status="claimed"], [data-status="rejected"], [data-status="limited"]) .quest-status { color: #c7cec1; }
+.quest-actions { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 2px; }
+.quest-action {
+  min-height: 44px;
+  min-width: 60px;
+  padding: 4px 10px;
+  border: 1px solid #648177;
+  background: #25352e;
+  color: #edf0e5;
+  font-size: .8rem;
+  font-weight: 750;
+}
+.quest-action-primary { border-color: #a0cfb4; background: #355849; color: #f7f2df; }
+.quest-action:enabled:hover { border-color: #d6e8c8; background: #47705c; }
+.quest-action:disabled { opacity: .63; }
 .overlay[data-mode="menu"] .route-choice { padding: 11px; }
 .overlay[data-mode="menu"] .choice-icon { width: 31px; height: 29px; }
 .overlay:is([data-mode="branch"], [data-mode="route"]) .route-choice { border-left: 3px solid color-mix(in srgb, var(--accent) 67%, #283d32); }

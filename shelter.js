@@ -12,40 +12,40 @@
 
   // Plans use proportions for navigation anchors and tile units for the fixed equipment.
   const recessPlans = [
-    { title: "쌍갑문 전실", width: 15, height: 10, start: [.17, .79], rest: [.24, .33], bench: [.66, .31],
+    { title: "쌍갑문 전실", width: 15, height: 10, start: [.17, .79], bench: [.66, .31],
       exit: [.85, .68], socket: [.49, .57], spine: [[.17, .79], [.17, .56], [.85, .56], [.85, .68]],
       equipment: [[.27, .13, 3.5, .8, "baffle"], [.68, .13, 3.8, .8, "baffle"], [.61, .88, 1.7, .9, "supplies"]] },
-    { title: "축압조 순환실", width: 17, height: 12, start: [.14, .59], rest: [.25, .23], bench: [.76, .24],
+    { title: "축압조 순환실", width: 17, height: 12, start: [.14, .59], bench: [.76, .24],
       exit: [.83, .75], socket: [.25, .71], spine: [[.14, .59], [.14, .25], [.83, .25], [.83, .75], [.24, .75]],
       equipment: [[.51, .54, 4.0, 3.2, "tank"], [.60, .84, 2.1, .75, "valves"]] },
-    { title: "케이블 릴 회랑", width: 18, height: 9, start: [.12, .61], rest: [.26, .25], bench: [.61, .71],
+    { title: "케이블 릴 회랑", width: 18, height: 9, start: [.12, .61], bench: [.61, .71],
       exit: [.88, .40], socket: [.46, .27], spine: [[.12, .61], [.31, .61], [.31, .43], [.88, .43]],
       equipment: [[.44, .74, 1.65, 1.24, "reel"], [.68, .19, 2.0, 1.1, "reel"], [.75, .72, .78, .93, "post"]] },
-    { title: "굽은 환기 전실", width: 13, height: 13, start: [.17, .82], rest: [.24, .49], bench: [.70, .31],
+    { title: "굽은 환기 전실", width: 13, height: 13, start: [.17, .82], bench: [.70, .31],
       exit: [.80, .73], socket: [.43, .25], spine: [[.17, .82], [.17, .27], [.80, .27], [.80, .73]],
       equipment: [[.48, .65, 2.3, 3.1, "pump"], [.72, .48, 1.43, .82, "grate"], [.37, .89, 1.1, .84, "supplies"]] },
-    { title: "삼갈래 변류실", width: 16, height: 12, start: [.50, .86], rest: [.19, .54], bench: [.76, .55],
+    { title: "삼갈래 변류실", width: 16, height: 12, start: [.50, .86], bench: [.76, .55],
       exit: [.53, .18], socket: [.53, .47], spine: [[.50, .86], [.50, .55], [.19, .55], [.50, .55], [.76, .55], [.53, .55], [.53, .18]],
       equipment: [[.23, .25, 2.25, 1.26, "receiver"], [.73, .25, 2.25, 1.26, "receiver"], [.24, .77, .90, .94, "post"], [.73, .77, .90, .94, "post"]] },
-    { title: "측벽 잔해 대피소", width: 14, height: 11, start: [.83, .80], rest: [.78, .31], bench: [.44, .23],
+    { title: "측벽 잔해 대피소", width: 14, height: 11, start: [.83, .80], bench: [.44, .23],
       exit: [.17, .57], socket: [.49, .52], spine: [[.83, .80], [.83, .37], [.53, .37], [.48, .55], [.17, .55]],
       equipment: [[.24, .80, 1.86, 1.24, "rubble"], [.56, .72, 2.45, 1.10, "rubble"], [.31, .22, 1.08, .8, "supplies"]] },
-    { title: "쌍열교환 격벽실", width: 17, height: 13, start: [.48, .86], rest: [.25, .30], bench: [.80, .69],
+    { title: "쌍열교환 격벽실", width: 17, height: 13, start: [.48, .86], bench: [.80, .69],
       exit: [.83, .19], socket: [.48, .47], spine: [[.48, .86], [.56, .68], [.81, .68], [.81, .19], [.25, .19], [.25, .30]],
       equipment: [[.30, .62, 2.4, 2.2, "pump"], [.59, .27, 2.55, 2.1, "pump"], [.73, .42, .72, .82, "post"]] },
-    { title: "작업 승강기 전실", width: 14, height: 12, start: [.17, .79], rest: [.65, .71], bench: [.29, .26],
+    { title: "작업 승강기 전실", width: 14, height: 12, start: [.17, .79], bench: [.29, .26],
       exit: [.83, .27], socket: [.46, .46], spine: [[.17, .79], [.46, .71], [.46, .46], [.46, .28], [.83, .28]],
       equipment: [[.20, .53, 1.48, 1.75, "post"], [.72, .50, 2.55, 1.85, "lift"], [.86, .81, 1.2, .9, "supplies"]] },
-    { title: "폐수 봉쇄칸", width: 14, height: 10, start: [.86, .47], rest: [.68, .23], bench: [.29, .72],
+    { title: "폐수 봉쇄칸", width: 14, height: 10, start: [.86, .47], bench: [.29, .72],
       exit: [.16, .37], socket: [.35, .24], spine: [[.86, .47], [.86, .19], [.16, .19], [.16, .37], [.16, .68], [.29, .68]],
       equipment: [[.51, .55, .86, 4.18, "valves"], [.24, .49, 1.3, .9, "grate"], [.76, .76, 1.7, 1.28, "tank"]] },
-    { title: "엇갈린 단열 복도", width: 18, height: 11, start: [.11, .50], rest: [.25, .20], bench: [.59, .75],
+    { title: "엇갈린 단열 복도", width: 18, height: 11, start: [.11, .50], bench: [.59, .75],
       exit: [.89, .46], socket: [.53, .28], spine: [[.11, .50], [.26, .50], [.26, .23], [.53, .23], [.53, .80], [.88, .80], [.88, .46]],
       equipment: [[.37, .61, 1.45, 4.06, "baffle"], [.72, .33, 1.43, 3.59, "baffle"], [.32, .88, 1.68, .64, "grate"]] },
-    { title: "공압조 정비마당", width: 16, height: 13, start: [.15, .77], rest: [.25, .27], bench: [.49, .20],
+    { title: "공압조 정비마당", width: 16, height: 13, start: [.15, .77], bench: [.49, .20],
       exit: [.82, .65], socket: [.50, .67], spine: [[.15, .77], [.15, .25], [.51, .25], [.51, .67], [.82, .67]],
       equipment: [[.73, .34, 3.1, 2.44, "tank"], [.34, .52, 2.0, 1.21, "valves"], [.46, .85, 1.5, 1.0, "receiver"]] },
-    { title: "경첩식 잠금실", width: 13, height: 10, start: [.25, .18], rest: [.19, .61], bench: [.65, .45],
+    { title: "경첩식 잠금실", width: 13, height: 10, start: [.25, .18], bench: [.65, .45],
       exit: [.81, .80], socket: [.57, .20], spine: [[.25, .18], [.25, .58], [.45, .58], [.45, .77], [.81, .77]],
       equipment: [[.42, .38, 1.65, 1.28, "lift"], [.25, .84, 2.1, .82, "baffle"], [.81, .22, 1.55, .92, "receiver"]] },
   ];
@@ -66,10 +66,10 @@
   };
 
   const storyRecesses = {
-    35: { title: "개척선 방호실", fixture: "frontier", width: 15, height: 10, start: [.17, .80], rest: [.25, .35],
+    35: { title: "개척선 방호실", fixture: "frontier", width: 15, height: 10, start: [.17, .80],
       bench: [.67, .31], exit: [.86, .64], socket: [.48, .47], spine: [[.17, .80], [.17, .55], [.86, .55], [.86, .64]],
       equipment: [[.27, .14, 3.35, .78, "baffle"], [.68, .14, 3.75, .78, "baffle"], [.68, .86, 1.75, .9, "supplies"]] },
-    665: { title: "전송실 대피칸", fixture: "cables", width: 17, height: 11, start: [.16, .76], rest: [.24, .30],
+    665: { title: "전송실 대피칸", fixture: "cables", width: 17, height: 11, start: [.16, .76],
       bench: [.72, .25], exit: [.86, .65], socket: [.44, .36], spine: [[.16, .76], [.16, .40], [.83, .40], [.83, .65]],
       equipment: [[.43, .67, 2.6, 1.3, "reel"], [.67, .69, 2.2, 1.2, "receiver"], [.52, .14, 3.25, .78, "baffle"]] },
   };
@@ -81,7 +81,6 @@
       { kind: "shop", caption: "상점", u: .65, v: .39, w: 1.48, h: .88 },
     ];
     if (floor % 10 === 0) {
-      stations.splice(stations.findIndex((entry) => entry.kind === "rest"), 1);
       services.unshift({ kind: "campfire", caption: "모닥불", u: .49, v: .78, w: .96, h: .96 });
       const central = floor === 10 || floor === 20;
       services.unshift({ kind: "shrine", caption: floor === 10 ? "성당" : "신전",
@@ -139,7 +138,7 @@
       layout: "recess", cloth: material.cloth, trim: material.trim, spawn: coordinate(plan.start),
       storySocket: coordinate(plan.socket), paths: plan.spine.map(coordinate), decor,
       obstacles: decor.map((entry) => ({ ...entry, shelterDecor: true })),
-      stations: [station("rest", plan.rest, "휴식"), station("workbench", plan.bench, "작업대"), station("departure", plan.exit, "위층으로")],
+      stations: [station("workbench", plan.bench, "작업대"), station("departure", plan.exit, "위층으로")],
       terrain: [], items: [], enemies: [], rolls: [],
     }, floor);
   }
@@ -224,7 +223,6 @@
     const station = (kind, x, y, caption) => ({ x, y, kind, caption, inhabited,
       style: layout, cloth: room.cloth, trim: room.trim, variant: visit % settlements.length });
     const stations = [
-      station("rest", width * 0.25, height * (layout === "ward" ? 0.43 : 0.36), "휴식"),
       station("workbench", width * 0.67, height * (layout === "market" ? 0.70 : 0.33), "작업대"),
       station("departure", width - 2.05, height * 0.62 + lane * .28, "위층으로"),
     ];
@@ -300,7 +298,7 @@
       ...graph.links.map((link) => ({ x: link.x, y: link.y, clearance: .85 })),
     ];
     const positions = {
-      rest: { room: entry, u: .23, v: .28 }, workbench: { room: service, u: .70, v: .29 },
+      workbench: { room: service, u: .70, v: .29 },
       board: { room: entry, u: .72, v: .71 }, shop: { room: service, u: .74, v: .72 },
       campfire: { room: entry, u: .27, v: .77 }, shrine: { room: exit, u: .48, v: .27 },
     };
@@ -621,11 +619,10 @@
     }
   }
 
-  function attendant(context, camera, art, x, y, cloth, seated, variant) {
+  function attendant(context, camera, art, x, y, cloth, variant) {
     const [px, py] = art.point(camera, x, y);
     const u = camera.unit;
-    const shift = seated ? 0.12 : 0;
-    const at = (ax, ay) => [px + ax * u, py + (ay + shift) * u];
+    const at = (ax, ay) => [px + ax * u, py + ay * u];
     contact(context, camera, art, x, y, 0.8);
     art.line(context, [at(-0.11, -0.40), at(-0.14, -0.14), at(-0.21, -0.12)], "#272b29", Math.max(2, u * 0.10));
     art.line(context, [at(0.10, -0.40), at(0.18, -0.18), at(0.27, -0.16)], "#393a2d", Math.max(2, u * 0.102));
@@ -660,7 +657,7 @@
     const shadow = "#35332a";
     box(context, camera, art, x, y, 1.46, .83, .48, "#615645", shadow, "#937d59", "#302c25");
     if (inhabited) {
-      attendant(context, camera, art, x + .20, y - .45, cloth, false, variant);
+      attendant(context, camera, art, x + .20, y - .45, cloth, variant);
       for (const side of [-1, 1]) {
         art.line(context, [p(side * .67, -.36, .20), p(side * .67, -.36, 1.45)], "#9a8058", 2.5);
         art.line(context, [p(side * .67, .40, .20), p(side * .67, .40, 1.24)], "#9a8058", 2.5);
@@ -703,22 +700,98 @@
     art.poly(context, [p(-.11, .16, .14), p(.014, .11, .37 + flicker * .47), p(.12, .16, .15)], "#ffe3a5");
   }
 
+  function chapelArch(at, center, half, bottom, spring, peak) {
+    const shoulder = spring + (peak - spring) * .57;
+    return [at(center - half, bottom), at(center - half, spring), at(center - half * .73, shoulder),
+      at(center, peak), at(center + half * .73, shoulder), at(center + half, spring), at(center + half, bottom)];
+  }
+
+  function villageChapel(context, camera, art, { x, y }, p) {
+    const outline = "#302b28";
+    const brass = "#d9b876";
+    const eave = 1.20;
+    const ridge = 1.91;
+    const face = (u, z) => p(u, .536, z);
+    const flank = (v, z) => p(.824, v, z);
+    box(context, camera, art, x, y, 1.85, 1.16, .16, "#706251", "#453d36", "#af9876", outline);
+    box(context, camera, art, x, y, 1.64, 1.06, 1.115, "#9b8165", "#665a48", "#a99674", outline, .16);
+    art.poly(context, [face(-.82, 1.265), face(0, ridge), face(.82, 1.265)], "#a28b6e");
+    for (const level of [.31, .54, .95, 1.24]) {
+      art.line(context, [face(-.815, level), face(.815, level), flank(-.52, level)], "#4a4036ad", .85);
+    }
+    for (const side of [-1, 1]) {
+      const u = side * .65;
+      art.poly(context, [face(u - .065, .19), face(u - .04, 1.18), face(u + .041, 1.18),
+        face(u + .063, .19)], "#c0a37c", "#6d573e", .8);
+      art.line(context, [face(u - .085, 1.105), face(u + .083, 1.105)], brass, 1.2);
+      art.poly(context, chapelArch(flank, side * .25, .125, .50, .78, 1.035), "#322b2b", "#bea779", 1.05);
+      art.poly(context, chapelArch(flank, side * .25, .077, .57, .77, .944), side < 0 ? "#70a99b" : "#e8bd78");
+      art.line(context, [flank(side * .25, .57), flank(side * .25, .925)], "#47584e", .9);
+    }
+    art.poly(context, chapelArch(face, 0, .422, .165, .755, 1.17), "#4b3b32", "#e0c48e", 1.65);
+    art.poly(context, chapelArch(face, 0, .322, .18, .738, 1.047), "#282b2a", "#b4925e", 1.1);
+    art.poly(context, [face(-.280, .194), face(.280, .194), face(.280, .713), face(-.280, .713)], "#59402b");
+    art.poly(context, [face(-.262, .733), face(0, 1.015), face(.262, .733)], "#9dc9ae", "#4d4e3a", .9);
+    art.line(context, [face(-.27, .255), face(.27, .255)], brass, 1.2);
+    art.line(context, [face(-.27, .656), face(.27, .656)], brass, 1.2);
+    art.line(context, [face(0, .193), face(0, 1.003)], "#342a23", 1.1);
+    art.ellipse(context, ...face(-.065, .455), 1.6, 1.6, "#f9d998");
+    art.ellipse(context, ...face(.065, .455), 1.6, 1.6, "#f9d998");
+
+    const rose = (angle, radius) => face(Math.cos(angle) * radius, 1.442 + Math.sin(angle) * radius);
+    const circle = (radius) => Array.from({ length: 16 }, (_, i) => rose(i * Math.PI / 8, radius));
+    art.poly(context, circle(.252), "#3f352d", "#efd59a", 1.45);
+    const glass = ["#e9b36b", "#78ceb4", "#f7dc98", "#d38c74", "#9bddd0", "#e8bd7c"];
+    for (const [index, tint] of glass.entries()) {
+      const a = index * Math.PI / 3;
+      art.poly(context, [rose(a, .075), rose(a - .41, .161), rose(a, .200), rose(a + .41, .161)], tint);
+    }
+    art.poly(context, circle(.056), "#fff0b4");
+    for (const side of [-1, 1]) {
+      const axis = side * .58;
+      art.line(context, [face(axis, .76), face(axis, .69), face(axis - .065, .65)], "#3f3129", 1.55);
+      lamp(context, camera, art, x + axis, y + .541, .65, "#ffd496", .34);
+    }
+
+    const roof = (u, v) => p(u, v, ridge - (ridge - eave) * Math.abs(u) / .917);
+    const rearRidge = roof(0, -.58), frontRidge = roof(0, .58);
+    const rearLeft = roof(-.917, -.58), frontLeft = roof(-.917, .58);
+    const rearRight = roof(.917, -.58), frontRight = roof(.917, .58);
+    art.poly(context, [rearLeft, rearRidge, frontRidge, frontLeft], "#49605a");
+    art.poly(context, [rearRidge, rearRight, frontRight, frontRidge], "#437c71");
+    for (const offset of [-.76, -.53, -.28, .23, .46, .69, .85]) {
+      art.line(context, [roof(offset, -.579), roof(offset, .58)], offset < 0 ? "#263937" : "#a4ba8994", 1.0);
+    }
+    art.line(context, [frontLeft, frontRidge, frontRight, rearRight], outline, 2.0);
+    art.line(context, [frontLeft, frontRidge, frontRight, rearRight], brass, .95);
+    art.line(context, [rearRidge, frontRidge], "#eed197", 1.8);
+
+    const towerX = -.43;
+    const towerY = -.27;
+    const towerFront = (u, z) => p(u, towerY + .279, z);
+    box(context, camera, art, x + towerX, y + towerY, .72, .60, .16, "#807052", "#574c3a", "#bc9e66", outline, 1.53);
+    box(context, camera, art, x + towerX, y + towerY, .62, .55, .86, "#997d58", "#60503a", "#c3a36c", outline, 1.66);
+    art.poly(context, chapelArch(towerFront, towerX, .203, 1.99, 2.252, 2.442), "#212a29", "#e2bf7d", 1.3);
+    art.line(context, [towerFront(towerX - .11, 2.356), towerFront(towerX + .11, 2.356)], "#aa8b56", 1.35);
+    art.poly(context, [towerFront(towerX - .074, 2.32), towerFront(towerX + .074, 2.32),
+      towerFront(towerX + .134, 2.118), towerFront(towerX - .134, 2.118)], "#d4a654", "#765735", .9);
+    art.line(context, [towerFront(towerX - .12, 2.116), towerFront(towerX + .12, 2.116)], "#f2d691", 1.1);
+    art.ellipse(context, ...towerFront(towerX, 2.066), 1.45, 1.45, "#dfba76");
+    const crown = [p(towerX - .36, towerY - .325, 2.515), p(towerX + .36, towerY - .325, 2.515),
+      p(towerX + .36, towerY + .325, 2.515), p(towerX - .36, towerY + .325, 2.515)];
+    const finial = p(towerX, towerY, 2.87);
+    art.poly(context, [crown[0], crown[1], finial], "#405350");
+    art.poly(context, [crown[0], crown[3], finial], "#586b56");
+    art.poly(context, [crown[3], crown[2], finial], "#a47a44", outline, 1.0);
+    art.poly(context, [crown[2], crown[1], finial], "#52746b", outline, 1.0);
+    art.line(context, [crown[3], crown[2], crown[1]], brass, 1.1);
+    art.line(context, [crown[2], finial, p(towerX, towerY, 2.96)], "#eac87b", 1.45);
+  }
+
   function villageShrine(context, camera, art, entry, p) {
     const { x, y, design, cloth, trim, variant } = entry;
     if (design === "chapel") {
-      box(context, camera, art, x, y, 1.87, 1.18, .18, "#77715b", "#514c40", "#a9a083", "#403932");
-      box(context, camera, art, x, y, 1.68, .91, 1.14, "#9f9478", "#645f50", "#b4a883", "#4d473c", .18);
-      const ridge = [p(-.96, -.01, 1.76), p(.96, -.01, 1.76)];
-      art.poly(context, [p(-.96, -.58, 1.24), p(.96, -.58, 1.24), ridge[1], ridge[0]], "#596676", "#3a444b");
-      art.poly(context, [ridge[0], ridge[1], p(.96, .58, 1.24), p(-.96, .58, 1.24)], "#647986", "#424e59");
-      for (const offset of [-.5, 0, .5]) {
-        art.line(context, [p(offset, 0, 1.76), p(offset, .58, 1.24)], "#a4a49584", 1.1);
-      }
-      art.poly(context, [p(-.29, .462, .18), p(-.29, .462, .72), p(0, .462, .95), p(.29, .462, .72), p(.29, .462, .18)],
-        "#38434a", "#6c6050");
-      box(context, camera, art, x, y - .14, .25, .24, .42, "#65737d", "#424b55", "#b6a986", "#3f484a", 1.66);
-      art.poly(context, [p(-.16, 0, 2.04), p(0, 0, 2.30), p(.16, 0, 2.04)], trim, "#655848");
-      lamp(context, camera, art, x, y + .465, 1.04, "#ffdf96", .52);
+      villageChapel(context, camera, art, entry, p);
       return;
     }
 
@@ -757,23 +830,9 @@
       return;
     }
 
-    if (kind === "rest") {
-      box(context, camera, art, x, y, 1.13, 0.62, 0.24, "#6c5a42", "#463928", "#aa9b7f", "#322b25");
-      if (inhabited) {
-        box(context, camera, art, x + 0.04, y, 0.72, 0.6, 0.07, frame, "#33483c", frame, null, 0.24);
-        box(context, camera, art, x - 0.4, y, 0.28, 0.52, 0.10, "#c6ad8a", "#6b5e4d", "#ece0bd", null, 0.24);
-        attendant(context, camera, art, x + 0.45, y - 0.35, entry.style === "ward" ? "#aaa895" : "#82735e", true, entry.variant);
-      } else {
-        art.line(context, [p(-0.16, 0, 0.26), p(0.17, 0, 0.26)], "#f3dca7", 1.6);
-        art.line(context, [p(0, -0.13, 0.26), p(0, 0.13, 0.26)], "#f3dca7", 1.6);
-      }
-      lamp(context, camera, art, x - 0.60, y - 0.38, 0.28, "#fad39e", 0.48);
-      return;
-    }
-
     if (kind === "workbench") {
       if (inhabited) attendant(context, camera, art, x + 0.25, y - 0.58,
-        entry.style === "forge" ? "#99654b" : frame, false, entry.variant + 1);
+        entry.style === "forge" ? "#99654b" : frame, entry.variant + 1);
       for (const offset of [-0.41, 0.41]) {
         art.line(context, [p(offset, 0.25, 0.04), p(offset, 0.25, 0.53)], "#514231", Math.max(2, camera.unit * 0.07));
       }

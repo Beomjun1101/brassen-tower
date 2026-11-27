@@ -299,6 +299,11 @@
       beats: () => [room("등반가", task)] },
     operation: { steps: [{ kind, device, label, task, done, time: 1.65 }, ...(extra ? [extra] : [])] },
   });
+  const liveFieldOperation = (floor, title, first, rest = []) => ({
+    scene: { art: "memory", chapter: floor + "층", title, device: first.device, prompt: first.label,
+      beats: () => [room("등반가", first.task)] },
+    operation: { steps: [first, ...rest] },
+  });
 
   const operations = {
     7: ({ reservoir } = {}) => reservoir === "district"
@@ -312,14 +317,25 @@
       "관문 경비가 물러났습니다. 안쪽 손잡이로 남은 길을 여세요.",
       reservoir === "district" ? "관문이 열렸습니다. 진료소에 온수를 보내고도 수동 통로를 살려냈습니다."
         : "관문이 열렸습니다. 벽의 발급기에 새 통행 명단이 꽂혀 있습니다."),
-    12: () => fieldOperation(12, "명단에 붙은 가격", "lift", "cartridge", "검문 발급기 원본 회수",
-      "발급기가 원본을 내보냈습니다. 경비가 돌아오기 전에 가져가세요.", "발급기 원본을 들었습니다.",
+    12: () => liveFieldOperation(12, "명단에 붙은 가격", {
+      kind: "switch", action: "lockdown", device: "pump", label: "봉쇄문 수동 해제",
+      task: "경비가 봉쇄문으로 뛰어갑니다. 반대쪽 수동 레버를 잡으세요.",
+      closedTask: "경비가 통로를 잠갔습니다. 가까운 수동 레버로 다시 여세요.",
+      activeTask: "봉쇄문이 다시 열립니다.",
+      done: "경비가 물러났습니다. 문 너머 발급기 원본을 회수하세요.",
+    }, [
+      { kind: "lift", device: "cartridge", label: "검문 발급기 원본 회수",
+        task: "문 너머에서 검문 발급기 원본을 챙기세요.", done: "발급기 원본을 들었습니다." },
       { kind: "fit", device: "ledger", label: "서로 다른 통행증 대조", task: "대조기에 원본을 넣고 환자 명단과 비교하세요.",
-        done: "같은 자리가 두 번 팔렸습니다. 돈을 낸 이름만 최종 명단에 남았습니다." }),
+        done: "같은 자리가 두 번 팔렸습니다. 돈을 낸 이름만 최종 명단에 남았습니다." },
+    ]),
     17: ({ inspection } = {}) => inspection === "escort"
-      ? fieldOperation(17, "마지막 들것", "hold", "pressure", "후송문 열린 상태 유지",
-        "후송대 마지막 들것이 아직 문 안쪽에 있습니다. 발판 위에 서서 문을 열어 두세요.",
-        "마지막 들것이 지나갔습니다. 19층 초소가 통로를 다시 닫으려 합니다.")
+      ? liveFieldOperation(17, "마지막 들것", {
+        kind: "hold", action: "escort", device: "pressure", label: "들것이 지날 때까지 문 받치기", time: 2.2,
+        task: "후송대가 문 앞에서 기다립니다. 발판을 밟고 들것이 지나갈 때까지 버티세요.",
+        activeTask: "문이 열렸습니다. 들것이 지나가는 동안 발판을 계속 밟으세요.",
+        done: "마지막 들것이 통과했습니다. 19층 초소가 통로를 다시 닫으려 합니다.",
+      })
       : fieldOperation(17, "위에서 온 도장", "switch", "relay", "압수 기록을 성당으로 송신",
         "검문 기록을 성당에 보내세요. 봉쇄 명령의 발신지가 찍혀 있습니다.",
         "성당이 사본을 받았습니다. 실제로 명령을 내린 곳은 19층 검문 회선보다 더 위입니다."),

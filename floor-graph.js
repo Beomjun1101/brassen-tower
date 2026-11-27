@@ -192,6 +192,11 @@
         (axis === "x" ? y : x) + opening / 2, wet + 0.75), kind: "bridge" }))];
   }
 
+  function overlapInterior(a, b) {
+    return Math.abs(a.x - b.x) < (a.w + b.w) / 2 - 1e-6
+      && Math.abs(a.y - b.y) < (a.h + b.h) / 2 - 1e-6;
+  }
+
   function upperRoom(stage, graph) {
     if (!stage.elevation) return null;
     const deck = graph.rooms[graph.exit];
@@ -213,12 +218,27 @@
         transverse - link.width / 2, transverse + link.width / 2, run), axis: link.axis, rise };
     });
     const decks = raised.map(({ x, y, w, h }) => ({ x, y, w, h }));
-    return { height: stage.elevation.height, title: "연결 통로 상단", decks, stairs: ramps };
+    // Adjacent surfaces may share an edge, but overlapping ramps assign two different heights there.
+    if (ramps.some((ramp, index) => decks.some((deck) => overlapInterior(ramp, deck))
+        || ramps.slice(0, index).some((other) => overlapInterior(ramp, other)))) return null;
+    const elevation = { height: stage.elevation.height, title: "연결 통로 상단", decks, stairs: ramps };
+    const { heightAt, canTraverse } = window.TowerContent;
+    const continuous = ramps.every(({ x, y, w, h, axis, rise }) => {
+      const low = { x, y };
+      const high = { x, y };
+      const approach = ((axis === "x" ? w : h) / 2 + 0.18) * rise;
+      low[axis] -= approach;
+      high[axis] += approach;
+      return heightAt(elevation, low.x, low.y) === 0 && heightAt(elevation, high.x, high.y) === elevation.height
+        && canTraverse(elevation, low.x, low.y, high.x, high.y);
+    });
+    return continuous ? elevation : null;
   }
 
   function recreate(stage, graph, width, height, context) {
     const geometry = window.TowerContent;
     const elevation = upperRoom(stage, graph);
+    if (stage.elevation && !elevation) return null;
     const terrain = waterway(stage, graph, width, height);
     const walls = [...graph.walls];
     const reserved = [];

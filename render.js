@@ -1252,58 +1252,51 @@
     }
   }
 
-  function terraceCoping(context, camera, perimeter, height, palette, covered) {
-    context.save();
-    if (covered) {
-      context.globalAlpha *= 0.83;
-      context.setLineDash([5, 4]);
-    }
+  function terraceCoping(context, camera, perimeter, height, palette) {
     for (const side of perimeter) {
       const edge = (along, inset) => point(camera,
         side.alongX ? along : side.position - inset * side.facing,
         side.alongX ? side.position - inset * side.facing : along, height);
       for (const [start, end] of side.segments) {
-        line(context, [edge(start, 0), edge(end, 0)], palette.accent + "c9", covered ? 1.55 : 1.35);
-        if (!covered && end - start > 0.22) {
+        line(context, [edge(start, 0), edge(end, 0)], palette.accent + "c9", 1.35);
+        if (end - start > 0.22) {
           line(context, [edge(start + 0.08, 0.11), edge(end - 0.08, 0.11)], palette.inlay + "a3", 1);
         }
       }
     }
-    context.restore();
   }
 
-  function raisedDeck(context, camera, deck, elevation, palette, covered, map) {
+  function raisedDeck(context, camera, deck, elevation, palette, map) {
     const { left, back, right, front } = centeredBounds(deck);
     const perimeter = deckPerimeter(deck, elevation);
     const height = elevation.height;
-    context.save();
-    if (covered) context.globalAlpha *= 0.43;
     for (const side of perimeter) {
       if (side.facing > 0) terraceFace(context, camera, side, elevation, palette);
     }
     const cap = rectangle(camera, left, back, deck.w, deck.h, height);
-    poly(context, cap, covered ? palette.capSide : palette.tiles[0]);
-    if (!covered) {
-      if (palette.landscape) {
-        chapterGround(context, camera, { x: left, y: back, width: deck.w, height: deck.h }, height, palette, deck.x * 7);
-      } else {
-        for (let x = left; x < right - 0.02; x += 1.45) {
-          for (let y = back; y < front - 0.02; y += 1.45) {
-            matteSlab(context, camera, x, y, Math.min(1.45, right - x), Math.min(1.45, front - y), height, palette, 15.8);
-          }
+    poly(context, cap, palette.tiles[0]);
+    if (palette.landscape) {
+      chapterGround(context, camera, { x: left, y: back, width: deck.w, height: deck.h }, height, palette, deck.x * 7);
+    } else {
+      for (let x = left; x < right - 0.02; x += 1.45) {
+        for (let y = back; y < front - 0.02; y += 1.45) {
+          matteSlab(context, camera, x, y, Math.min(1.45, right - x), Math.min(1.45, front - y), height, palette, 15.8);
         }
       }
-      finishSurface(context, camera, map, cap, height, palette);
     }
-    context.restore();
-    terraceCoping(context, camera, perimeter, height, palette, covered);
+    finishSurface(context, camera, map, cap, height, palette);
+    terraceCoping(context, camera, perimeter, height, palette);
   }
 
-  function terraceStairs(context, camera, stairs, elevation, palette, covered) {
+  function stairTreads(stairs) {
+    return Math.round(clamp((stairs.axis === "x" ? stairs.w : stairs.h) * 3.3, 7, 18));
+  }
+
+  function terraceStairs(context, camera, stairs, elevation, palette) {
     const { left, back } = centeredBounds(stairs);
     const horizontal = stairs.axis === "x";
     const length = horizontal ? stairs.w : stairs.h;
-    const count = Math.round(clamp(length * 3.3, 7, 18));
+    const count = stairTreads(stairs);
     const step = length / count;
     const height = elevation.height;
     const rise = stairs.rise < 0 ? -1 : 1;
@@ -1311,8 +1304,6 @@
       left + (horizontal ? t * stairs.w : side * stairs.w),
       back + (horizontal ? side * stairs.h : t * stairs.h), z);
     const riseAt = (t) => height * (rise === 1 ? t : 1 - t);
-    context.save();
-    if (covered) context.globalAlpha *= 0.43;
     for (let index = 0; index < count; index++) {
       const from = index / count;
       const to = (index + 1) / count;
@@ -1333,7 +1324,12 @@
       line(context, [at(0.02, side, riseAt(0.02) + rail), at(0.98, side, riseAt(0.98) + rail)],
         palette.accent, 1.65);
     }
-    context.restore();
+    for (const u of [.12, .28]) {
+      const t = rise === 1 ? u : 1 - u;
+      const level = riseAt((Math.floor(t * count) + .5) / count) + .018;
+      line(context, [at(t - rise * .027, .29, level), at(t + rise * .021, .5, level),
+        at(t - rise * .027, .71, level)], "#ecd09c", 1.55);
+    }
   }
 
   function terraceCover(camera, elevation, actor) {
@@ -1342,18 +1338,6 @@
     const projected = point(camera, actor.x, actor.y, center);
     const hit = surfaceHit(elevation, basePlanePoint(camera, ...projected), true);
     return hit.z > center + 0.09 ? hit.owner : undefined;
-  }
-
-  const wallCutawayThreshold = 0.75;
-
-  function polygonArea(vertices) {
-    let area = 0;
-    for (let i = 0; i < vertices.length; i++) {
-      const [x, y] = vertices[i];
-      const [nextX, nextY] = vertices[(i + 1) % vertices.length];
-      area += x * nextY - y * nextX;
-    }
-    return Math.abs(area) / 2;
   }
 
   function clipPolygon(vertices, distance) {
@@ -1390,64 +1374,116 @@
     return [...chain(sorted), ...chain(sorted.reverse())];
   }
 
-  function playerSilhouette(camera, player, height) {
-    const [x, y] = point(camera, player.x, player.y, height);
-    const unit = camera.unit * (camera.width < 500 ? 1.12 : 1);
-    return [[-0.13, -heroVisualHeight], [0.19, -heroVisualHeight], [0.28, -1.12], [0.30, -0.85], [0.30, -0.38],
-      [0.23, -0.01], [-0.24, -0.01], [-0.31, -0.37], [-0.30, -0.82], [-0.25, -1.15]]
-      .map(([u, v]) => [x + u * unit, y + v * unit]);
+  function stairFooting(elevation, actor) {
+    const stair = elevation?.stairs.find((entry) => withinSurface(centeredBounds(entry), actor.x, actor.y));
+    if (!stair) return 0;
+    const count = stairTreads(stair);
+    const travel = clamp(actor.height / elevation.height, 0, 1) * count - .5;
+    const step = Math.floor(travel);
+    const transition = eased((travel - step - .31) / .38);
+    const contact = (step + .5 + transition) * elevation.height / count;
+    return contact - actor.height;
   }
 
-  function withinWallSpan(camera, entry, player) {
-    const offset = Math.abs((entry.x - entry.y) - (player.x - player.y));
-    const heroHalfWidth = camera.width < 500 ? 0.31 * 1.12 : 0.31;
-    return offset < (entry.w + entry.h) * 0.5 + heroHalfWidth;
-  }
-
-  function wallCoverage(camera, entry, player, silhouette, topAt, baseHeight = 0) {
-    if (!withinWallSpan(camera, entry, player)) return 0;
-    const { left, right, back, front } = centeredBounds(entry);
-    const depth = player.x + player.y;
-    if (right + front <= depth) return 0;
-    // Intersect with the part of the wall in front of the player's projected body.
-    const footprint = clipPolygon([[left, back], [right, back], [right, front], [left, front]],
-      ([x, y]) => x + y - depth);
-    const hull = convexHull(footprint.flatMap(([x, y]) => [
-      point(camera, x, y, baseHeight), point(camera, x, y, topAt(x, y)),
-    ]));
-    if (hull.length < 3) return 0;
-    let covered = silhouette;
-    for (let i = 0; i < hull.length && covered.length; i++) {
-      const a = hull[i];
-      const b = hull[(i + 1) % hull.length];
-      covered = clipPolygon(covered, (p) => cross(a, b, p));
-    }
-    return polygonArea(covered) / polygonArea(silhouette);
-  }
-
-  function playerTerraceCoverage(camera, elevation, player) {
-    if (player.height >= elevation.height - 0.035) return { behind: false };
-    const silhouette = playerSilhouette(camera, player, player.height);
-    let widestCoverage = 0;
-    let nearest;
-    for (const deck of elevation.decks) {
-      const ratio = wallCoverage(camera, deck, player, silhouette, () => elevation.height);
-      if (ratio > widestCoverage) {
-        widestCoverage = ratio;
-        nearest = deck;
+  function wallVolumes(objects, elevation, palette) {
+    const volumes = [];
+    const add = (entry, bottom, top, support) => {
+      if (top - bottom < 0.008 || !(entry.w > 0 && entry.h > 0)) return;
+      volumes.push({ ...centeredBounds(entry), bottom, top, support });
+    };
+    for (const object of objects) {
+      const z = object.height;
+      if (object.type === "obstacle") {
+        if (object.fixture && (!palette.landscape || palette.landscape === "rupture") && Object.hasOwn(facilityFixtures, object.fixture)) {
+          add(facilityFootprint(object, -.48, .48, -.47, .47), z, z + .15);
+          for (const [from, to, left, right, bottom, top] of facilityCasing[object.fixture] ?? []) {
+            add(facilityFootprint(object, from, to, left, right), z + bottom, z + top);
+          }
+        } else add(object, z, z + obstacleHeight(object, palette));
+      } else if (object.type === "story-gate") {
+        const { span, height, progress } = storyGateSize(object);
+        const alongX = object.axis !== "y";
+        const box = (side, depth, width, thickness, bottom, top) => add({
+          x: object.x + (alongX ? depth : side),
+          y: object.y + (alongX ? side : depth),
+          w: alongX ? thickness : width,
+          h: alongX ? width : thickness,
+        }, z + bottom, z + top);
+        box(0, .145, span, .012, height * progress, height);
+        box(0, 0, span + .60, .61, height - .015, height + .335);
+        for (const side of [-1, 1]) box(side * (span / 2 + .14), 0, .28, .52, 0, height + .20);
+      } else if (object.kind === "exit") {
+        const x = object.x + .64, y = object.y;
+        const progress = clamp(object.openProgress ?? Number(Boolean(object.active)), 0, 1);
+        const gap = .59 * eased(progress);
+        add({ x, y, w: .37, h: 2.38 }, z + 1.61, z + 1.90);
+        for (const side of [-1, 1]) {
+          add({ x, y: y + side * .87, w: .29, h: .56 }, z, z + 1.70);
+          add({ x: x + .197, y: y + side * (.59 + gap) / 2, w: .012, h: .59 - gap }, z + .035, z + 1.58);
+        }
       }
     }
-    for (const stair of elevation.stairs) {
-      const ratio = wallCoverage(camera, stair, player, silhouette, (x, y) => {
-        const offset = stair.axis === "x" ? (x - stair.x) / stair.w : (y - stair.y) / stair.h;
-        return elevation.height * clamp(0.5 + offset * stair.rise, 0, 1);
-      });
-      if (ratio > widestCoverage) {
-        widestCoverage = ratio;
-        nearest = stair;
+    if (elevation) {
+      for (const deck of elevation.decks) add(deck, 0, elevation.height, centeredBounds(deck));
+      for (const stair of elevation.stairs) {
+        const bounds = centeredBounds(stair);
+        const horizontal = stair.axis === "x";
+        const count = stairTreads(stair);
+        const length = (horizontal ? stair.w : stair.h) / count;
+        for (let index = 0; index < count; index++) {
+          const position = (index + .5) * length;
+          const t = (index + .5) / count;
+          add({
+            x: horizontal ? bounds.left + position : stair.x,
+            y: horizontal ? stair.y : bounds.back + position,
+            w: horizontal ? length : stair.w,
+            h: horizontal ? stair.h : length,
+          }, 0, elevation.height * (stair.rise < 0 ? 1 - t : t), bounds);
+        }
       }
     }
-    return { behind: widestCoverage > 0.005, cutaway: widestCoverage >= wallCutawayThreshold ? nearest : undefined };
+    return volumes;
+  }
+
+  function actorWallMasks(camera, actor, volumes) {
+    const depth = actor.x + actor.y;
+    const side = actor.x - actor.y;
+    const large = actor.kind === "boss" || actor.role === "patient";
+    const width = large ? 2.1 : 1.4;
+    const feet = depth * slope - actor.height;
+    const masks = [];
+    for (const { left, right, back, front, bottom, top, support } of volumes) {
+      if (right + front <= depth || left - front > side + width || right - back < side - width) continue;
+      if ((left + back) * slope - top > feet + .70 || (right + front) * slope - bottom < feet - (large ? 3.70 : 2.15)) continue;
+      if (support && (actor.height >= top - .035 || withinSurface(support, actor.x, actor.y))) continue;
+      const footprint = clipPolygon([[left, back], [right, back], [right, front], [left, front]], ([x, y]) => x + y - depth);
+      const hull = convexHull(footprint.flatMap(([x, y]) => [point(camera, x, y, bottom), point(camera, x, y, top)]));
+      if (hull.length >= 3) masks.push(hull);
+    }
+    return masks;
+  }
+
+  function clipActorBehindWalls(context, camera, masks) {
+    for (const hull of masks) {
+      context.beginPath();
+      context.rect(0, 0, camera.width, camera.height);
+      context.moveTo(...hull[0]);
+      for (const vertex of hull.slice(1)) context.lineTo(...vertex);
+      context.closePath();
+      context.clip("evenodd");
+    }
+  }
+
+  function actorVisible(camera, actor, masks) {
+    if (!masks.length) return true;
+    const head = actor.type === "player" ? heroVisualHeight * (camera.width < 500 ? 1.12 : 1)
+      : actor.type === "enemy" ? enemyHealthHeight(actor) - .17 : actor.seated ? .96 : 1.12;
+    const samples = [[0, head - .08], [-.13, head * .69], [.13, head * .69],
+      [0, head * .50], [-.13, head * .30], [.13, head * .30]];
+    return samples.some(([u, v]) => {
+      const target = point(camera, actor.x + u / 2, actor.y - u / 2, actor.height + v);
+      return !masks.some((hull) => hull.every((vertex, index) => cross(vertex, hull[(index + 1) % hull.length], target) >= 0));
+    });
   }
 
   function terraceShadows(context, camera, elevation) {
@@ -1457,29 +1493,23 @@
     }
   }
 
-  function drawTerraces(context, camera, elevation, palette, playerCover, map) {
+  function drawTerraces(context, camera, elevation, palette, map) {
     const structures = [
       ...elevation.decks.map((entry) => ({ entry, stair: false })),
       ...elevation.stairs.map((entry) => ({ entry, stair: true })),
     ];
     structures.sort((a, b) => a.entry.x + a.entry.y - b.entry.x - b.entry.y);
     for (const { entry, stair } of structures) {
-      if (stair) terraceStairs(context, camera, entry, elevation, palette, playerCover === entry);
-      else raisedDeck(context, camera, entry, elevation, palette, playerCover === entry, map);
+      if (stair) terraceStairs(context, camera, entry, elevation, palette);
+      else raisedDeck(context, camera, entry, elevation, palette, map);
     }
   }
 
-  function paintTerraces(context, canvas, camera, state, palette, theme, ratio, playerCover) {
+  function paintTerraces(context, canvas, camera, state, palette, theme, ratio) {
     const { elevation, map } = state;
     const key = `${theme}:${palette.landscape}:${state.floor}:${map.width}:${map.height}:${camera.unit}:${ratio}:${state.facility?.feature}`;
-    let layers = terraceCache.get(canvas);
-    if (layers?.elevation !== elevation || layers.key !== key || layers.obstacles !== state.obstacles) {
-      layers = { elevation, key, obstacles: state.obstacles, solid: null, cutaway: null };
-      terraceCache.set(canvas, layers);
-    }
-    const variant = playerCover ? "cutaway" : "solid";
-    let layer = layers[variant];
-    if (!layer || layer.playerCover !== playerCover) {
+    let layer = terraceCache.get(canvas);
+    if (layer?.elevation !== elevation || layer.key !== key || layer.obstacles !== state.obstacles) {
       const zero = { ...camera, x: 0, y: 0 };
       const corners = [...elevation.decks, ...elevation.stairs].flatMap((entry) => {
         const { left, back } = centeredBounds(entry);
@@ -1502,11 +1532,11 @@
       paint.lineCap = "round";
       paint.lineJoin = "round";
       const local = { ...camera, x: -left, y: -top };
-      drawTerraces(paint, local, elevation, palette, playerCover, map);
+      drawTerraces(paint, local, elevation, palette, map);
       paintEarlyBrasswork(paint, local, state, elevation, 1);
       if (!palette.landscape || palette.landscape === "rupture") paintFacilityDressing(paint, local, state, palette, elevation, 1);
-      layer = { surface, left, top, width, height, playerCover };
-      layers[variant] = layer;
+      layer = { surface, left, top, width, height, elevation, key, obstacles: state.obstacles };
+      terraceCache.set(canvas, layer);
     }
     context.drawImage(layer.surface, camera.x + layer.left, camera.y + layer.top, layer.width, layer.height);
   }
@@ -2280,14 +2310,13 @@
     drydock: fixtureDrydock, manifold: fixtureManifold, "valve-bank": fixtureValveBank, scrubber: fixtureScrubber,
   };
 
-  // Only solid casings can request cutaway. Open coils, pipes, and rack detailing stay opaque.
   const facilityCasing = {
-    intake: [[-0.43, 0.43, -0.45, -0.31, 0.08, 0.90]],
-    smelter: [[-0.46, 0.46, -0.36, -0.21, 0.15, 1.12],
-      [-0.44, -0.31, -0.21, 0.32, 0.15, 1.14], [0.31, 0.44, -0.21, 0.32, 0.15, 1.14]],
-    "relay-rack": [[-0.43, 0.43, -0.34, 0.07, 0.12, 1.31]],
-    drydock: [[-0.39, -0.28, -0.37, 0.37, 0.14, 0.91]],
-    "valve-bank": [[-0.44, 0.44, -0.35, 0.02, 0.13, 1.30]],
+    intake: [[-.43, .43, -.45, -.31, .08, .90]],
+    smelter: [[-.46, .46, -.36, -.21, .15, 1.12],
+      [-.44, -.31, -.21, .32, .15, 1.14], [.31, .44, -.21, .32, .15, 1.14]],
+    "relay-rack": [[-.43, .43, -.34, .07, .12, 1.31]],
+    drydock: [[-.39, -.28, -.37, .37, .14, .91]],
+    "valve-bank": [[-.44, .44, -.35, .02, .13, 1.30]],
   };
 
   function paintFacilityDressing(context, camera, state, palette, elevation, layer) {
@@ -2388,7 +2417,7 @@
     }
   }
 
-  function facilityObstacle(context, camera, entry, palette, seconds, reduced, cutaway) {
+  function facilityObstacle(context, camera, entry, palette, seconds, reduced) {
     const fixture = facilityFixtures[entry.fixture];
     if (!fixture) return false;
     const [x, y] = point(camera, entry.x, entry.y);
@@ -2398,32 +2427,11 @@
     const phase = reduced ? 0.45 : fraction(seconds * 0.56 + noise(entry.x, entry.y));
     const ground = axis.face(0.49, 0.49, 0.012);
     const plinth = [palette.wallY, palette.capDark, palette.capSide];
-    context.save();
-    if (cutaway) context.globalAlpha *= 0.34;
     poly(context, ground, palette.materialShade + "51");
     axis.box(-0.48, 0.48, -0.47, 0.47, 0.01, 0.15, plinth);
     poly(context, axis.face(0.447, 0.423, 0.155), null, palette.inlay + "ad", 0.93);
     fixture(context, camera, axis, entry, phase, reduced, seconds);
-    context.restore();
-    if (cutaway) {
-      context.save();
-      context.setLineDash([3, 3]);
-      poly(context, ground, null, palette.accent + "b5", 1.1);
-      context.restore();
-    }
     return true;
-  }
-
-  function obscuresPlayer(camera, entry, player, palette, heightDifference) {
-    if (!player || entry.x + entry.y < player.x + player.y || !withinWallSpan(camera, entry, player)) return false;
-    const silhouette = playerSilhouette(camera, player, heightDifference);
-    if (entry.fixture && (!palette.landscape || palette.landscape === "rupture") && Object.hasOwn(facilityFixtures, entry.fixture)) {
-      return (facilityCasing[entry.fixture] ?? []).some(([from, to, left, right, base, top]) =>
-        wallCoverage(camera, facilityFootprint(entry, from, to, left, right), player, silhouette,
-          () => top, base) >= wallCutawayThreshold);
-    }
-    const top = obstacleHeight(entry, palette);
-    return wallCoverage(camera, entry, player, silhouette, () => top) >= wallCutawayThreshold;
   }
 
   function obstacleHeight(entry, palette) {
@@ -2432,7 +2440,7 @@
     return palette.obstacleHeight * (dressed ? 0.69 : 1);
   }
 
-  function rockObstacle(context, camera, entry, palette, cutaway) {
+  function rockObstacle(context, camera, entry, palette) {
     const { x, y, w, h } = entry;
     const height = obstacleHeight(entry, palette);
     const seed = noise(x, y);
@@ -2440,8 +2448,6 @@
     const outline = [at(-.5, -.5), at(.5, -.5), at(.5, .5), at(-.5, .5)];
     const corner = at(.04 + seed * .16, -.16);
     contactShadow(context, ...at(.18, .08, 0), camera.unit * Math.min(w + h, 4.4), palette);
-    context.save();
-    if (cutaway) context.globalAlpha *= .34;
     const face = materialShade(context, outline[0], outline[2], palette.capSide, palette, palette.cap, palette.capDark);
     prism(context, camera, x - w * .5, y - h * .5, w, h, height, face, palette.wallX, palette.wallY, palette.seam);
     poly(context, [outline[0], outline[1], corner, at(-.36, .02)], palette.materialLight + "51");
@@ -2476,21 +2482,14 @@
         }
       }
     }
-    context.restore();
-    if (cutaway) {
-      context.save();
-      context.setLineDash([3, 3]);
-      poly(context, outline, null, palette.accent + "bb", 1.1);
-      context.restore();
-    }
   }
 
-  function obstacle(context, camera, entry, palette, seconds, theme, cutaway, reduced) {
+  function obstacle(context, camera, entry, palette, seconds, theme, reduced) {
     if (palette.landscape && palette.landscape !== "rupture") {
-      rockObstacle(context, camera, entry, palette, cutaway);
+      rockObstacle(context, camera, entry, palette);
       return;
     }
-    if (entry.fixture && facilityObstacle(context, camera, entry, palette, seconds, reduced, cutaway)) return;
+    if (entry.fixture && facilityObstacle(context, camera, entry, palette, seconds, reduced)) return;
     const { x, y, w, h } = entry;
     const dressed = w > 0.90 && h > 0.74;
     const height = obstacleHeight(entry, palette);
@@ -2509,8 +2508,6 @@
     poly(context, rectangle(camera, left + height * 0.22, top - height * 0.09, w + height * 0.23, h + height * 0.22),
       palette.materialShade + "45");
     poly(context, rectangle(camera, left + 0.03, top - 0.01, w + 0.12, h + 0.09), palette.materialShade + "64");
-    context.save();
-    if (cutaway) context.globalAlpha *= 0.34;
     prism(context, camera, left, top, w, h, height, topFinish, rightFinish, frontFinish, palette.surfaceJoint);
     poly(context, inner, topFinish, palette.materialLight + "35", 0.82);
     line(context, [outer[0], outer[3], outer[2]], palette.materialLight + "b8", 1.3);
@@ -2552,25 +2549,15 @@
     } else if (w > 0.65 && h > 0.65) {
       poly(context, rectangle(camera, x - 0.18, y - 0.14, 0.36, 0.28, height + 0.01),
         palette.capDark, palette.fixture, 1);
-      if (!cutaway) {
-        for (const offset of [-0.28, 0.28]) {
-          if (theme === "sluice") {
-            line(context, [point(camera, left + 0.13, y + h * offset, height),
-              point(camera, left + w - 0.13, y + h * offset, height)], palette.sheen, 1.4);
-          } else {
-            const [xx, yy] = point(camera, x + w * offset, y, height);
-            ellipse(context, xx, yy, 1.45, 1.45, palette.fixture);
-          }
+      for (const offset of [-0.28, 0.28]) {
+        if (theme === "sluice") {
+          line(context, [point(camera, left + 0.13, y + h * offset, height),
+            point(camera, left + w - 0.13, y + h * offset, height)], palette.sheen, 1.4);
+        } else {
+          const [xx, yy] = point(camera, x + w * offset, y, height);
+          ellipse(context, xx, yy, 1.45, 1.45, palette.fixture);
         }
       }
-    }
-    context.restore();
-    if (cutaway) {
-      context.save();
-      context.globalAlpha *= 0.72;
-      context.setLineDash([3, 3]);
-      poly(context, outer, null, palette.accent, 1.2);
-      context.restore();
     }
   }
 
@@ -2753,6 +2740,71 @@
       ellipse(context, ...light, unit * 0.064, unit * 0.096, "#222a33", "#84674f", 0.9);
       ellipse(context, ...light, Math.max(1.4, unit * 0.030), Math.max(1.5, unit * 0.047),
         entry.active ? "#a8dbc2" : "#f0b36f");
+    }
+  }
+
+  function storyGateSize(entry) {
+    return {
+      span: clamp(entry.width ?? entry.span ?? 2.2, 0.85, 6),
+      height: clamp(entry.apertureHeight ?? 1.72, 1.0, 3),
+      progress: clamp(entry.progress ?? 0, 0, 1),
+    };
+  }
+
+  function rollingStoryGate(context, camera, entry, palette) {
+    const { span, height, progress } = storyGateSize(entry);
+    const unit = camera.unit;
+    const half = span * 0.5;
+    const alongX = entry.axis !== "y";
+    const at = (side, z, depth = 0.19) => point(camera,
+      entry.x + (alongX ? depth : side), entry.y + (alongX ? side : depth), z);
+    const face = (left, right, bottom, top, depth) => [at(left, bottom, depth), at(right, bottom, depth),
+      at(right, top, depth), at(left, top, depth)];
+    const box = (left, length, depth, tall, lift, colors) => prism(context, raisedCamera(camera, lift),
+      entry.x + (alongX ? -depth / 2 : left), entry.y + (alongX ? left : -depth / 2),
+      alongX ? depth : length, alongX ? length : depth, tall, ...colors, palette.seam);
+    const housing = [palette.capSide, palette.wallX, palette.wallY];
+    const light = progress > 0.93 ? "#b9e3b8" : progress > 0.04 ? "#f6c178" : "#ee886e";
+    const feet = [at(-half - .32, .016, -.40), at(half + .32, .016, -.40),
+      at(half + .32, .016, .43), at(-half - .32, .016, .43)];
+    poly(context, feet, "#1b252dc4", palette.inlay + "a0", 1.0);
+    for (const mark of [-.28, .0, .28]) {
+      line(context, [at(-half, .029, mark), at(half, .029, mark)], palette.materialLight + "7a", .84);
+    }
+    if (progress < 1) {
+      const lower = height * progress;
+      const panel = face(-half, half, lower, height, .145);
+      const tint = materialShade(context, at(-half, height), at(half, 0),
+        palette.capDark, palette, palette.capSide, palette.wallY);
+      context.save();
+      poly(context, panel, tint, "#26232c", 1.2);
+      poly(context, panel);
+      context.clip();
+      const rung = height / 7;
+      for (let index = 1; index <= 7; index++) {
+        const z = lower + index * rung;
+        line(context, [at(-half, z, .152), at(half, z, .152)], "#25252d", Math.max(1, unit * .067));
+        line(context, [at(-half, z - .033, .157), at(half, z - .033, .157)], "#d4ae7885", Math.max(.7, unit * .025));
+      }
+      poly(context, face(-half, half, lower, lower + .145, .172), "#997653", "#d3a474", 1.0);
+      for (let u = -half + .12; u < half - .08; u += .28) {
+        line(context, [at(u, lower + .034), at(u + .106, lower + .110)], "#493432", Math.max(.8, unit * .040));
+      }
+      context.restore();
+    }
+    for (const side of [-1, 1]) {
+      box(side < 0 ? -half - .28 : half, .28, .52, height + .20, 0, housing);
+      const center = side * (half + .14);
+      line(context, [at(center, .18, .267), at(center, height + .12, .267)], "#ac856280", 1.3);
+      ellipse(context, ...at(center, height * .73, .28), unit * .073, unit * .096, "#262b35", "#b08862", 1.15);
+      ellipse(context, ...at(center, height * .73, .291), Math.max(1.5, unit * .036), Math.max(1.6, unit * .050), light);
+    }
+    box(-half - .30, span + .60, .61, .35, height - .015,
+      [palette.cap, palette.capSide, palette.wallY]);
+    line(context, [at(-half - .23, height + .24, .31), at(half + .23, height + .24, .31)], "#d7b183", 1.35);
+    for (const side of [-1, 1]) {
+      const plate = at(side * half * .72, height + .12, .326);
+      ellipse(context, ...plate, Math.max(1.3, unit * .065), Math.max(1.05, unit * .054), "#3a2c31", "#c49a70", .88);
     }
   }
 
@@ -2959,6 +3011,117 @@
     ellipse(context, ...at(.045, -.49), unit * .064, unit * .045, "#c79675", "#493b3a", .74);
   }
 
+  const storyOutfits = {
+    guard: { coat: ["#25343d", "#5b6971", "#a0a7a0"], hat: ["#30343e", "#64717d", "#b3a48a"], detail: "#d2b480" },
+    porter: { coat: ["#263e3c", "#648c83", "#b1cec1"], hat: ["#423d34", "#7a7760", "#bbb18a"], detail: "#d9d2a5" },
+    patient: { coat: ["#3d4640", "#89947a", "#c5c6a4"], hat: ["#393a37", "#726b5a", "#c7b596"], detail: "#e5d2a1" },
+  };
+
+  function storyWalker(context, origin, unit, role, pose, palette, grip, footing = 0) {
+    const [x, y] = origin;
+    const [fx, fy] = unitVector(pose.look);
+    const side = pose.facingRight ? 1 : -1;
+    const { coat, hat, detail } = storyOutfits[role];
+    const size = unit * (role === "guard" ? .97 : grip ? .84 : .94);
+    const ground = (u, v) => [x + u * size, y + v * size];
+    const contact = (u, v) => [x + u * size, y + v * size - footing * unit];
+    const hipShift = grip ? fx * .043 : fx * pose.gait * .055;
+    const bob = pose.breath * .73 - Math.abs(pose.stride) * .22;
+    const at = (u, v) => ground(u + hipShift, v + bob);
+    contactShadow(context, x, y - footing * unit, size, palette);
+    legStride(context, contact, at, unitVector(pose.travel), pose, size, "#343e40", "#655a48", 0, true);
+
+    const backArm = armJoints(at(-side * .18, -.75), at(-side * .25, -.43 + pose.stride * .36), size, side * .70);
+    paintArm(context, backArm, size, coat, "#22292b");
+    forgedPlate(context, [at(-.24, -.67), at(-.15, -.89), at(.14, -.88), at(.26, -.72),
+      at(.22, -.48), at(.29, -.39), at(.17, -.27), at(-.25, -.32), at(-.27, -.46)], coat, palette, size, .31);
+    line(context, [at(-.20, -.43), at(.18, -.43), at(.24, -.47)], "#4b4038", Math.max(.8, size * .049));
+    if (role === "guard") {
+      for (const u of [-.20, .20]) {
+        line(context, [at(u - .07, -.75), at(u, -.81), at(u + .07, -.75)], detail, Math.max(.9, size * .046));
+      }
+      line(context, [at(-side * .16, -.69), at(side * .09, -.57), at(side * .13, -.44)], "#a38c6a", Math.max(.85, size * .039));
+    } else {
+      forgedPlate(context, [at(-.19, -.84), at(.18, -.85), at(.16, -.72), at(-.05, -.67), at(-.19, -.73)],
+        ["#6e6853", detail, "#efe0b6"], palette, size, .28);
+      if (!grip) {
+        line(context, [at(-side * .16, -.70), at(side * .16, -.46)], "#9a7e59", Math.max(1.1, size * .062));
+        ellipse(context, ...at(-side * .13, -.53), size * .116, size * .101, "#7c7157", "#514d40", 1.0);
+      }
+    }
+
+    const head = (u, v) => at(side * (u + .023), -.99 + v + fy * .035);
+    miniatureFace(context, head, size * .94, palette, {
+      skin: role === "patient" ? ["#755345", "#bb906a", "#dcb68a"] : ["#71534e", "#bc8a68", "#d6a680"], crown: hat,
+    });
+    if (role === "guard") {
+      poly(context, [head(-.21, -.108), head(-.16, -.22), head(.10, -.235), head(.22, -.116),
+        head(.17, -.069), head(-.18, -.062)], hat[1], "#2e343c", 1.0);
+      line(context, [head(-.19, -.068), head(.20, -.071), head(.27, -.048)], detail, Math.max(.65, size * .028));
+    }
+    const handSide = grip ? Math.sign(grip[0] - x) || side : side;
+    const shoulder = at(handSide * .20, -.75);
+    const target = grip ?? at(side * .32 + fx * pose.stride * .44, -.43 + fy * pose.stride * .67);
+    const arm = armJoints(shoulder, target, size, -handSide * .58, .28, .26);
+    paintArm(context, arm, size, coat, "#272b2e");
+    ellipse(context, ...arm[2], size * .064, size * .054, role === "guard" ? "#796350" : "#cbab7f", "#362e2b", .83);
+  }
+
+  function storyPatient(context, camera, actor, pose, palette, elevation, reduced) {
+    const [sx, sy] = unitVector(pose.look);
+    const directionX = sx + sy / slope;
+    const directionY = sy / slope - sx;
+    const length = Math.hypot(directionX, directionY) || 1;
+    const dx = directionX / length, dy = directionY / length;
+    const unit = camera.unit;
+    const baseHeight = actor.height ?? 0;
+    const bob = Math.abs(pose.stride) * .14;
+    const ground = (u, v = 0) => ({ x: actor.x + dx * u - dy * v, y: actor.y + dy * u + dx * v });
+    const level = (at) => surfaceHeight(elevation, at.x, at.y) - baseHeight;
+    const rear = ground(-.87), front = ground(.87);
+    const rearHeight = level(rear), frontHeight = level(front);
+    const at = (u, v, z = .46) => {
+      const location = ground(u, v);
+      const tilt = rearHeight + (frontHeight - rearHeight) * clamp((u + .87) / 1.74, 0, 1);
+      return point(camera, location.x, location.y, z + tilt + bob);
+    };
+    const projected = (at, z) => point(camera, at.x, at.y, z);
+    const pair = [{ ground: rear, height: rearHeight, side: -1 }, { ground: front, height: frontHeight, side: 1 }]
+      .sort((a, b) => a.ground.x + a.ground.y - b.ground.x - b.ground.y);
+    const carrier = (entry) => {
+      const footing = reduced ? 0 : stairFooting(elevation, { ...entry.ground, height: baseHeight + entry.height });
+      storyWalker(context, projected(entry.ground, entry.height), unit, "patient",
+        { ...pose, cadence: pose.cadence + (entry.side < 0 ? Math.PI * .48 : 0) }, palette,
+        at(entry.side * .76, .16, .43), footing);
+    };
+    contactShadow(context, ...point(camera, actor.x, actor.y), unit * 1.54, palette);
+    carrier(pair[0]);
+    poly(context, [at(-.65, -.26, .43), at(.65, -.26, .43), at(.65, .26, .43), at(-.65, .26, .43)],
+      "#8b7962", "#3a3833", 1.12);
+    poly(context, [at(-.56, -.20, .50), at(.60, -.20, .50), at(.60, .20, .50), at(-.56, .20, .50)],
+      "#d6c6a4", "#51706c", .89);
+    for (const edge of [-.25, .25]) {
+      line(context, [at(-.87, edge, .45), at(.87, edge, .45)], "#413125", Math.max(1.0, unit * .069));
+      line(context, [at(-.865, edge, .464), at(.865, edge, .464)], "#c39664", Math.max(.75, unit * .038));
+    }
+    const pillow = at(-.39, 0, .53);
+    ellipse(context, ...pillow, unit * .16, unit * .083, "#ebd8b3", "#818976", .86);
+    ellipse(context, ...at(-.36, .025, .59), unit * .09, unit * .065, "#be896c", "#5f5645", .75);
+    poly(context, [at(-.25, -.17, .57), at(-.10, -.23, .61), at(.54, -.16, .55),
+      at(.53, .16, .55), at(-.13, .23, .59), at(-.27, .14, .57)], "#bcc4a1", "#6e947f", .85);
+    line(context, [at(-.22, -.12, .61), at(-.23, .12, .61)], "#dec59a", Math.max(.7, unit * .042));
+    line(context, [at(.27, -.09, .57), at(.45, -.05, .54), at(.51, .04, .54)], "#e0d7b1", .81);
+    carrier(pair[1]);
+  }
+
+  function drawStoryActor(context, camera, actor, palette, elevation, reduced) {
+    if (actor.role === "patient") storyPatient(context, camera, actor, actor.pose, palette, elevation, reduced);
+    else if (actor.role === "guard" && actor.seated) woundedGuard(context, camera, actor, palette);
+    else storyWalker(context, point(camera, actor.x, actor.y), camera.unit,
+      actor.role === "guard" ? "guard" : "porter", actor.pose, palette, null,
+      reduced ? 0 : stairFooting(elevation, actor));
+  }
+
   function storyApparatus(context, camera, entry, palette, seconds, reduced) {
     const { unit } = camera;
     const { x, y } = entry;
@@ -3091,11 +3254,15 @@
     context.restore();
   }
 
-  function objectiveLabels(context, camera, state) {
+  function objectiveLabels(context, camera, state, visibleStoryActors) {
     let offscreenCell;
     let minimumDistance = Infinity;
     const placed = [];
-    const stations = (state.stations ?? []).map((station) => ({ ...station, type: "station" }));
+    const stations = (state.stations ?? []).map((station) => ({
+      ...station,
+      type: "station",
+      ...(station.kind === "shrine" && station.design === "chapel" ? { labelHeight: 3.82, accent: "#f4cd90" } : {}),
+    }));
     const story = state.storyPoint;
     if (story?.active) stations.push({ ...story, ...storyDevicePosition(story), type: "story", caption: story.prompt ?? story.scene.prompt });
     for (const entry of state.incident?.points ?? []) {
@@ -3103,6 +3270,12 @@
       stations.push({ ...entry, type: "story", caption: entry.label, accent: incidentColor(entry),
         labelHeight: entry.device === "pressure" ? .47 : entry.device === "cartridge" ? .78 : 1.55,
         holdProgress: entry.kind === "hold" ? clamp(state.incident.progress ?? 0, 0, 1) : 0 });
+    }
+    if (state.storyGate?.label) {
+      stations.push({ ...state.storyGate, type: "story", caption: state.storyGate.label, labelHeight: 2.3, accent: "#e8bd86" });
+    }
+    for (const entry of visibleStoryActors) {
+      if (entry.label) stations.push({ ...entry, type: "story", caption: entry.label, accent: "#b4ddcd" });
     }
     for (const entry of [...(state.items ?? []), ...stations]) {
       if (entry.collected || entry.kind === "exit") continue;
@@ -3134,6 +3307,8 @@
 
   const walkProfiles = {
     player: [15.5, 0.28, 0.34],
+    porter: [13.2, 0.24, 0.35],
+    patient: [11.7, 0.22, 0.29],
     guard: [12.6, 0.25, 0.32],
     runner: [23.2, 0.34, 0.55],
     sentry: [10.5, 0.16, 0.50],
@@ -3174,7 +3349,7 @@
   }
 
   function actorPose(frame, actor, key) {
-    const profile = walkProfiles[key === "player" ? "player" : actor.kind] ?? walkProfiles.guard;
+    const profile = walkProfiles[key === "player" ? "player" : actor.role ?? actor.kind] ?? walkProfiles.guard;
     const prior = frame.previousPoses.get(key);
     const { step, reduced } = frame;
     const enemyWindup = actor.windup || 0;
@@ -3190,7 +3365,7 @@
       ? { facingX: actor.x - prior.x, facingY: actor.y - prior.y } : actor);
     const moveAngle = Math.atan2(moveY, moveX);
     const travel = prior && !reduced ? turnAngle(prior.travel, moveAngle, step, 18) : moveAngle;
-    const moving = Boolean(actor.moving) && enemyWindup <= 0 && charge <= 0;
+    const moving = Boolean(actor.moving) && !actor.stalled && !actor.seated && enemyWindup <= 0 && charge <= 0;
     const gait = reduced ? 0 : prior
       ? approach(prior.gait, moving ? 1 : 0, step, moving ? 13 : 18)
       : moving ? 0.64 : 0;
@@ -3408,7 +3583,7 @@
     line(context, [blade(0.33, 0.024), blade(0.76, 0.028)], "#7eaca3", Math.max(.58, unit * 0.019));
   }
 
-  function player(context, camera, actor, seconds, reduced, pose, palette, carryingCartridge) {
+  function player(context, camera, actor, seconds, reduced, pose, palette, carryingCartridge, footing) {
     const [x, y] = point(camera, actor.x, actor.y);
     const unit = camera.unit * (camera.width < 500 ? 1.12 : 1);
     const [fx, fy] = unitVector(pose.look);
@@ -3425,6 +3600,7 @@
     const flinch = reduced ? 0 : pose.impact;
     const bob = pose.breath - Math.abs(stride) * 0.21 + tuck + flinch * 0.10;
     const base = (horizontal, vertical) => [x + horizontal * unit, y + vertical * unit];
+    const ground = (horizontal, vertical) => [x + horizontal * unit, y + vertical * unit - footing * camera.unit];
     const at = (horizontal, vertical) => base(horizontal + fx * (thrust + tuck * 0.70 - flinch * 0.14), vertical + bob);
     const cloth = ["#25413f", "#45867b", "#8bc1ab"];
     const scarf = ["#265654", "#50a998", "#a7e7c7"];
@@ -3433,14 +3609,14 @@
     const skin = ["#7d564f", "#c8906d", "#e5b18b"];
     const hair = ["#2e3032", "#56403a", "#8e634a"];
 
-    contactShadow(context, x, y, unit, palette);
+    contactShadow(context, x, y - footing * camera.unit, unit, palette);
     context.save();
     if (actor.invulnerable > 0) context.globalAlpha = reduced ? 0.78 : 0.59 + Math.abs(Math.sin(seconds * 27)) * 0.41;
-    groundRing(context, camera, actor.x, actor.y, 0.39, "#99e9c428", "#9be5cd", 1.9);
+    groundRing(context, raisedCamera(camera, footing), actor.x, actor.y, 0.39, "#99e9c428", "#9be5cd", 1.9);
     if (actor.wet > 0 && pose.gait > 0.30 && !reduced) {
       groundRing(context, camera, actor.x, actor.y, 0.48 + Math.abs(stride) * 0.62, null, "#a7f4eb92", 1.15);
     }
-    legStride(context, base, at, unitVector(pose.travel), pose, unit, "#3d454b", boot[1], 0, true);
+    legStride(context, ground, at, unitVector(pose.travel), pose, unit, "#3d454b", boot[1], 0, true);
 
     const lampArm = armJoints(at(-armSide * 0.218, -0.775 - armDepth),
       at(-armSide * 0.33 - stride * 0.16, -0.48 - armDepth + stride * 0.12 - tuck * 0.48), unit, armSide * 0.64);
@@ -3864,7 +4040,7 @@
     }
   }
 
-  function enemy(context, camera, actor, reduced, pose, palette) {
+  function enemy(context, camera, actor, reduced, pose, palette, footing) {
     const [x, y] = point(camera, actor.x, actor.y);
     const unit = camera.unit;
     const boss = actor.kind === "boss";
@@ -3884,9 +4060,10 @@
     const dip = pose.breath - Math.abs(pose.stride) * (runner ? 0.25 : 0.13)
       + pose.anticipation * (mortar || runner ? 0.105 : 0.062) + pose.charge * 0.09;
     const base = (horizontal, vertical) => [x + horizontal * size, y + vertical * size];
+    const ground = (horizontal, vertical) => [x + horizontal * size, y + vertical * size - footing * unit];
     const at = (horizontal, vertical) => base(horizontal + fx * lean, vertical + dip);
-    contactShadow(context, x, y, size, palette);
-    groundRing(context, camera, actor.x, actor.y, boss ? 0.51 : 0.29, "#fa78560e", "#f394756c", 1.1);
+    contactShadow(context, x, y - footing * unit, size, palette);
+    groundRing(context, raisedCamera(camera, footing), actor.x, actor.y, boss ? 0.51 : 0.29, "#fa78560e", "#f394756c", 1.1);
     if (actor.stellar || (boss && palette.landscape === "stars")) {
       stellarFigure(context, at, pose, actor, size);
       return;
@@ -3900,10 +4077,10 @@
       context.restore();
     }
     if (creature) {
-      burrowCreature(context, base, at, actor, pose, size, metal, palette, facing);
+      burrowCreature(context, ground, at, actor, pose, size, metal, palette, facing);
       return;
     }
-    legStride(context, base, at, pose.charge > 0 ? facing : unitVector(pose.travel),
+    legStride(context, ground, at, pose.charge > 0 ? facing : unitVector(pose.travel),
       pose, size, metal[0], metal[1], pose.charge * 0.15, actor.faction === "human");
     if (gunner && actor.faction !== "human") pressureGunner(context, at, facing, actor, pose, size, metal, palette);
     else compressionGuard(context, at, actor, pose, size, metal, palette, facing);
@@ -4076,28 +4253,56 @@
       && y + below * unit >= -2 && y - above * unit <= camera.height + 2;
   }
 
-  function drawArenaObjects(context, camera, objects, state, palette, theme, seconds, reduced, playerHeight, brushes) {
+  function drawArenaObjects(context, camera, objects, state, palette, theme, seconds, reduced, brushes) {
     for (const object of objects) {
       const height = object.height ?? 0;
       const local = raisedCamera(camera, height);
+      const clipped = object.wallMasks?.length;
+      if (clipped) {
+        context.save();
+        clipActorBehindWalls(context, camera, object.wallMasks);
+      }
       switch (object.type) {
         case "obstacle": {
           const span = (object.w + object.h) * 0.5;
           if (!object.fixture && !isInView(local, object, span + 0.8, span * slope + 1.8, span * slope + 0.6)) break;
-          const cutaway = obscuresPlayer(local, object, state.player, palette, playerHeight - height);
-          obstacle(context, local, object, palette, seconds, theme, cutaway, reduced);
+          obstacle(context, local, object, palette, seconds, theme, reduced);
           break;
         }
+        case "story-gate": {
+          const { span, height } = storyGateSize(object);
+          if (!isInView(local, object, span + .6, height + 1.6, span * slope + .9)) break;
+          rollingStoryGate(context, local, object, palette);
+          break;
+        }
+        case "story-actor":
+          if (isInView(local, object, 2.1, 2.4, 1.1)) drawStoryActor(context, local, object, palette, state.elevation, reduced);
+          break;
         case "story": storyApparatus(context, local, object, palette, seconds, reduced); break;
         case "incident": incidentApparatus(context, local, object, palette, seconds, reduced); break;
         case "station": window.TowerShelter.station(context, local, object, brushes); break;
         case "item": item(context, local, object, seconds, palette); break;
         case "enemy":
-          if (isInView(local, object, 3.2, 3.6, 1.5)) enemy(context, local, object, reduced, object.pose, palette);
+          if (isInView(local, object, 3.2, 3.6, 1.5)) {
+            enemy(context, local, object, reduced, object.pose, palette, reduced ? 0 : stairFooting(state.elevation, object));
+          }
           break;
-        case "player": player(context, local, object, seconds, reduced, object.pose, palette, state.incident?.payload); break;
+        case "player": {
+          const footing = reduced ? 0 : stairFooting(state.elevation, object);
+          player(context, local, object, seconds, reduced, object.pose, palette, state.incident?.payload, footing);
+          break;
+        }
       }
+      if (clipped) context.restore();
     }
+  }
+
+  function isActor(entry) {
+    return entry.type === "player" || entry.type === "enemy" || entry.type === "story-actor";
+  }
+
+  function isWall(entry) {
+    return entry.type === "obstacle" || entry.type === "story-gate" || entry.kind === "exit";
   }
 
   function drawArenaCues(context, camera, state, enemies, elevation, seconds, layer) {
@@ -4149,17 +4354,23 @@
     const motion = beginMotionFrame(canvas, state, now, reduced);
     const seconds = reduced ? 0 : now / 1000;
     const elevation = state.elevation;
-    const playerHeight = state.player ? surfaceHeight(elevation, state.player.x, state.player.y) : 0;
     const enemies = state.combatComplete || story ? [] : (state.enemies ?? []).filter((entry) => entry.hp > 0);
     const brushes = state.shelter ? shelterBrushes(palette, seconds, reduced) : null;
     const objects = [
-      ...(state.obstacles ?? []).filter((entry) => !entry.shelterDecor && !entry.gateDecor)
+      ...(state.obstacles ?? []).filter((entry) => !entry.shelterDecor && !entry.gateDecor && !(state.storyGate && entry.storyGate))
         .map((entry) => ({ ...entry, type: "obstacle" })),
       ...(state.items ?? []).map((entry) => ({ ...entry, type: "item" })),
       ...(state.stations ?? []).map((entry) => ({ ...entry, type: "station" })),
       ...enemies.map((entry, index) => ({ ...entry, type: "enemy", pose: actorPose(motion, entry, entry.id ?? index) })),
     ];
     if (state.gateMarker) objects.push({ ...state.gateMarker, type: "item", kind: "exit" });
+    if (state.storyGate) {
+      const { height: apertureHeight, ...gate } = state.storyGate;
+      objects.push({ ...gate, apertureHeight, type: "story-gate" });
+    }
+    for (const [index, actor] of (state.storyActors ?? []).entries()) {
+      objects.push({ ...actor, type: "story-actor", pose: actorPose(motion, actor, `story:${actor.id ?? index}`) });
+    }
     const incidentPoints = state.incident?.points ?? [];
     const keepReservoirValve = state.storyPoint && state.incident?.reservoir && !incidentPoints.some((entry) =>
       Math.hypot(entry.x - state.storyPoint.x, entry.y - state.storyPoint.y) < 1.25);
@@ -4182,41 +4393,55 @@
     incidentGround(context, camera, state, palette, elevation ? 0 : undefined);
     perimeterMotion(context, camera, state, palette, theme, seconds, reduced);
     stageArrival(context, camera, state, palette, theme, reduced);
-    let front = objects;
+    const rear = [];
+    const scenery = [];
+    const actors = [];
+    for (const object of objects) {
+      object.height = surfaceHeight(elevation, object.x, object.y);
+      if (isActor(object)) actors.push(object);
+      else (terraceCover(camera, elevation, object) ? rear : scenery).push(object);
+    }
+    const volumes = wallVolumes(objects.filter(isWall), elevation, palette);
+    const visibleEnemies = [];
+    const visibleStoryActors = [];
+    let visiblePlayer;
+    for (const object of actors) {
+      object.wallMasks = actorWallMasks(camera, object, volumes);
+      if (!actorVisible(camera, object, object.wallMasks)) continue;
+      if (object.type === "enemy") visibleEnemies.push(object);
+      else if (object.type === "story-actor") visibleStoryActors.push(object);
+      else visiblePlayer = object;
+    }
     if (elevation) {
-      const rear = [];
-      front = [];
-      let playerCover;
-      for (const object of objects) {
-        object.height = surfaceHeight(elevation, object.x, object.y);
-        if (object.type === "player") {
-          const { behind, cutaway } = playerTerraceCoverage(camera, elevation, object);
-          (behind ? rear : front).push(object);
-          playerCover = cutaway;
-        } else {
-          (terraceCover(camera, elevation, object) ? rear : front).push(object);
-        }
-      }
       terraceShadows(context, camera, elevation);
       drawArenaCues(context, camera, state, enemies, elevation, seconds, 0);
-      drawArenaObjects(context, camera, rear, state, palette, theme, seconds, reduced, playerHeight, brushes);
-      paintTerraces(context, canvas, camera, state, palette, theme, ratio, playerCover);
+      drawArenaObjects(context, camera, rear, state, palette, theme, seconds, reduced, brushes);
+      paintTerraces(context, canvas, camera, state, palette, theme, ratio);
       drawTerrain(context, camera, state.terrain, seconds, reduced, elevation, 1);
       paintGateMarkings(context, camera, state, palette, elevation, 1);
       incidentGround(context, camera, state, palette, 1);
     }
     drawArenaCues(context, camera, state, enemies, elevation, seconds, elevation ? 1 : undefined);
-    drawArenaObjects(context, camera, front, state, palette, theme, seconds, reduced, playerHeight, brushes);
+    drawArenaObjects(context, camera, scenery, state, palette, theme, seconds, reduced, brushes);
+    drawArenaObjects(context, camera, actors, state, palette, theme, seconds, reduced, brushes);
     for (const entry of state.projectiles ?? []) projectile(context, camera, entry, reduced, elevation);
-    for (const entry of enemies) enemyHealth(context, onSurface(camera, elevation, entry), entry);
-    if (state.mode === "playing" && state.player?.hp > 0) {
-      playerHealth(context, camera, state.player, motion.poses.get("player"), elevation, enemies);
+    for (const entry of visibleEnemies) {
+      context.save();
+      clipActorBehindWalls(context, camera, entry.wallMasks);
+      enemyHealth(context, raisedCamera(camera, entry.height), entry);
+      context.restore();
+    }
+    if (state.mode === "playing" && visiblePlayer?.hp > 0) {
+      context.save();
+      clipActorBehindWalls(context, camera, visiblePlayer.wallMasks);
+      playerHealth(context, camera, visiblePlayer, visiblePlayer.pose, elevation, visibleEnemies);
+      context.restore();
     }
     const swingVisible = state.player && (state.player.swingLife ?? state.player.attackFlash) > 0;
     for (const entry of state.effects ?? []) {
       if (entry.kind !== "slash" || !swingVisible) effect(context, onSurface(camera, elevation, entry), entry, reduced);
     }
-    if (state.mode === "playing") objectiveLabels(context, camera, state);
+    if (state.mode === "playing") objectiveLabels(context, camera, state, visibleStoryActors);
     if (story) storyLighting(context, camera, state);
   }
 

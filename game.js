@@ -98,6 +98,10 @@
     if (elements[name].textContent !== text) elements[name].textContent = text;
   }
 
+  function goldText(value) {
+    return String(Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0);
+  }
+
   function distance(from, to) {
     return Math.hypot(to.x - from.x, to.y - from.y);
   }
@@ -109,6 +113,8 @@
 
   function isOpen(x, y, radius) {
     if (x < radius || y < radius || x > state.map.width - radius || y > state.map.height - radius) return false;
+    const shutter = state.storyGate;
+    if (shutter && shutter.progress < 0.86 && window.TowerFieldScenes.inGate(shutter, { x, y }, radius)) return false;
     return state.obstacles.every((wall) => {
       if (wall.gateLeaf && (state.exit?.openProgress ?? 0) >= 0.92) return true;
       const gapX = Math.max(0, Math.abs(x - wall.x) - wall.w / 2);
@@ -140,6 +146,12 @@
 
   function move(actor, dx, dy, radius) {
     const { x, y } = actor;
+    if (actor === state.player && state.elevation && dx && dy && openStep(actor, x + dx, y + dy, radius)
+        && walkable(x + dx / 2, y + dy / 2, radius)) {
+      actor.x += dx;
+      actor.y += dy;
+      return true;
+    }
     if (dx && openStep(actor, actor.x + dx, actor.y, radius)) actor.x += dx;
     if (dy && openStep(actor, actor.x, actor.y + dy, radius)) actor.y += dy;
     return x !== actor.x || y !== actor.y;
@@ -350,7 +362,7 @@
     attackPointer = null;
   }
 
-  function panel({ kicker, title, copy, options = [], primary, activate, beat, skip }) {
+  function panel({ kicker, title, copy, options = [], primary, activate, beat, skip, questCards }) {
     clearInput();
     hideRadio();
     setText("overlay-kicker", kicker);
@@ -371,7 +383,7 @@
     else canvas.removeAttribute("aria-hidden");
     elements.overlay.scrollTop = 0;
     elements["game-stage"].dataset.mode = state.mode;
-    elements["overlay-choices"].replaceChildren(...options.map(({ id, title, description, detail, choose, rpgChoice, rarity, disabled, icon, price }) => {
+    const choices = questCards ? questCards.map(renderQuestCard) : options.map(({ id, title, description, detail, choose, rpgChoice, rarity, disabled, icon, price }) => {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "route-choice";
@@ -402,7 +414,8 @@
       }
       button.addEventListener("click", choose);
       return button;
-    }));
+    });
+    elements["overlay-choices"].replaceChildren(...choices);
     action = activate;
     skipScene = skip?.activate;
     elements["scene-skip"].hidden = !skip;
@@ -414,7 +427,7 @@
     renderPack();
     syncMusic();
     setText("live-status", beat ? [beat.speaker, beat.line].filter(Boolean).join(". ") : title);
-    const firstOption = elements["overlay-choices"].querySelector("button:not(:disabled)");
+    const firstOption = elements["overlay-choices"].querySelector(questCards ? ".quest-action-primary:enabled" : "button:enabled");
     const focusTarget = firstOption ?? (primary ? elements["primary-action"] : elements.overlay);
     if (focusTarget === elements.overlay) focusTarget.tabIndex = -1;
     focusTarget.focus({ preventScroll: true });
@@ -563,7 +576,7 @@
     } = state.routeEffects;
     if (entryGold) {
       creditGold(entryGold);
-      messages.push("입장 금화 +" + entryGold);
+      messages.push("입장 금화 +" + goldText(entryGold));
     }
     if (entryXp) {
       const gainedXp = Math.round(entryXp * (1 + run.stats.xpBonus));
@@ -571,7 +584,7 @@
       messages.push("입장 경험치 +" + gainedXp, ...growth);
     }
     if (damageBonus) messages.push("공격력 " + statValue("damage", damageBonus, true));
-    if (clearGoldBonus) messages.push("통과 보상 금화 +" + clearGoldBonus);
+    if (clearGoldBonus) messages.push("통과 보상 금화 +" + goldText(clearGoldBonus));
     if (clearXpBonus) messages.push("통과 보상 XP +" + clearXpBonus);
     if (dashCooldownMultiplier) {
       messages.push("회피 재사용 시간 " + (dashCooldownMultiplier < 1 ? "단축" : "증가"));
@@ -644,7 +657,7 @@
     const landing = floor === 1 ? clinicLanding : shelter.create(floor, plan, { seed, choices: run.storyChoices });
     stage = {
       ...landing, region: content.getRegion(floor), hazard: "none",
-      objective: "휴식하거나 장비를 정비한 뒤 출발하세요.",
+      objective: floor % 10 === 5 ? "장비를 정비하거나 의뢰를 받은 뒤 출발하세요." : "휴식하거나 장비를 정비한 뒤 출발하세요.",
     };
     state = viewFloor(floor, stage, health, "playing");
     state.landing = landing.fixture;
@@ -757,8 +770,31 @@
     anchor.active = false;
     state.incident = { anchor, points, definition, step: 0, steps: steps.length, progress: 0, payload: false,
       reservoir: anchor.chapter === "reservoir", complete: false, task: steps[0].task };
+    prepareFieldAction(points[0]);
     setText("live-status", state.incident.task);
     return true;
+  }
+
+  function prepareFieldAction(point, kind = point.action) {
+    if (!kind) return;
+    const sequence = window.TowerFieldScenes.create({
+      kind, branch: point.choice, graph: stage.roomGraph, anchor: point, player: state.player, bounds: state.map,
+      heightAt: elevationAt,
+      pass: (from, to, radius) => openStep(from, to.x, to.y, radius)
+        && walkable((from.x + to.x) / 2, (from.y + to.y) / 2, radius),
+    });
+    if (!sequence) return;
+    state.fieldAction = sequence;
+    state.storyActors = sequence.actors;
+    if (kind === "passage") return;
+
+    sequence.point = point;
+    state.storyGate = sequence.gate;
+    Object.assign(point, sequence.control);
+    if (kind === "lockdown") {
+      const evidence = state.incident.points[state.incident.step + 1];
+      if (evidence?.kind === "lift") Object.assign(evidence, sequence.far);
+    }
   }
 
   function incidentPointInReach(point, radius = 1.26) {
@@ -786,6 +822,7 @@
       const next = incident.points[incident.step];
       next.active = true;
       incident.task = next.task;
+      prepareFieldAction(next);
     }
     audio.deviceSignal(point.device === "cartridge" ? "terminal" : "valve");
     addEffect("loot", point, 0.6);
@@ -809,6 +846,7 @@
     addEffect("loot", point, 0.75);
     notify(result, 2800);
     setText("live-status", result);
+    if (anchor.chapter === "reservoir") prepareFieldAction(point, "passage");
     if (state.shelter) saveVillage();
     else incident.leaveAt = state.elapsed + 1.1;
   }
@@ -816,8 +854,16 @@
   function useIncidentPoint(point) {
     if (!incidentPointInReach(point)) return;
     const incident = state.incident;
+    const sequence = state.fieldAction;
+    if (sequence?.point === point && sequence.kind === "lockdown") {
+      if (!sequence.intervene) {
+        sequence.intervene = true;
+        audio.deviceSignal("valve");
+      }
+      return;
+    }
     if (point.kind === "hold") {
-      notify("압력판 위에 서 있으면 서서히 안정됩니다.", 1400);
+      notify(point.action === "escort" ? "발판 위에 서서 후송문을 열어 주세요." : "압력판 위에 서 있으면 서서히 안정됩니다.", 1400);
       return;
     }
     if (point.kind === "choose") {
@@ -842,6 +888,27 @@
       return;
     }
     const point = incident.points[incident.step];
+    const sequence = state.fieldAction;
+    if (sequence && !sequence.done) {
+      const held = sequence.kind === "escort" && incidentPointInReach(sequence.point, 0.66);
+      const phase = sequence.phase;
+      window.TowerFieldScenes.update(sequence, delta, { held, player: state.player });
+      if (sequence.kind === "passage") return;
+      if (sequence.kind === "escort") {
+        const patient = sequence.actors[0];
+        incident.progress = Math.min(1, distance(patient, sequence.near) / (distance(sequence.near, sequence.far) - 0.68));
+      }
+      if (sequence.phase !== phase) {
+        const message = sequence.phase === "closed" ? point.closedTask :
+          sequence.phase === "opening" || sequence.phase === "crossing" ? point.activeTask : point.task;
+        if (message) {
+          incident.task = message;
+          setText("live-status", message);
+        }
+      }
+      if (sequence.done) completeIncidentStep(point);
+      return;
+    }
     if (point?.kind !== "hold" || !point.active) return;
     if (incidentPointInReach(point, 0.66)) {
       incident.progress = Math.min(1, incident.progress + delta / point.time);
@@ -1142,7 +1209,7 @@
     }
     let threat = "";
     if (active && state.waveArrival) threat = "증원 접근 중";
-    if (active && state.kind === "combat" && !state.waveArrival && state.hitCount === 0) threat = "무피격 +" + challengeGold + " 금화";
+    if (active && state.kind === "combat" && !state.waveArrival && state.hitCount === 0) threat = "무피격 +" + goldText(challengeGold) + " 금화";
     if (active && state.bossOverdrive) threat = "과열";
     if (active && state.kind === "escape" && state.elapsed < (stage.unlockAfter ?? 10)) {
       threat = "시간 잠금 " + Math.ceil((stage.unlockAfter ?? 10) - state.elapsed) + "초";
@@ -1173,7 +1240,7 @@
       : "");
     if (minimapSection.hidden !== !state.revealed) minimapSection.hidden = !state.revealed;
     setText("health-label", Math.ceil(state.player.hp) + " / " + maxHp);
-    setText("gold-value", String(run?.gold ?? 0));
+    setText("gold-value", goldText(run?.gold));
     const healthFill = elements["health-fill"];
     const health = state.player.hp / maxHp;
     const healthWidth = health * 100 + "%";
@@ -1220,7 +1287,7 @@
       const step = incident.points[incident.step];
       const nearby = incident.points.find((entry) => entry.hint && incidentPointInReach(entry));
       progress = nearby?.hint ?? (step?.kind === "hold" && step.active
-        ? "압력 안정 " + Math.floor(incident.progress * 100) + "%" : "");
+        ? (step.action === "escort" ? "들것 통과 " : "압력 안정 ") + Math.floor(incident.progress * 100) + "%" : "");
     }
     setText("stage-progress", progress);
     updateRunIndicators();
@@ -1282,7 +1349,7 @@
     const descriptions = {
       gold: "금화 +", heal: "체력 회복 +", xp: "경험치 +", ward: "다음 시련 보호막 +", overclock: "다음 시련 공격력 +",
     };
-    return Object.entries(effects).map(([key, value]) => descriptions[key] + value).join(" · ");
+    return Object.entries(effects).map(([key, value]) => descriptions[key] + (key === "gold" ? goldText(value) : value)).join(" · ");
   }
 
   function renderPack() {
@@ -1331,7 +1398,7 @@
     }
     if (state.mode === "gear" && run.selectedReward) showRewardComparison(run.selectedReward);
     if (state.mode === "branch") {
-      setText("overlay-copy", "체력 " + Math.ceil(state.player.hp) + " / " + state.player.maxHp + " · 금화 " + run.gold);
+      setText("overlay-copy", "체력 " + Math.ceil(state.player.hp) + " / " + state.player.maxHp + " · 금화 " + goldText(run.gold));
     }
     if (state.mode === "playing" && state.shelter) saveVillage();
     syncHUD();
@@ -1388,6 +1455,29 @@
     const x = Number(isDown("right")) - Number(isDown("left"));
     const y = Number(isDown("down")) - Number(isDown("up"));
     return direction(x + y, y - x);
+  }
+
+  function stairDirection(player, aim) {
+    if (!aim || !state.elevation) return aim;
+    const screenAim = direction(aim.x - aim.y, aim.x + aim.y);
+    for (const stair of state.elevation.stairs) {
+      const along = stair.axis;
+      const across = along === "x" ? "y" : "x";
+      const length = along === "x" ? stair.w : stair.h;
+      const width = along === "x" ? stair.h : stair.w;
+      if (Math.abs(player[along] - stair[along]) > length / 2 + 0.33 ||
+          Math.abs(player[across] - stair[across]) > width / 2 - playerRadius * 0.6) continue;
+      const projected = direction(along === "x" ? 1 : -1, 0.49 - stair.rise * state.elevation.height / length);
+      const agreement = screenAim.x * projected.x + screenAim.y * projected.y;
+      const forward = Math.abs(agreement) >= 0.60 ? Math.sign(agreement) : aim[along];
+      if (Math.abs(forward) < 0.42) continue;
+      const step = { x: player.x, y: player.y };
+      step[along] += Math.sign(forward) * 0.18;
+      if (!openStep(player, step.x, step.y, playerRadius)) continue;
+      const guided = { [along]: Math.sign(forward), [across]: aim[across] * 0.16 };
+      return direction(guided.x, guided.y);
+    }
+    return aim;
   }
 
   function setFacing(actor, aim) {
@@ -1528,40 +1618,104 @@
       primary: back === enterPlayableScene ? "닫기" : "이전", activate: back });
   }
 
+  function renderQuestCard({ quest, status, actions = [] }) {
+    const card = document.createElement("article");
+    card.className = "quest-card";
+    card.dataset.status = status;
+    card.dataset.quest = quest.id;
+    const heading = document.createElement("div");
+    heading.className = "quest-card-heading";
+    const title = document.createElement("h3");
+    title.textContent = quest.title;
+    const badge = document.createElement("strong");
+    badge.className = "quest-status";
+    badge.textContent = {
+      offered: "수락 대기", limited: "수락 한도 도달", inProgress: "진행 중",
+      completed: "완료", claimed: "보상 수령 완료", rejected: "거절함",
+    }[status];
+    heading.append(title, badge);
+    const description = document.createElement("p");
+    description.textContent = quest.description;
+    const detail = document.createElement("small");
+    const reward = "금화 +" + goldText(quest.reward.gold) + " · 경험치 +" + quest.reward.xp;
+    detail.textContent = quest.progress === undefined ? reward : "진행 " + quest.progress + " / " + quest.goal.count + " · " + reward;
+    card.append(heading, description, detail);
+
+    if (actions.length) {
+      const controls = document.createElement("div");
+      controls.className = "quest-actions";
+      for (const { id, label, choose, primary, disabled } of actions) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "quest-action";
+        button.classList.toggle("quest-action-primary", Boolean(primary));
+        button.dataset.choice = id;
+        button.textContent = label;
+        button.setAttribute("aria-label", quest.title + " " + label);
+        button.disabled = Boolean(disabled);
+        button.addEventListener("click", choose);
+        controls.append(button);
+      }
+      card.append(controls);
+    }
+    return card;
+  }
+
   function questBoard() {
     const visit = visitDetails();
+    const rejected = visit.rejected ??= [];
+    const claimed = visit.claimed ??= [];
     const progress = run.quests.map((quest) => {
       const ready = village.questReady(quest);
-      return { id: "quest-status-" + quest.id, title: quest.title,
-        description: ready ? "완료 · 보상 받기" : quest.progress + " / " + quest.goal.count,
-        disabled: !ready, choose: () => {
+      return { quest, status: ready ? "completed" : "inProgress",
+        actions: ready ? [{ id: "quest-claim-" + quest.id, label: "보상 받기", primary: true, choose: () => {
           if (!run.quests.includes(quest) || !village.questReady(quest)) return;
           run.quests = run.quests.filter((entry) => entry.id !== quest.id);
-          visitDetails(quest.startedAt).claimed.push(quest.id);
+          const origin = visitDetails(quest.startedAt);
+          (origin.claimed ??= []).push(quest.id);
+          if (origin !== visit) claimed.push(quest.id);
           applyVillageEffects(quest.reward);
           saveVillage();
           questBoard();
-        } };
+        } }] : [] };
     });
-    const offers = village.questOffers(state.floor, run.floorSeeds[state.floor - 1]).map((quest) => {
-      const claimed = visit.claimed.includes(quest.id);
-      const accepted = run.quests.some((active) => active.id === quest.id);
-      return { id: "quest-accept-" + quest.id, title: quest.title,
-        description: quest.description,
-        detail: claimed ? "보상 수령 완료" : accepted ? "수행 중" :
-          "금화 +" + quest.reward.gold + " · 경험치 +" + quest.reward.xp,
-        disabled: claimed || accepted || run.quests.length >= village.maxQuests, choose: () => {
-          if (visit.claimed.includes(quest.id)) return;
-          run.quests = village.acceptQuest(run.quests, quest, state.floor);
+    const active = new Set(run.quests.map(({ id }) => id));
+    const limited = run.quests.length >= village.maxQuests;
+    const offers = village.questOffers(state.floor, run.floorSeeds[state.floor - 1]).filter(({ id }) => !active.has(id));
+    for (const id of claimed) {
+      const floor = Number(id.split(":")[0]);
+      if (floor === state.floor || active.has(id)) continue;
+      const quest = village.questOffers(floor, run.floorSeeds[floor - 1]).find((offer) => offer.id === id);
+      if (quest) offers.push(quest);
+    }
+    const listings = offers.map((quest) => {
+      if (claimed.includes(quest.id)) return { quest, status: "claimed" };
+      if (rejected.includes(quest.id)) return { quest, status: "rejected" };
+      return { quest, status: limited ? "limited" : "offered", actions: [
+        { id: "quest-accept-" + quest.id, label: "수락", primary: true, disabled: limited, choose: () => {
+          if (claimed.includes(quest.id) || rejected.includes(quest.id)) return;
+          const next = village.acceptQuest(run.quests, quest, state.floor);
+          if (next === run.quests) return;
+          run.quests = next;
           saveVillage();
           questBoard();
-        } };
+        } },
+        { id: "quest-reject-" + quest.id, label: "거절", choose: () => {
+          if (run.quests.some(({ id }) => id === quest.id) || claimed.includes(quest.id) || rejected.includes(quest.id)) return;
+          rejected.push(quest.id);
+          saveVillage();
+          questBoard();
+        } },
+      ] };
     });
-    villagePanel("의뢰 게시판", "수행 중 " + run.quests.length + " / " + village.maxQuests, [...progress, ...offers]);
+    state.mode = "shelter";
+    panel({ kicker: state.floor + "층 · " + stage.title, title: "의뢰 게시판",
+      copy: "등록한 의뢰 " + run.quests.length + " / " + village.maxQuests,
+      questCards: [...progress, ...listings], primary: "닫기", activate: enterPlayableScene });
   }
 
   function villageShop(page) {
-    const gold = "보유 금화 " + run.gold;
+    const gold = "보유 금화 " + goldText(run.gold);
     if (!page) {
       const options = [
         { id: "shop-buy", title: "잡화 구매", choose: () => villageShop("buy") },
@@ -1581,7 +1735,7 @@
             .map(({ key, label, delta }) => label + " " + statValue(key, delta, true)).join(" · ")
           : describeSupply(item);
         return { id: "buy-" + id, title: item.title, description: sold ? "품절" : detail || "장착 능력치 동일",
-          price: price + " 금화", disabled: sold || run.gold < price, choose: () => {
+          price: goldText(price) + " 금화", disabled: sold || run.gold < price, choose: () => {
             if (visit.purchases.includes(id) || run.gold < price) return;
             spendGold(price);
             recordReward(item.kind, gear ?? item);
@@ -1593,7 +1747,7 @@
       : run.rewards.filter((entry) => entry.item && village.sellPrice(entry.item) > 0).map((entry) => {
         const price = village.sellPrice(entry.item);
         const equipped = entry.kind === "gear" && equipment.includes(entry.item.id);
-        return { id: "sell-" + entry.uid, title: entry.item.title, price: "+" + price + " 금화",
+        return { id: "sell-" + entry.uid, title: entry.item.title, price: "+" + goldText(price) + " 금화",
           description: equipped ? "장착 중 · 판매하면 해제" : undefined, choose: () => {
           if (!run.rewards.includes(entry)) return;
           run.rewards = run.rewards.filter((reward) => reward !== entry);
@@ -1682,28 +1836,20 @@
       chooseReward(0, "");
       return;
     }
+    if (station.kind !== "workbench") return;
     const visit = visitDetails();
     if (visit.service) {
       notify("이번 쉼터에서는 이미 정비를 마쳤습니다.");
       return;
     }
-    if (station.kind === "rest") {
-      if (state.player.hp >= state.player.maxHp) {
-        notify("체력이 가득 찼습니다.");
-        return;
-      }
-      state.player.hp = state.player.maxHp;
-      notify("체력을 모두 회복했습니다.");
-    } else {
-      if (run.gold < 30) {
-        notify("장비 개조에는 금화 30개가 필요합니다.");
-        return;
-      }
-      spendGold(30);
-      recordReward("upgrade", { title: "쉼터 무기 개조" });
-      notify("무기 개조 · 공격력 +6");
-      renderPack();
+    if (run.gold < 30) {
+      notify("장비 개조에는 금화 30개가 필요합니다.");
+      return;
     }
+    spendGold(30);
+    recordReward("upgrade", { title: "쉼터 무기 개조" });
+    notify("무기 개조 · 공격력 +6");
+    renderPack();
     visit.service = station.kind;
     saveVillage();
     addEffect("loot", station, 0.6);
@@ -1724,21 +1870,12 @@
     }
     if (state.shelter) {
       const station = state.stations.find((entry) => distance(state.player, entry) <= 1.32);
-      useShelterStation(station);
+      if (station) useShelterStation(station);
       return;
     }
-    if (state.landing || state.combatComplete) {
-      if (state.incident && !state.incident.complete) notify(state.incident.task, 1500);
-      else if (point?.active) notify(point.scene.prompt + " · " + storyControls, 1300);
-      return;
-    }
-    if (!cellGoal && state.kind !== "escape") return;
+    if (state.landing || state.combatComplete || (!cellGoal && state.kind !== "escape")) return;
     const nearby = state.items.find((item) => !item.collected && distance(state.player, item) <= 1.05 && closeReach(state.player, item));
-    if (!nearby) {
-      const object = stage.final ? "배분 회로나 공급 밸브" : cellGoal ? "전력 셀이나 출구" : "표시된 출구";
-      notify(object + " 옆에서 상호작용하세요.", 1000);
-      return;
-    }
+    if (!nearby) return;
     if (nearby.kind === "cell") {
       nearby.collected = true;
       addEffect("pickup", nearby, 0.45);
@@ -2245,7 +2382,7 @@
     for (const timer of ["attackCooldown", "attackFlash", "swingLife", "dashCooldown", "dashFlash", "invulnerable"]) {
       player[timer] = Math.max(0, player[timer] - delta);
     }
-    const walking = inputDirection();
+    const walking = stairDirection(player, inputDirection());
     player.moving = false;
     if (player.dashRemaining > 0) {
       const step = Math.min(delta, player.dashRemaining) * 12.3;
@@ -2277,7 +2414,7 @@
     if (state.holdZone) {
       const zone = state.holdZone;
       zone.active = distance(zone, player) <= zone.radius && closeReach(zone, player);
-      if (zone.active) zone.progress = Math.min(1, zone.progress + delta / zone.duration);
+      zone.progress = zone.active ? Math.min(1, zone.progress + delta / zone.duration) : 0;
     }
     openExitIfReady();
     updateCombatWave(livingEnemies().length);
@@ -2455,13 +2592,13 @@
         choose: () => showRewardComparison(item),
       };
     });
-    const reward = trial ? " · " + trial + " 금화 +" + challengeGold : "";
+    const reward = trial ? " · " + trial + " 금화 +" + goldText(challengeGold) : "";
     const storyResult = state.floor <= previewFloorLimit && state.incident?.complete ? state.incident.task + "\n" : "";
     panel({
       kicker: state.floor + "층 통과",
       title: "보상 선택",
       copy: storyResult + (xp ? "목표 달성 +" + xp + " XP" + reward + " · " : "") +
-        "보유 금화 " + run.gold + (gains.length ? "\n레벨 상승 · " + gains.join(" · ") : ""),
+        "보유 금화 " + goldText(run.gold) + (gains.length ? "\n레벨 상승 · " + gains.join(" · ") : ""),
       options,
       primary: "보상 받기",
     });
@@ -2494,7 +2631,7 @@
     panel({
       kicker: state.floor + "층 통과 · 갈림길",
       title: "갈림길 선택",
-      copy: "체력 " + Math.ceil(player.hp) + " / " + player.maxHp + " · 금화 " + run.gold,
+      copy: "체력 " + Math.ceil(player.hp) + " / " + player.maxHp + " · 금화 " + goldText(run.gold),
       options: routes.map((route) => ({
         id: route.id,
         title: route.label,
@@ -2551,7 +2688,7 @@
     state.mode = victory ? "victory" : "defeat";
     const seconds = Math.floor(run.seconds);
     const time = Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
-    const progress = run.cleared + "층 통과 · Lv. " + run.progress.level + " · " + time + " · 금화 " + run.gold;
+    const progress = run.cleared + "층 통과 · Lv. " + run.progress.level + " · " + time + " · 금화 " + goldText(run.gold);
     const trials = run.trials.length ? " · 추가 목표 " + run.trials.length + "개 달성" : "";
     if (victory) {
       if (!adminRun) {
@@ -2573,10 +2710,10 @@
     Object.assign(run, pending);
     renderGear();
     const report = [
-      "최근 5층 손실 · 보유품 " + loss.recentItems + "개 / 금화 " + loss.recentGold,
-      "이전 층 손실 · 보유품 " + loss.oldItemsLost + "개 / 금화 " + loss.oldGoldLost,
+      "최근 5층 손실 · 보유품 " + loss.recentItems + "개 / 금화 " + goldText(loss.recentGold),
+      "이전 층 손실 · 보유품 " + loss.oldItemsLost + "개 / 금화 " + goldText(loss.oldGoldLost),
       loss.statsLost ? "획득 성장치 60% 손실 · 기본 배분 유지" : "기본 배분 유지",
-      "남은 보유품 " + run.rewards.filter((entry) => entry.kind !== "gold").length + "개 · 금화 " + run.gold,
+      "남은 보유품 " + run.rewards.filter((entry) => entry.kind !== "gold").length + "개 · 금화 " + goldText(run.gold),
     ];
     panel({ kicker: "등반 종료", title: state.floor + "층에서 쓰러졌습니다", copy: report.join("\n"),
       primary: "남은 것을 들고 1층부터", activate: () => newRun(run, adminRun ? 1 : undefined) });
