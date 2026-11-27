@@ -645,6 +645,7 @@ kbd {
   cursor: pointer;
 }
 .settings-toggle { position: relative; min-height: 55px; cursor: pointer; }
+.settings-toggle.status-equip-toggle { min-height: 44px; margin-bottom: 6px; }
 .settings-toggle small { display: block; color: var(--muted); font-size: .75rem; line-height: 1.35; word-break: keep-all; }
 .settings-switch {
   position: relative;

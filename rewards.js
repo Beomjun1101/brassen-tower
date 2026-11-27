@@ -155,7 +155,7 @@
   }
 
   function withKillRecovery(item, allowance = 0) {
-    const limit = Number.isFinite(allowance) ? Math.max(0, Math.min(10, allowance)) : 0;
+    const limit = Number.isFinite(allowance) ? Math.max(0, Math.min(window.TowerRpg.killRecoveryCap, allowance)) : 0;
     const recovery = item.kind === "gear" ? item.killRecovery ?? item.bonus?.healOnKill
       : item.kind === "stat" && item.stat === "healOnKill" ? item.amount : 0;
     if (!(recovery > 0)) return item;

@@ -5,20 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#0d1414">
     <title>Brassen Tower</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=patch-30">
     <script src="content.js" defer></script>
-    <script src="render.js" defer></script>
-    <script src="rewards.js" defer></script>
-    <script src="rpg.js" defer></script>
+    <script src="render.js?v=patch-30" defer></script>
+    <script src="rewards.js?v=patch-30" defer></script>
+    <script src="rpg.js?v=patch-30" defer></script>
     <script src="audio.js" defer></script>
     <script src="title.js" defer></script>
     <script src="shelter.js" defer></script>
-    <script src="village.js" defer></script>
+    <script src="village.js?v=patch-30" defer></script>
     <script src="map-planner.js" defer></script>
     <script src="floor-graph.js" defer></script>
     <script src="admin.js" defer></script>
     <script src="pursuit.js" defer></script>
-    <script src="game.js" defer></script>
+    <script src="game.js?v=patch-30" defer></script>
   </head>
   <body>
     <div class="game-shell" data-app-mode="title">
@@ -247,6 +247,11 @@
               <h3 id="status-available-gear-title">장착 가능 장비</h3>
               <button id="status-auto-equip" class="dialog-close status-auto-equip" type="button" disabled>최강 장비 자동 장착</button>
             </div>
+            <label class="settings-toggle status-equip-toggle" for="status-auto-equip-setting">
+              <strong class="settings-label">새 장비 자동 장착</strong>
+              <input id="status-auto-equip-setting" class="visually-hidden" type="checkbox" role="switch" checked>
+              <span class="settings-switch" aria-hidden="true"></span>
+            </label>
             <ul id="status-available-gear" class="status-action-list"></ul>
           </section>
           <section aria-labelledby="status-usable-items-title">
@@ -305,7 +310,7 @@
             <label class="settings-toggle" for="auto-equip-setting">
               <span>
                 <strong id="auto-equip-label" class="settings-label">자동 장착</strong>
-                <small id="auto-equip-help">층 보상으로 더 좋은 장비를 받으면 장착합니다.</small>
+                <small id="auto-equip-help">더 좋은 장비를 얻으면 바로 장착합니다.</small>
               </span>
               <input id="auto-equip-setting" class="visually-hidden" type="checkbox" role="switch" aria-labelledby="auto-equip-label" aria-describedby="auto-equip-help" checked>
               <span class="settings-switch" aria-hidden="true"></span>

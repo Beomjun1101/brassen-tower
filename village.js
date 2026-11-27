@@ -3,6 +3,7 @@
 
   const maxQuests = 3;
   const villageStep = 5;
+  const classStep = 50;
   const passageJob = {
     id: "relay-check", title: "진입로 돌파", goal: { type: "clear", trial: "combat" }, count: [1, 1],
     task: () => "일반 전투 층을 한 번 통과하세요.", gold: 31,
@@ -182,11 +183,17 @@
     return classWeapons.get(classId) ?? startingWeapon;
   }
 
-  function classOptions(floor, classId) {
-    if (floor !== 10 && floor !== 20) return [];
-    const chosen = classById(classId);
-    if (!chosen) return classes.filter(({ parent }) => !parent);
-    return floor === 20 && !chosen.parent ? classes.filter(({ parent }) => parent === chosen.id) : [];
+  function classOptions(floor, classId, seed = 0) {
+    if (!isVillage(floor) || floor % classStep !== 0) return [];
+    const candidates = classes.filter(({ id, parent }) => id !== classId && (!parent || parent === classId));
+    const draw = seededDraw(floor, seed, 0xa340c0d1);
+    const selected = [];
+    while (selected.length < 3 && candidates.length) {
+      const job = pick(candidates, draw);
+      candidates.splice(candidates.indexOf(job), 1);
+      selected.push(job);
+    }
+    return selected;
   }
 
   function applyClass(stats, classId) {

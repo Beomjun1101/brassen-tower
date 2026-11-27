@@ -4899,24 +4899,49 @@
     context.fillRect(left, y, width * clamp(actor.hp / Math.max(1, actor.maxHp), 0, 1), height);
   }
 
-  function projectile(context, camera, entry, reduced, elevation) {
+  function paintProjectilePart(context, camera, entry, z, time, volumes, paint) {
+    const x = entry.x - (entry.vx || 0) * time;
+    const y = entry.y - (entry.vy || 0) * time;
+    const height = z - (entry.vz || 0) * time;
+    const masks = actorOcclusionMasks(camera, { x, y, height }, volumes);
+    if (masks.length) {
+      context.save();
+      clipActorOcclusion(context, camera, masks);
+    }
+    paint();
+    if (masks.length) context.restore();
+  }
+
+  function projectileTrail(context, camera, entry, z, duration, color, width, volumes) {
+    if (!(duration > 0)) return;
+    const at = (time) => point(camera, entry.x - (entry.vx || 0) * time,
+      entry.y - (entry.vy || 0) * time, z - (entry.vz || 0) * time);
+    const slices = volumes.length ? 3 : 1;
+    for (let index = 0; index < slices; index++) {
+      const start = index * duration / slices;
+      const end = (index + 1) * duration / slices;
+      paintProjectilePart(context, camera, entry, z, (start + end) / 2, volumes,
+        () => line(context, [at(start), at(end)], color, width));
+    }
+  }
+
+  function projectile(context, camera, entry, reduced, elevation, volumes) {
     if (entry.life <= 0) return;
     const absolute = Number.isFinite(entry.absoluteZ);
     const z = absolute ? entry.absoluteZ : surfaceHeight(elevation, entry.x, entry.y) + 0.56;
     const [x, y] = point(camera, entry.x, entry.y, z);
     const radius = Math.max(2.7, (entry.radius || 0.13) * camera.unit);
     if (!reduced) {
-      const trailX = entry.x - (entry.vx || 0) * 0.08;
-      const trailY = entry.y - (entry.vy || 0) * 0.08;
-      const trailZ = absolute ? z - (entry.vz || 0) * 0.08 : surfaceHeight(elevation, trailX, trailY) + 0.56;
-      const trail = point(camera, trailX, trailY, trailZ);
-      line(context, [[x, y], trail], "#fb724c90", radius * 1.54);
+      const trail = Math.min(.08, entry.flightAge ?? .08);
+      projectileTrail(context, camera, entry, z, trail, "#fb724c90", radius * 1.54, volumes);
     }
-    ellipse(context, x, y, radius * 1.55, radius * 1.55, "#f8543790");
-    ellipse(context, x, y, radius, radius, "#fff1cb", "#ff9557", 1.2);
+    paintProjectilePart(context, camera, entry, z, 0, volumes, () => {
+      ellipse(context, x, y, radius * 1.55, radius * 1.55, "#f8543790");
+      ellipse(context, x, y, radius, radius, "#fff1cb", "#ff9557", 1.2);
+    });
   }
 
-  function heroProjectile(context, camera, entry, reduced, elevation) {
+  function heroProjectile(context, camera, entry, reduced, elevation, volumes) {
     if (entry.life <= 0) return;
     const z = Number.isFinite(entry.absoluteZ) ? entry.absoluteZ : surfaceHeight(elevation, entry.x, entry.y) + .56;
     const tip = point(camera, entry.x, entry.y, z);
@@ -4926,16 +4951,29 @@
     const unit = camera.unit;
     const head = (back, side = 0) => [tip[0] - dx * unit * back - dy * unit * side,
       tip[1] - dy * unit * back + dx * unit * side];
+    const flightAge = entry.flightAge ?? Infinity;
     if (entry.kind === "arrow") {
-      line(context, [head(.52), tip], "#2c302e", Math.max(1.8, unit * .091));
-      line(context, [head(.50), head(.08)], "#caad78", Math.max(1.0, unit * .045));
-      poly(context, [head(.45, -.074), head(.31, -.015), head(.45, .074), head(.51)], "#9cd4bc");
-      poly(context, [tip, head(.135, .049), head(.096), head(.135, -.049)], "#f4ecd4", "#4e5b54", .62);
+      const span = Math.min(.52, flightAge * length / unit);
+      if (span > .10) {
+        paintProjectilePart(context, camera, entry, z, span * unit / (2 * length), volumes, () => {
+          line(context, [head(span), tip], "#2c302e", Math.max(1.8, unit * .091));
+          line(context, [head(span * .965), head(.08)], "#caad78", Math.max(1.0, unit * .045));
+          if (span >= .37) poly(context, [head(span - .07, -.074), head(span - .21, -.015),
+            head(span - .07, .074), head(span - .01)], "#9cd4bc");
+        });
+      }
+      paintProjectilePart(context, camera, entry, z, 0, volumes, () => {
+        const blade = Math.min(.135, span);
+        poly(context, [tip, head(blade, .049), head(blade * .71), head(blade, -.049)], "#f4ecd4", "#4e5b54", .62);
+      });
     } else if (entry.kind === "spell") {
       const radius = Math.max(2.5, unit * .095);
-      if (!reduced) line(context, [head(.41), tip], "#72e0ff76", radius * 1.36);
-      ellipse(context, ...tip, radius * 1.55, radius * 1.43, "#7fe0ff73");
-      ellipse(context, ...tip, radius, radius, "#d6fff2", "#6fc8e4", 1.1);
+      if (!reduced) projectileTrail(context, camera, entry, z, Math.min(.41 * unit / length, flightAge),
+        "#72e0ff76", radius * 1.36, volumes);
+      paintProjectilePart(context, camera, entry, z, 0, volumes, () => {
+        ellipse(context, ...tip, radius * 1.55, radius * 1.43, "#7fe0ff73");
+        ellipse(context, ...tip, radius, radius, "#d6fff2", "#6fc8e4", 1.1);
+      });
     }
   }
 
@@ -5307,8 +5345,8 @@
     const orderedScenery = state.shelter ? sortShelterScenery(state, scenery) : scenery;
     drawArenaObjects(context, camera, orderedScenery, state, palette, theme, seconds, reduced, brushes);
     drawArenaObjects(context, camera, actors, state, palette, theme, seconds, reduced, brushes);
-    for (const entry of state.projectiles ?? []) projectile(context, camera, entry, reduced, elevation);
-    for (const entry of state.playerProjectiles ?? []) heroProjectile(context, camera, entry, reduced, elevation);
+    for (const entry of state.projectiles ?? []) projectile(context, camera, entry, reduced, elevation, volumes);
+    for (const entry of state.playerProjectiles ?? []) heroProjectile(context, camera, entry, reduced, elevation, volumes);
     for (const entry of visibleEnemies) {
       context.save();
       clipActorOcclusion(context, camera, entry.occlusionMasks);

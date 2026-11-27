@@ -35,7 +35,7 @@
   };
   const lowerIsBetter = new Set(["attackCooldown", "dashCooldown"]);
   const baseAttackInterval = 0.10;
-  const killRecoveryCap = 10;
+  const killRecoveryCap = 7.5;
 
   const levelThresholds = [0, 50, 100, 175, 265, 395, 555, 755, 1000, 1300, 1665, 2110];
   const enemyExperience = {
@@ -56,13 +56,10 @@
   }
 
   function retainEarnedStats(progress) {
-    const earned = Object.fromEntries(Object.entries(progress.earned)
-      .filter(([key]) => key !== "healOnKill")
-      .map(([key, value]) => [key, value * 2 / 5]));
     const earnedAttributes = Object.fromEntries(
       Object.entries(progress.earnedAttributes ?? {}).map(([key, value]) => [key, value * 2 / 5]),
     );
-    return { ...progress, earned, earnedAttributes };
+    return { ...progress, earned: {}, earnedAttributes };
   }
 
   function createProgress(allocation = {}) {
