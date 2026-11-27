@@ -73,12 +73,13 @@
     1: { healthPerFloor: 0.04, damagePerFloor: 0.025, cooldownPerFloor: 0.01 },
     2: { healthPerFloor: 0.015, damagePerFloor: 0.01, cooldownPerFloor: 0.005 },
   };
+  const dashDuration = 0.18;
   const dialogModes = new Set(["playing", "rolling", "tutorial", "shelter", "gear", "branch"]);
   const dialogFocus = new WeakMap();
   const difficulties = {
-    easy: { name: "쉬움", health: 1, damage: 1, patterns: [1, 1], speed: 1, interval: 1, windup: 1, shots: 2, mines: 2, bossExtra: 0, campfireRecovery: 1 },
-    normal: { name: "보통", health: 1.75, damage: 2, patterns: [1, 2], speed: 1.04, interval: .93, windup: .98, shots: 2, mines: 3, bossExtra: 1, campfireRecovery: 2 / 3 },
-    hard: { name: "어려움", health: 2.5, damage: 5, patterns: [2, 2], speed: 1.09, interval: .85, windup: .94, shots: 3, mines: 3, bossExtra: 2, campfireRecovery: 1 / 3 },
+    easy: { name: "쉬움", health: 1, damage: 1, patterns: [1, 1], speed: 1, interval: 1, windup: 1, shots: 2, mines: 2, bossExtra: 0, dashCooldownReduction: 0.5, campfireRecovery: 1 },
+    normal: { name: "보통", health: 1.75, damage: 2, patterns: [1, 2], speed: 1.04, interval: .93, windup: .98, shots: 2, mines: 3, bossExtra: 1, dashCooldownReduction: 0.25, campfireRecovery: 2 / 3 },
+    hard: { name: "어려움", health: 2.5, damage: 5, patterns: [2, 2], speed: 1.09, interval: .85, windup: .94, shots: 3, mines: 3, bossExtra: 2, dashCooldownReduction: 0, campfireRecovery: 1 / 3 },
   };
   const enemyTypes = {
     guard: { hp: 84, speed: 2.57, damage: 24, range: 1.95, windup: 0.56, cooldown: 0.65, radius: 0.32 },
@@ -677,6 +678,7 @@
       ["기본 타격", statValue("damage", currentAttackDamage(battleWeapon, route))],
       ["사거리", statValue("attackRange", currentAttackRange(battleWeapon, route))],
       ["공격 간격", statValue("attackCooldown", currentAttackInterval(battleWeapon, route))],
+      ["대쉬 재사용", statValue("dashCooldown", currentDashCooldown(route))],
       ["이동 속도", statValue("speed", run.stats.speed * (route.speedMultiplier ?? 1))],
       ["처치 시 회복", statValue("healOnKill", killRecovery()) + " / " + rpg.killRecoveryCap],
       ["받는 피해 감소", statValue("damageReduction", Math.min(.70, run.stats.damageReduction + (route.damageReductionBonus ?? 0)))],
@@ -1680,10 +1682,16 @@
     return Math.max(weapon.minimum ?? 0, rpg.attackInterval(stats, multiplier, weapon.intervalOffset));
   }
 
+  function currentDashCooldown(route = {}, stats = run.stats) {
+    const cooldown = stats.dashCooldown * (route.dashCooldownMultiplier ?? 1);
+    return Math.max(dashDuration, cooldown - difficultyRules().dashCooldownReduction);
+  }
+
   function comparisonStats(progress) {
     const stats = currentClassStats(progress);
     const weapon = playerWeapons[village.weaponFor(run.classId).id] ?? playerWeapons.sword;
-    return { ...stats, attackRange: weaponAttackRange(weapon, stats), attackCooldown: currentAttackInterval(weapon, {}, stats) };
+    return { ...stats, attackRange: weaponAttackRange(weapon, stats), attackCooldown: currentAttackInterval(weapon, {}, stats),
+      dashCooldown: currentDashCooldown({}, stats) };
   }
 
   function equipmentScore(progress) {
@@ -1924,9 +1932,9 @@
     player.velocityY = 0;
     player.dashX = aim.x;
     player.dashY = aim.y;
-    player.dashRemaining = 0.18;
+    player.dashRemaining = dashDuration;
     player.dashFlash = 0.30;
-    player.dashCooldown = run.stats.dashCooldown * (state.routeEffects?.dashCooldownMultiplier ?? 1);
+    player.dashCooldown = currentDashCooldown(state.routeEffects);
     if (run.stats.dashStrike + (state.routeEffects?.dashStrikeBonus ?? 0) > 0) {
       player.dashStrikeUntil = state.elapsed + 1;
     }
