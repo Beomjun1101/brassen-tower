@@ -348,11 +348,25 @@
   }
 
   function box(context, camera, art, x, y, w, h, z, base, shade, top, edge = null, lift = 0) {
+    if (art.occlusion) {
+      art.occlusion.push({ x, y, w, h, bottom: lift, top: lift + z });
+      return;
+    }
     const low = art.rectangle(camera, x - w / 2, y - h / 2, w, h, lift);
     const high = art.rectangle(camera, x - w / 2, y - h / 2, w, h, lift + z);
     art.poly(context, [high[1], high[2], low[2], low[1]], shade, edge);
     art.poly(context, [high[2], high[3], low[3], low[2]], base, edge);
     art.poly(context, high, top, edge);
+  }
+
+  function opaqueFace(context, art, points, fill, edge, lineWidth) {
+    if (art.occlusion) art.occlusion.push({ faces: [points] });
+    else art.poly(context, points, fill, edge, lineWidth);
+  }
+
+  function upright(context, camera, art, x, y, bottom, top, color, width) {
+    if (art.occlusion) art.occlusion.push({ x, y, w: .065, h: .065, bottom, top });
+    else art.line(context, [art.point(camera, x, y, bottom), art.point(camera, x, y, top)], color, width);
   }
 
   function sidePanel(context, camera, art, x, y, w, bottom, top, color, edge) {
@@ -366,6 +380,7 @@
   }
 
   function lamp(context, camera, art, x, y, z, color, reach = 0.75) {
+    if (art.occlusion) return;
     const [px, py] = art.point(camera, x, y, z);
     const radius = Math.max(2, camera.unit * reach);
     const pulse = art.reduced ? 0.85 : 0.87 + 0.09 * Math.sin((art.seconds ?? 0) * 2.7 + x);
@@ -404,9 +419,9 @@
     const ridge = [p(-w / 2 - lip, 0, peak), p(w / 2 + lip, 0, peak)];
     const behind = [p(-w / 2 - lip, -roofY, 1.01), p(w / 2 + lip, -roofY, 1.01)];
     const edge = [p(-w / 2 - lip, roofY, 1.01), p(w / 2 + lip, roofY, 1.01)];
-    art.poly(context, [behind[0], behind[1], ridge[1], ridge[0]], "#343a34", "#232824");
-    art.poly(context, [ridge[0], ridge[1], edge[1], edge[0]], leaf, "#252d29");
-    art.poly(context, [ridge[1], behind[1], edge[1]], "#493d32", "#252d29");
+    opaqueFace(context, art, [behind[0], behind[1], ridge[1], ridge[0]], "#343a34", "#232824");
+    opaqueFace(context, art, [ridge[0], ridge[1], edge[1], edge[0]], leaf, "#252d29");
+    opaqueFace(context, art, [ridge[1], behind[1], edge[1]], "#493d32", "#252d29");
     art.line(context, ridge, brass + "bb", 1.35);
     art.line(context, edge, brass + "a8", 1.05);
     for (const fraction of [-0.29, -0.1, 0.1, 0.29]) {
@@ -463,7 +478,7 @@
       case "stall":
         for (const side of [-1, 1]) art.line(context, [p(side * 0.61, 0.24), p(side * 0.61, 0.24, 0.78)], "#75644a", 1.9);
         box(context, camera, art, x, y, 1.29, 0.62, 0.37, "#6f5345", "#544238", "#9f8066", "#473a31");
-        art.poly(context, [p(-0.68, -0.48, 0.98), p(0.68, -0.48, 0.98),
+        opaqueFace(context, art, [p(-0.68, -0.48, 0.98), p(0.68, -0.48, 0.98),
           p(0.68, 0.38, 0.78), p(-0.68, 0.38, 0.78)], room.cloth, "#4b4042");
         for (const dx of [-0.44, 0, 0.44]) {
           art.line(context, [p(dx, -0.48, 0.985), p(dx, 0.38, 0.785)], room.trim + "aa", 1.55);
@@ -556,10 +571,18 @@
     art.line(context, [p(x, y + h - 0.06), p(x + w, y + h - 0.06)], "#121c1ba4", 1);
   }
 
+  function shelterDecoration(context, camera, art, room) {
+    for (const entry of room.decor ?? []) {
+      if (entry.design === "house") house(context, camera, art, entry, room);
+      else if (entry.design === "baffle") baffle(context, camera, art, entry, room.trim);
+      else landmarkProp(context, camera, art, entry, room);
+    }
+  }
+
   function dress(context, camera, state, art) {
     const room = state.shelter?.decor ? state.shelter : state;
     if (!room.decor) return;
-    const { width, height, inhabited, trim, cloth, decor } = room;
+    const { width, height, inhabited, trim, cloth } = room;
     const center = height * 0.54;
     const p = (x, y, z = 0.024) => art.point(camera, x, y, z);
     if (room.roomGraph) {
@@ -594,11 +617,7 @@
       art.line(context, [p(x, y), p(x, y, 0.78)], "#62523c", Math.max(1, camera.unit * 0.055));
       lamp(context, camera, art, x, y, 0.76, inhabited ? "#ffd39a" : "#9bd0d0", 0.66);
     }
-    for (const entry of decor) {
-      if (entry.design === "house") house(context, camera, art, entry, room);
-      else if (entry.design === "baffle") baffle(context, camera, art, entry, trim);
-      else landmarkProp(context, camera, art, entry, room);
-    }
+    shelterDecoration(context, camera, art, room);
     if (inhabited) {
       const atY = height - 1.72;
       const x = width * 0.82;
@@ -659,8 +678,8 @@
     if (inhabited) {
       attendant(context, camera, art, x + .20, y - .45, cloth, variant);
       for (const side of [-1, 1]) {
-        art.line(context, [p(side * .67, -.36, .20), p(side * .67, -.36, 1.45)], "#9a8058", 2.5);
-        art.line(context, [p(side * .67, .40, .20), p(side * .67, .40, 1.24)], "#9a8058", 2.5);
+        upright(context, camera, art, x + side * .67, y - .36, .20, 1.45, "#9a8058", 2.5);
+        upright(context, camera, art, x + side * .67, y + .40, .20, 1.24, "#9a8058", 2.5);
       }
     } else {
       box(context, camera, art, x, y - .2, 1.38, .46, .86, "#637b73", "#31453e", "#95a591", "#24382f", .48);
@@ -674,8 +693,8 @@
         const left = -.77 + stripe * .255;
         const right = left + .255;
         const color = stripe % 2 ? "#c0a582" : cloth;
-        art.poly(context, [p(left, -.46, 1.47), p(right, -.46, 1.47), p(right, .49, 1.29), p(left, .49, 1.29)], color);
-        art.poly(context, [p(left, .49, 1.29), p(right, .49, 1.29), p(right - .018, .49, 1.15), p(left + .018, .49, 1.15)], color);
+        opaqueFace(context, art, [p(left, -.46, 1.47), p(right, -.46, 1.47), p(right, .49, 1.29), p(left, .49, 1.29)], color);
+        opaqueFace(context, art, [p(left, .49, 1.29), p(right, .49, 1.29), p(right - .018, .49, 1.15), p(left + .018, .49, 1.15)], color);
       }
     } else {
       lamp(context, camera, art, x + .42, y + .035, .97, "#a3eed6", .48);
@@ -715,7 +734,7 @@
     const flank = (v, z) => p(.824, v, z);
     box(context, camera, art, x, y, 1.85, 1.16, .16, "#706251", "#453d36", "#af9876", outline);
     box(context, camera, art, x, y, 1.64, 1.06, 1.115, "#9b8165", "#665a48", "#a99674", outline, .16);
-    art.poly(context, [face(-.82, 1.265), face(0, ridge), face(.82, 1.265)], "#a28b6e");
+    opaqueFace(context, art, [face(-.82, 1.265), face(0, ridge), face(.82, 1.265)], "#a28b6e");
     for (const level of [.31, .54, .95, 1.24]) {
       art.line(context, [face(-.815, level), face(.815, level), flank(-.52, level)], "#4a4036ad", .85);
     }
@@ -757,8 +776,8 @@
     const rearRidge = roof(0, -.58), frontRidge = roof(0, .58);
     const rearLeft = roof(-.917, -.58), frontLeft = roof(-.917, .58);
     const rearRight = roof(.917, -.58), frontRight = roof(.917, .58);
-    art.poly(context, [rearLeft, rearRidge, frontRidge, frontLeft], "#49605a");
-    art.poly(context, [rearRidge, rearRight, frontRight, frontRidge], "#437c71");
+    opaqueFace(context, art, [rearLeft, rearRidge, frontRidge, frontLeft], "#49605a");
+    opaqueFace(context, art, [rearRidge, rearRight, frontRight, frontRidge], "#437c71");
     for (const offset of [-.76, -.53, -.28, .23, .46, .69, .85]) {
       art.line(context, [roof(offset, -.579), roof(offset, .58)], offset < 0 ? "#263937" : "#a4ba8994", 1.0);
     }
@@ -780,10 +799,10 @@
     const crown = [p(towerX - .36, towerY - .325, 2.515), p(towerX + .36, towerY - .325, 2.515),
       p(towerX + .36, towerY + .325, 2.515), p(towerX - .36, towerY + .325, 2.515)];
     const finial = p(towerX, towerY, 2.87);
-    art.poly(context, [crown[0], crown[1], finial], "#405350");
-    art.poly(context, [crown[0], crown[3], finial], "#586b56");
-    art.poly(context, [crown[3], crown[2], finial], "#a47a44", outline, 1.0);
-    art.poly(context, [crown[2], crown[1], finial], "#52746b", outline, 1.0);
+    opaqueFace(context, art, [crown[0], crown[1], finial], "#405350");
+    opaqueFace(context, art, [crown[0], crown[3], finial], "#586b56");
+    opaqueFace(context, art, [crown[3], crown[2], finial], "#a47a44", outline, 1.0);
+    opaqueFace(context, art, [crown[2], crown[1], finial], "#52746b", outline, 1.0);
     art.line(context, [crown[3], crown[2], crown[1]], brass, 1.1);
     art.line(context, [crown[2], finial, p(towerX, towerY, 2.96)], "#eac87b", 1.45);
   }
@@ -803,8 +822,10 @@
       box(context, camera, art, x + side * .48, y - .18, .13, .18, .76, shade, "#3d4641", trim, "#3a4039", .17);
       lamp(context, camera, art, x + side * .48, y - .18, .95, light, .46);
     }
-    art.poly(context, [p(-.57, -.18, .93), p(0, -.18, 1.36), p(.57, -.18, .93), p(.31, -.18, .89),
-      p(0, -.18, 1.15), p(-.31, -.18, .89)], trim, "#4c5347");
+    const roof = [p(-.57, -.18, .93), p(0, -.18, 1.36), p(.57, -.18, .93), p(.31, -.18, .89),
+      p(0, -.18, 1.15), p(-.31, -.18, .89)];
+    if (art.occlusion) art.occlusion.push({ faces: [[roof[0], roof[1], roof[4], roof[5]], [roof[1], roof[2], roof[3], roof[4]]] });
+    else art.poly(context, roof, trim, "#4c5347");
     art.poly(context, [p(-.16, .25, .34), p(.16, .25, .34), p(.17, .25, .17), p(-.17, .25, .17)], cloth);
     sidePanel(context, camera, art, x, y + .238, .11, .23, .30, light);
   }
@@ -834,7 +855,7 @@
       if (inhabited) attendant(context, camera, art, x + 0.25, y - 0.58,
         entry.style === "forge" ? "#99654b" : frame, entry.variant + 1);
       for (const offset of [-0.41, 0.41]) {
-        art.line(context, [p(offset, 0.25, 0.04), p(offset, 0.25, 0.53)], "#514231", Math.max(2, camera.unit * 0.07));
+        upright(context, camera, art, x + offset, y + 0.25, 0.04, 0.53, "#514231", Math.max(2, camera.unit * 0.07));
       }
       box(context, camera, art, x, y, 1.22, 0.70, 0.11, "#62503d", "#403729", "#a88b5f", "#393122", 0.49);
       box(context, camera, art, x - 0.35, y + 0.02, 0.28, 0.35, 0.21, "#4c5855", "#353c3b", "#8a9890", "#232e2c", 0.60);
@@ -853,5 +874,25 @@
     art.line(context, [p(0.17, 0.04), p(0.03, 0.17)], trim, 1.7);
   }
 
-  window.TowerShelter = { create, dress, station };
+  const shelterOcclusions = new WeakMap();
+
+  function occlusionShapes(room, stations = room?.stations ?? []) {
+    if (!room) return [];
+    const cached = shelterOcclusions.get(room);
+    if (cached?.stations === stations) return cached.shapes;
+    const shapes = [];
+    const camera = { unit: 1 };
+    const skip = () => {};
+    // Reuse the drawing dimensions, recording opaque faces and boxes in world space only.
+    const art = { occlusion: shapes, palette: {}, point: (_camera, x, y, z = 0) => [x, y, z],
+      rectangle: skip, line: skip, ellipse: skip, poly: skip };
+    shelterDecoration(null, camera, art, room);
+    for (const entry of stations) {
+      if (entry.kind !== "campfire") station(null, camera, entry, art);
+    }
+    shelterOcclusions.set(room, { stations, shapes });
+    return shapes;
+  }
+
+  window.TowerShelter = { create, dress, station, occlusionShapes };
 })();

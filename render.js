@@ -1292,6 +1292,20 @@
     return Math.round(clamp((stairs.axis === "x" ? stairs.w : stairs.h) * 3.3, 7, 18));
   }
 
+  function stairRailSegments(stairs, height) {
+    const { left, back } = centeredBounds(stairs);
+    const horizontal = stairs.axis === "x";
+    const at = (t, side, raised = false) => [
+      left + (horizontal ? t : side) * stairs.w,
+      back + (horizontal ? side : t) * stairs.h,
+      height * (stairs.rise < 0 ? 1 - t : t) + (raised ? .23 : 0),
+    ];
+    return [.035, .965].flatMap((side) => [
+      ...[.03, .33, .66, .97].map((t) => ({ start: at(t, side), end: at(t, side, true), width: 1.45, color: "cap" })),
+      { start: at(.02, side, true), end: at(.98, side, true), width: 1.65, color: "accent" },
+    ]);
+  }
+
   function terraceStairs(context, camera, stairs, elevation, palette) {
     const { left, back } = centeredBounds(stairs);
     const horizontal = stairs.axis === "x";
@@ -1316,13 +1330,8 @@
       const accent = index === 0 || index === count - 1 ? palette.fixture : palette.inlay;
       line(context, [at(nose, 0.045, treadHeight), at(nose, 0.955, treadHeight)], accent, 1.2);
     }
-    for (const side of [0.035, 0.965]) {
-      const rail = 0.23;
-      for (const t of [0.03, 0.33, 0.66, 0.97]) {
-        line(context, [at(t, side, riseAt(t)), at(t, side, riseAt(t) + rail)], palette.cap, 1.45);
-      }
-      line(context, [at(0.02, side, riseAt(0.02) + rail), at(0.98, side, riseAt(0.98) + rail)],
-        palette.accent, 1.65);
+    for (const { start, end, width, color } of stairRailSegments(stairs, height)) {
+      line(context, [point(camera, ...start), point(camera, ...end)], palette[color], width);
     }
     for (const u of [.12, .28]) {
       const t = rise === 1 ? u : 1 - u;
@@ -1350,7 +1359,7 @@
       if (from >= 0) visible.push(start);
       if ((from < 0) !== (to < 0)) {
         const t = from / (from - to);
-        visible.push([start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t]);
+        visible.push(start.map((value, axis) => value + (end[axis] - value) * t));
       }
     }
     return visible;
@@ -1385,7 +1394,13 @@
     return contact - actor.height;
   }
 
-  function wallVolumes(objects, elevation, palette) {
+  function occluderBounds(vertices) {
+    const axes = [0, 1, 2].map((axis) => vertices.map((vertex) => vertex[axis]));
+    const [[left, right], [back, front], [bottom, top]] = axes.map((values) => [Math.min(...values), Math.max(...values)]);
+    return { left, right, back, front, bottom, top };
+  }
+
+  function occlusionVolumes(objects, elevation, palette, shelterShapes) {
     const volumes = [];
     const add = (entry, bottom, top, support) => {
       if (top - bottom < 0.008 || !(entry.w > 0 && entry.h > 0)) return;
@@ -1423,6 +1438,11 @@
         }
       }
     }
+    for (const shape of shelterShapes) {
+      if (shape.faces) {
+        for (const face of shape.faces) volumes.push({ ...occluderBounds(face), face });
+      } else add(shape, shape.bottom, shape.top);
+    }
     if (elevation) {
       for (const deck of elevation.decks) add(deck, 0, elevation.height, centeredBounds(deck));
       for (const stair of elevation.stairs) {
@@ -1440,30 +1460,55 @@
             h: horizontal ? stair.h : length,
           }, 0, elevation.height * (stair.rise < 0 ? 1 - t : t), bounds);
         }
+        for (const rail of stairRailSegments(stair, elevation.height)) {
+          volumes.push({ ...occluderBounds([rail.start, rail.end]), rail });
+        }
       }
     }
     return volumes;
   }
 
-  function actorWallMasks(camera, actor, volumes) {
+  function railMask(camera, { start, end, width }, distance) {
+    const from = distance(start);
+    const to = distance(end);
+    if (from <= 0 && to <= 0) return [];
+    const project = (vertex, other, amount) => point(camera, ...vertex.map((value, axis) => value + (other[axis] - value) * amount));
+    const a = project(start, end, from < 0 ? from / (from - to) : 0);
+    const b = project(end, start, to < 0 ? to / (to - from) : 0);
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (!length) return [];
+    const dx = (b[1] - a[1]) * width / (2 * length);
+    const dy = (a[0] - b[0]) * width / (2 * length);
+    return [[a[0] + dx, a[1] + dy], [b[0] + dx, b[1] + dy], [b[0] - dx, b[1] - dy], [a[0] - dx, a[1] - dy]];
+  }
+
+  function actorOcclusionMasks(camera, actor, volumes) {
     const depth = actor.x + actor.y;
     const side = actor.x - actor.y;
     const large = actor.kind === "boss" || actor.role === "patient";
     const width = large ? 2.1 : 1.4;
     const feet = depth * slope - actor.height;
     const masks = [];
-    for (const { left, right, back, front, bottom, top, support } of volumes) {
+    const distance = ([x, y]) => x + y - depth;
+    for (const { left, right, back, front, bottom, top, support, face, rail } of volumes) {
       if (right + front <= depth || left - front > side + width || right - back < side - width) continue;
       if ((left + back) * slope - top > feet + .70 || (right + front) * slope - bottom < feet - (large ? 3.70 : 2.15)) continue;
       if (support && (actor.height >= top - .035 || withinSurface(support, actor.x, actor.y))) continue;
-      const footprint = clipPolygon([[left, back], [right, back], [right, front], [left, front]], ([x, y]) => x + y - depth);
-      const hull = convexHull(footprint.flatMap(([x, y]) => [point(camera, x, y, bottom), point(camera, x, y, top)]));
+      if (rail) {
+        const hull = railMask(camera, rail, distance);
+        if (hull.length) masks.push(hull);
+        continue;
+      }
+      const vertices = face ? clipPolygon(face, distance).map((vertex) => point(camera, ...vertex))
+        : clipPolygon([[left, back], [right, back], [right, front], [left, front]], distance)
+          .flatMap(([x, y]) => [point(camera, x, y, bottom), point(camera, x, y, top)]);
+      const hull = convexHull(vertices);
       if (hull.length >= 3) masks.push(hull);
     }
     return masks;
   }
 
-  function clipActorBehindWalls(context, camera, masks) {
+  function clipActorOcclusion(context, camera, masks) {
     for (const hull of masks) {
       context.beginPath();
       context.rect(0, 0, camera.width, camera.height);
@@ -4257,10 +4302,10 @@
     for (const object of objects) {
       const height = object.height ?? 0;
       const local = raisedCamera(camera, height);
-      const clipped = object.wallMasks?.length;
+      const clipped = object.occlusionMasks?.length;
       if (clipped) {
         context.save();
-        clipActorBehindWalls(context, camera, object.wallMasks);
+        clipActorOcclusion(context, camera, object.occlusionMasks);
       }
       switch (object.type) {
         case "obstacle": {
@@ -4401,13 +4446,14 @@
       if (isActor(object)) actors.push(object);
       else (terraceCover(camera, elevation, object) ? rear : scenery).push(object);
     }
-    const volumes = wallVolumes(objects.filter(isWall), elevation, palette);
+    const shelterShapes = state.shelter ? window.TowerShelter?.occlusionShapes?.(state.shelter, state.stations ?? []) ?? [] : [];
+    const volumes = occlusionVolumes(objects.filter(isWall), elevation, palette, shelterShapes);
     const visibleEnemies = [];
     const visibleStoryActors = [];
     let visiblePlayer;
     for (const object of actors) {
-      object.wallMasks = actorWallMasks(camera, object, volumes);
-      if (!actorVisible(camera, object, object.wallMasks)) continue;
+      object.occlusionMasks = actorOcclusionMasks(camera, object, volumes);
+      if (!actorVisible(camera, object, object.occlusionMasks)) continue;
       if (object.type === "enemy") visibleEnemies.push(object);
       else if (object.type === "story-actor") visibleStoryActors.push(object);
       else visiblePlayer = object;
@@ -4427,13 +4473,13 @@
     for (const entry of state.projectiles ?? []) projectile(context, camera, entry, reduced, elevation);
     for (const entry of visibleEnemies) {
       context.save();
-      clipActorBehindWalls(context, camera, entry.wallMasks);
+      clipActorOcclusion(context, camera, entry.occlusionMasks);
       enemyHealth(context, raisedCamera(camera, entry.height), entry);
       context.restore();
     }
     if (state.mode === "playing" && visiblePlayer?.hp > 0) {
       context.save();
-      clipActorBehindWalls(context, camera, visiblePlayer.wallMasks);
+      clipActorOcclusion(context, camera, visiblePlayer.occlusionMasks);
       playerHealth(context, camera, visiblePlayer, visiblePlayer.pose, elevation, visibleEnemies);
       context.restore();
     }
