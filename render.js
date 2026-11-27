@@ -2656,11 +2656,123 @@
     }
   }
 
-  function enemyTelegraph(context, baseCamera, enemy, elevation) {
+  function cueRayLimit(origin, dx, dy, reach, map, blockers) {
+    let length = Math.min(reach,
+      dx > 0 ? (map.width - origin.x) / dx : dx < 0 ? -origin.x / dx : Infinity,
+      dy > 0 ? (map.height - origin.y) / dy : dy < 0 ? -origin.y / dy : Infinity);
+    for (const { left, right, back, front } of blockers) {
+      if ((dx === 0 && (origin.x < left || origin.x > right)) ||
+          (dy === 0 && (origin.y < back || origin.y > front))) continue;
+      const a = dx === 0 ? -Infinity : (left - origin.x) / dx;
+      const b = dx === 0 ? Infinity : (right - origin.x) / dx;
+      const c = dy === 0 ? -Infinity : (back - origin.y) / dy;
+      const d = dy === 0 ? Infinity : (front - origin.y) / dy;
+      const enter = Math.max(0, Math.min(a, b), Math.min(c, d));
+      const leave = Math.min(Math.max(a, b), Math.max(c, d));
+      if (enter <= leave && enter < length) length = enter;
+    }
+    return Math.max(0, length);
+  }
+
+  function enemyPatternCue(context, camera, enemy, state, elevation) {
+    const cue = enemy.attackCue;
+    const { map, obstacles, gateMarker } = state;
+    const dx = enemy.aimX - enemy.x;
+    const dy = enemy.aimY - enemy.y;
+    const targetDistance = Math.hypot(dx, dy);
+    const angle = targetDistance > .001 ? Math.atan2(dy, dx) : Math.atan2(enemy.facingY ?? 0, enemy.facingX ?? 1);
+    const corridor = cue.style === "dash" || cue.style === "rail";
+    const nominal = cue.reach ?? (targetDistance || enemy.attackRange || 1);
+    const reach = Math.max(0, corridor ? Math.min(nominal, targetDistance) : nominal);
+    if (reach < .03) return;
+    const blockers = (obstacles ?? [])
+      .filter((wall) => !(wall.gateLeaf && gateMarker?.openProgress >= 1) &&
+        Math.abs(wall.x - enemy.x) < reach + wall.w / 2 + 1 && Math.abs(wall.y - enemy.y) < reach + wall.h / 2 + 1)
+      .map(centeredBounds);
+    const floor = (x, y) => point(camera, x, y, surfaceHeight(elevation, x, y) + .025);
+    const along = (origin, direction, distance) => [
+      origin.x + Math.cos(direction) * distance, origin.y + Math.sin(direction) * distance,
+    ];
+    const distanceAlong = (origin, direction, distance = reach) =>
+      cueRayLimit(origin, Math.cos(direction), Math.sin(direction), distance, map, blockers);
+    const dirX = Math.cos(angle), dirY = Math.sin(angle);
+    const at = (distance, offset = 0) =>
+      floor(enemy.x + dirX * distance - dirY * offset, enemy.y + dirY * distance + dirX * offset);
+
+    if (cue.style === "cone") {
+      const half = Math.acos(clamp(cue.cosine ?? .60, -1, 1));
+      const samples = Array.from({ length: 19 }, (_, index) => -half + index * half / 9);
+      for (const { left, right, back, front } of blockers) {
+        for (const x of [left, right]) for (const y of [back, front]) {
+          const delta = Math.atan2(y - enemy.y, x - enemy.x) - angle;
+          const edge = Math.atan2(Math.sin(delta), Math.cos(delta));
+          if (Math.abs(edge) >= half) continue;
+          // Sample both sides of the corner so the shadow behind a partition stays empty.
+          samples.push(Math.max(-half, edge - .001), Math.min(half, edge + .001));
+        }
+      }
+      const rim = samples.sort((a, b) => a - b).map((offset) =>
+        floor(...along(enemy, angle + offset, distanceAlong(enemy, angle + offset))));
+      poly(context, [floor(enemy.x, enemy.y), ...rim], "#f2653948", "#ffad7d", 1.8);
+      line(context, rim, "#ffd19a", 1.9);
+      return;
+    }
+
+    if (corridor) {
+      const rail = cue.style === "rail";
+      const width = Math.max(.10, cue.width ?? .45);
+      const length = distanceAlong(enemy, angle);
+      if (length < .04) return;
+      const edge = (sign) => {
+        const start = { x: enemy.x - dirY * width * sign, y: enemy.y + dirX * width * sign };
+        const reach = distanceAlong(start, angle, length);
+        return [floor(start.x, start.y), floor(...along(start, angle, reach))];
+      };
+      const a = edge(1), b = edge(-1);
+      context.save();
+      context.setLineDash(rail ? [9, 3, 2, 4] : [6, 4]);
+      poly(context, [a[0], a[1], b[1], b[0]], rail ? "#e5743b30" : "#ff784147",
+        rail ? "#ffc485" : "#ffd0a3", 1.8);
+      context.restore();
+      for (const fraction of [.30, .61, .88]) {
+        const center = length * fraction;
+        const notch = Math.min(width * .57, .23);
+        if (rail) line(context, [at(center - notch * .55, -notch), at(center + notch * .55, notch)], "#ffd099", 1.55);
+        else line(context, [at(center - notch, -notch), at(center, 0), at(center - notch, notch)], "#ffe0b2", 1.55);
+      }
+      return;
+    }
+
+    const fan = cue.style === "fan";
+    const spread = clamp(cue.spread ?? .15, .02, Math.PI / 3);
+    const offsets = fan ? [-spread, 0, spread] : [0];
+    for (const offset of offsets) {
+      const direction = angle + offset;
+      const length = distanceAlong(enemy, direction);
+      if (!(length > .06)) continue;
+      const segments = Math.ceil(length / .42);
+      const marks = Array.from({ length: segments + 1 }, (_, index) => floor(...along(enemy, direction, length * index / segments)));
+      const color = offset === 0 ? "#ffe2a5" : "#ffb971";
+      line(context, marks, "#f07d3859", Math.max(3.4, camera.unit * .12));
+      context.save();
+      context.setLineDash(fan ? [6, 4] : [10, 3, 2, 4]);
+      line(context, marks, color, offset === 0 ? 1.8 : 1.35);
+      context.restore();
+      const [x, y] = along(enemy, direction, length);
+      poly(context, [floor(x - .14, y), floor(x, y - .14), floor(x + .14, y), floor(x, y + .14)],
+        "#ec8d4945", color, 1.35);
+    }
+  }
+
+  function enemyTelegraph(context, baseCamera, enemy, elevation, state) {
     if (!(enemy.windup > 0) || enemy.kind === "mortar" || enemy.kind === "saboteur") return;
     const camera = onSurface(baseCamera, elevation, enemy);
     const aimed = Number.isFinite(enemy.aimX) && Number.isFinite(enemy.aimY);
     const marksman = enemy.kind === "marksman";
+    if (aimed && ["cone", "dash", "rail", "fan", "lead"].includes(enemy.attackCue?.style)) {
+      enemyPatternCue(context, baseCamera, enemy, state, elevation);
+      return;
+    }
     if ((enemy.kind === "sentry" || marksman) && aimed) {
       const origin = point(camera, enemy.x, enemy.y, 0.64);
       const targetCamera = raisedCamera(baseCamera, surfaceHeight(elevation, enemy.aimX, enemy.aimY));
@@ -2729,10 +2841,41 @@
   }
 
   function bossTargets(context, baseCamera, targets, seconds, elevation) {
-    for (const { x, y, radius, active, kind, remaining } of targets ?? []) {
+    for (const target of targets ?? []) {
+      const { x, y, radius, active, kind, remaining } = target;
       const camera = raisedCamera(baseCamera, surfaceHeight(elevation, x, y));
       const charge = (Math.sin(seconds * 17) + 1) * 0.5;
       const size = Math.max(0.15, radius || 0.9);
+      if (kind === "boss-lane") {
+        const { xAxis, yAxis, halfLength, halfWidth } = target;
+        const at = (along, across) => point(camera, x + along * xAxis - across * yAxis, y + along * yAxis + across * xAxis, .03);
+        const color = active ? "#ffe0ae" : "#ffad7c";
+        context.save();
+        if (!active) context.setLineDash([Math.max(4, camera.unit * .2), 3]);
+        poly(context, [at(-halfLength, -halfWidth), at(halfLength, -halfWidth),
+          at(halfLength, halfWidth), at(-halfLength, halfWidth)], active ? "#ff65396e" : "#db512f4f", color, active ? 2.8 : 2);
+        context.setLineDash([]);
+        line(context, [at(-halfLength, 0), at(halfLength, 0)], active ? "#fff1c4" : "#e9916a80", active ? 2.6 : 1);
+        context.restore();
+        continue;
+      }
+      if (kind === "boss-ring") {
+        const [px, py] = point(camera, x, y);
+        const scale = camera.unit * Math.SQRT2;
+        const inner = target.innerRadius;
+        context.save();
+        context.beginPath();
+        context.ellipse(px, py, size * scale, size * scale * slope, 0, 0, tau);
+        context.moveTo(px + inner * scale, py);
+        context.ellipse(px, py, inner * scale, inner * scale * slope, 0, 0, tau);
+        context.fillStyle = active ? "#ff653970" : "#d755354d";
+        context.fill("evenodd");
+        const color = active ? "#ffe0ae" : "#ffad7c";
+        dangerRing(context, camera, x, y, size, null, color, 2.3, !active);
+        dangerRing(context, camera, x, y, inner, null, color, 1.8, !active);
+        context.restore();
+        continue;
+      }
       if (kind === "mortar" && active) {
         const phase = clamp(-remaining / .3, 0, 1);
         context.save();
@@ -5193,9 +5336,9 @@
     bossTargets(context, camera, shells, seconds, elevation);
     for (const enemy of enemies) {
       if (enemy.kind === "boss" && enemy.bossMove && state.bossTargets?.length) continue;
-      const crossTier = enemy.kind === "sentry" || enemy.kind === "marksman";
+      const crossTier = !enemy.attackCue && (enemy.kind === "sentry" || enemy.kind === "marksman");
       if (layer === undefined || (crossTier ? layer === 1 : matches(enemy))) {
-        enemyTelegraph(context, camera, enemy, elevation);
+        enemyTelegraph(context, camera, enemy, elevation, state);
       }
     }
   }

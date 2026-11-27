@@ -71,9 +71,9 @@
   const dialogModes = new Set(["playing", "rolling", "tutorial", "shelter", "gear", "branch"]);
   const dialogFocus = new WeakMap();
   const difficulties = {
-    easy: { name: "쉬움", health: 1, damage: 1, speed: 1, interval: 1, windup: 1, shots: 2, mines: 2, bossExtra: 0, campfireRecovery: 1 },
-    normal: { name: "보통", health: 1.20, damage: 1.12, speed: 1.04, interval: .93, windup: .98, shots: 2, mines: 3, bossExtra: 1, campfireRecovery: 2 / 3 },
-    hard: { name: "어려움", health: 1.45, damage: 1.28, speed: 1.09, interval: .85, windup: .94, shots: 3, mines: 3, bossExtra: 2, campfireRecovery: 1 / 3 },
+    easy: { name: "쉬움", health: 1, damage: 1, patterns: [1, 1], speed: 1, interval: 1, windup: 1, shots: 2, mines: 2, bossExtra: 0, campfireRecovery: 1 },
+    normal: { name: "보통", health: 1.75, damage: 2, patterns: [1, 2], speed: 1.04, interval: .93, windup: .98, shots: 2, mines: 3, bossExtra: 1, campfireRecovery: 2 / 3 },
+    hard: { name: "어려움", health: 2.5, damage: 5, patterns: [2, 2], speed: 1.09, interval: .85, windup: .94, shots: 3, mines: 3, bossExtra: 2, campfireRecovery: 1 / 3 },
   };
   const enemyTypes = {
     guard: { hp: 84, speed: 2.57, damage: 24, range: 1.95, windup: 0.56, cooldown: 0.65, radius: 0.32 },
@@ -288,6 +288,13 @@
     };
   }
 
+  function enemyPatterns(floor, index) {
+    const seed = ((run?.floorSeeds?.[floor - 1] ?? floor) ^ Math.imul(index + 1, 0x27d4eb2d)) >>> 0;
+    const [min, max] = difficultyRules().patterns;
+    const count = min === max ? min : min + Math.floor(randomFrom(seed)() * (max - min + 1));
+    return { patternCount: count, patternSeed: seed };
+  }
+
   function createEnemy(enemy, index, floor = state.floor, damageMultiplier = 1) {
     const base = enemyTypes[enemy.kind];
     const difficulty = difficultyRules();
@@ -299,9 +306,9 @@
     const creature = enemy.faction === "creature";
     const hp = Math.round(base.hp * healthScale * (enemy.elite ? 1.24 : 1) * difficulty.health);
     return {
-      ...enemy, id: index, hp, maxHp: hp, windup: 0, attackRange: base.range,
+      ...enemy, ...enemyPatterns(floor, index), id: index, hp, maxHp: hp, windup: 0, attackRange: base.range,
       damage: Math.round(((base.damage + (enemy.elite ? 3 : 0)) * damageScale + (creature ? 3 : 0))
-        * damageMultiplier * difficulty.damage),
+        * damageMultiplier),
       guarded: enemy.kind === "warden", marked: Boolean(enemy.target),
       stellar: floor === content.floorCount && enemy.kind === "boss",
       flash: 0, cooldown: initialCooldown + index % 4 * 0.13,
@@ -349,7 +356,7 @@
       mortarTargets: [],
       ward: 0, overclock: 0,
       wave: 1, waveArrival: 0, effects: [], cameraShake: 0, cameraShakeEnabled: !reducedMotion,
-      elapsed: 0, revealTimer: 0, mode,
+      elapsed: 0, revealTimer: 0, usesBaseDamage: true, mode,
     };
   }
 
@@ -432,12 +439,38 @@
         snapshot.branchOffers.every((id) => content.routes.some((route) => route.id === id))));
   }
 
+  function migrateSceneDifficulty(scene) {
+    for (const [index, enemy] of scene.enemies.entries()) {
+      if (!enemy.patternCount) Object.assign(enemy, enemyPatterns(scene.floor, enemy.id ?? index));
+    }
+    if (scene.usesBaseDamage) return;
+    const legacy = { easy: { damage: 1, health: 1 }, normal: { damage: 1.12, health: 1.2 },
+      hard: { damage: 1.28, health: 1.45 } }[run.difficulty];
+    if (legacy.damage !== 1) {
+      for (const entries of [scene.enemies, scene.projectiles, scene.mortarTargets, scene.player.pendingHits]) {
+        for (const entry of entries ?? []) {
+          if (Number.isFinite(entry.damage)) entry.damage = Math.round(entry.damage / legacy.damage);
+        }
+      }
+    }
+    const ratio = difficultyRules().health / legacy.health;
+    if (ratio !== 1) {
+      for (const enemy of scene.enemies) {
+        const maxHp = Math.max(1, Math.round(enemy.maxHp * ratio));
+        if (enemy.hp > 0) enemy.hp = Math.max(1, Math.round(enemy.hp * maxHp / enemy.maxHp));
+        enemy.maxHp = maxHp;
+      }
+    }
+    scene.usesBaseDamage = true;
+  }
+
   function restoreScene({ stage: savedStage, state: savedState }) {
     clearInput();
     elements["entry-continue"].hidden = true;
     notify(null);
     stage = savedStage;
     state = savedState;
+    migrateSceneDifficulty(state);
     if (!state.shelter && state.gateMarker?.type !== "departure") {
       installCombatExit([state.player, ...livingEnemies()]);
     }
@@ -2182,7 +2215,7 @@
     const player = state.player;
     if ((!contactConfirmed && player.invulnerable > 0) || player.hp <= 0) return false;
     const reduction = Math.min(0.70, run.stats.damageReduction + (state.routeEffects?.damageReductionBonus ?? 0));
-    const damage = Math.max(1, Math.round(amount * (1 - reduction)));
+    const damage = Math.max(1, Math.round(amount * difficultyRules().damage * (1 - reduction)));
     const blocked = Math.min(state.ward, damage);
     state.ward -= blocked;
     player.hp = Math.max(0, player.hp - (damage - blocked));
@@ -2334,9 +2367,8 @@
     }
   }
 
-  function fireBolt(enemy, damage, aim, target) {
+  function fireBolt(enemy, damage, aim, target, velocity = 8.2) {
     if (!aim) return;
-    const velocity = 8.2;
     const altitude = elevationAt(enemy);
     const rise = target ? (elevationAt(target) - altitude) / Math.max(distance(enemy, target), 0.1) : 0;
     const bolt = { x: enemy.x, y: enemy.y, absoluteZ: altitude + .56, vz: rise * velocity,
@@ -2345,12 +2377,12 @@
     if (bolt.life > 0) state.projectiles.push(bolt);
   }
 
-  function fireAimedBolt(enemy, spread = 0) {
+  function fireAimedBolt(enemy, spread = 0, velocity) {
     const target = { x: enemy.aimX, y: enemy.aimY };
     const aim = direction(target.x - enemy.x, target.y - enemy.y);
     if (!aim) return;
     const angle = Math.atan2(aim.y, aim.x) + spread;
-    fireBolt(enemy, enemy.damage, { x: Math.cos(angle), y: Math.sin(angle) }, target);
+    fireBolt(enemy, enemy.damage, { x: Math.cos(angle), y: Math.sin(angle) }, target, velocity);
     addEffect("charge", enemy, 0.23);
   }
 
@@ -2374,7 +2406,60 @@
     }
   }
 
+  const secondEnemyPatterns = {
+    guard: { style: "cone", reach: 2.38, cosine: 0.24, windup: 0.74 },
+    runner: { style: "dash", reach: 2.80, width: 0.51, velocity: 9.2, windup: 0.60 },
+    sentry: { style: "fan", spread: 0.22, windup: 0.86 },
+    lancer: { style: "cone", reach: 3.18, cosine: 0.34, windup: 0.78 },
+    mortar: { style: "cluster", windup: 1.02 },
+    warden: { style: "dash", reach: 3.55, width: 0.61, velocity: 7.3, windup: 0.85 },
+    skirmisher: { style: "cone", reach: 2.52, cosine: 0.04, windup: 0.70 },
+    breaker: { style: "rail", reach: 4.35, width: 0.91, windup: 0.94 },
+    marksman: { style: "lead", velocity: 12.7, windup: 0.91 },
+    saboteur: { style: "mine-line", windup: 0.88 },
+  };
+
+  function walkingAttackTarget(enemy, aim, distance, radius) {
+    let position = { x: enemy.x, y: enemy.y };
+    const steps = Math.ceil(distance / 0.22);
+    for (let index = 1; index <= steps; index++) {
+      const offset = distance * index / steps;
+      const x = enemy.x + aim.x * offset;
+      const y = enemy.y + aim.y * offset;
+      if (!openStep(position, x, y, radius)) break;
+      position = { x, y };
+    }
+    return position;
+  }
+
   function advanceLancer(enemy, delta) {
+    const charge = enemy.releasedCharge;
+    if (charge) {
+      const target = { x: enemy.aimX, y: enemy.aimY };
+      const remaining = distance(enemy, target);
+      const step = Math.min(delta * charge.velocity, remaining);
+      const x = enemy.x + enemy.facingX * step;
+      const y = enemy.y + enemy.facingY * step;
+      if (step > 0 && openStep(enemy, x, y, enemyTypes[enemy.kind].radius)) {
+        enemy.x = x;
+        enemy.y = y;
+        enemy.moving = true;
+        if (!enemy.chargeHit && distance(enemy, state.player) <= charge.width + playerRadius &&
+            closeReach(enemy, state.player) && hasLineOfSight(enemy, state.player)) {
+          enemy.chargeHit = true;
+          receiveEnemyHit(enemy.damage);
+        }
+      } else {
+        enemy.chargeTime = 0;
+      }
+      enemy.chargeTime = Math.max(0, enemy.chargeTime - delta);
+      if (distance(enemy, target) < 0.02 || enemy.chargeTime === 0) {
+        enemy.chargeTime = 0;
+        enemy.releasedCharge = undefined;
+        enemy.recover = Math.max(enemy.recover, 0.38);
+      }
+      return;
+    }
     enemy.chargeTime -= delta;
     const x = enemy.x + enemy.facingX * delta * 10;
     const y = enemy.y + enemy.facingY * delta * 10;
@@ -2398,16 +2483,31 @@
       kind: "mortar", radius: 1.32 + playerRadius * .4, remaining, active: false, damage: enemy.damage,
     });
     state.mortarTargets.push(mark(player.x, player.y, enemy.windup));
+    if (enemy.attackCue?.style === "cluster") {
+      const aim = direction(player.x - enemy.x, player.y - enemy.y) ?? { x: 1, y: 0 };
+      for (const side of [-1, 1]) {
+        const x = player.x + aim.x * 1.15 - aim.y * side * 2.15;
+        const y = player.y + aim.y * 1.15 + aim.x * side * 2.15;
+        if (!walkable(x, y, 0.38) || !withinTier(player, { x, y })) continue;
+        state.mortarTargets.push({ ...mark(x, y, enemy.windup + (side < 0 ? 0.24 : 0.43)), radius: 1.20 });
+      }
+      return;
+    }
     if (state.floor >= 8) {
       const aim = inputDirection() || direction(player.x - enemy.x, player.y - enemy.y) || { x: 1, y: 0 };
       state.mortarTargets.push(mark(player.x + aim.x * 2.6, player.y + aim.y * 2.6, enemy.windup + 0.28));
     }
   }
 
-  function layMines(enemy, player) {
+  function layMines(enemy, player, barrier = false) {
     const aim = inputDirection() || direction(player.x - enemy.x, player.y - enemy.y);
     const placements = [player];
-    if (aim) {
+    if (barrier && aim) {
+      for (const side of [-1, 1]) {
+        placements.push({ x: player.x + aim.x * 0.50 - aim.y * side * 1.75,
+          y: player.y + aim.y * 0.50 + aim.x * side * 1.75 });
+      }
+    } else if (aim) {
       placements.push({ x: player.x + aim.x * 2.25, y: player.y + aim.y * 2.25 });
       if (difficultyRules().mines > 2) placements.push({ x: player.x - aim.y * 1.7, y: player.y + aim.x * 1.7 });
     }
@@ -2415,6 +2515,67 @@
       if (!walkable(x, y, 0.38) || !withinTier({ x, y }, player) || !hasLineOfSight(enemy, { x, y })) continue;
       state.mortarTargets.push({ x, y, kind: "mine", radius: 0.93, remaining: 0.74 + index * 0.19,
         active: false, damage: enemy.damage });
+    }
+  }
+
+  function aimEnemyPattern(enemy, cue, player, aim, gap, radius) {
+    let target = player;
+    if ((cue.style === "dash" || cue.style === "rail") && aim) {
+      const travel = cue.style === "dash" ? Math.min(gap + 0.45, cue.reach) : cue.reach;
+      target = walkingAttackTarget(enemy, aim, travel, radius);
+    } else if (cue.style === "lead") {
+      const motion = inputDirection() ?? direction(player.velocityX ?? 0, player.velocityY ?? 0);
+      if (motion) {
+        const lead = Math.min(2.25, 1.0 + gap * 0.18);
+        const predicted = { x: player.x + motion.x * lead, y: player.y + motion.y * lead };
+        if (walkable(predicted.x, predicted.y, playerRadius) && withinTier(player, predicted) &&
+            hasLineOfSight(enemy, predicted, true)) target = predicted;
+      }
+    }
+    enemy.aimX = target.x;
+    enemy.aimY = target.y;
+  }
+
+  function releaseEnemyPattern(enemy, cue, player) {
+    const target = { x: enemy.aimX, y: enemy.aimY };
+    const aim = direction(target.x - enemy.x, target.y - enemy.y) ?? { x: enemy.facingX, y: enemy.facingY };
+    switch (cue.style) {
+      case "fan":
+        for (const spread of [-cue.spread, 0, cue.spread]) fireAimedBolt(enemy, spread);
+        break;
+      case "lead":
+        fireAimedBolt(enemy, 0, cue.velocity);
+        break;
+      case "dash": {
+        const travel = distance(enemy, target);
+        if (travel <= 0.02) break;
+        setFacing(enemy, aim);
+        enemy.chargeTime = travel / cue.velocity;
+        enemy.chargeHit = false;
+        enemy.releasedCharge = cue;
+        addEffect("charge", enemy, 0.30);
+        break;
+      }
+      case "cone": {
+        const toward = direction(player.x - enemy.x, player.y - enemy.y);
+        addEffect("danger", enemy, 0.24);
+        if ((!toward || aim.x * toward.x + aim.y * toward.y >= cue.cosine) && distance(enemy, player) <= cue.reach &&
+            closeReach(enemy, player) && hasLineOfSight(enemy, player)) receiveEnemyHit(enemy.damage);
+        break;
+      }
+      case "rail": {
+        const reach = distance(enemy, target);
+        for (let index = 0; index < 3; index++) {
+          const offset = 1.15 + index * 1.45;
+          if (offset > reach) break;
+          state.mortarTargets.push({ x: enemy.x + aim.x * offset, y: enemy.y + aim.y * offset, radius: cue.width,
+            kind: "aftershock", remaining: 0.48 + index * 0.18, damage: enemy.damage, active: false });
+        }
+        break;
+      }
+      case "mine-line":
+        layMines(enemy, target, true);
+        break;
     }
   }
 
@@ -2461,7 +2622,7 @@
     const mortar = enemy.kind === "mortar";
     const lancer = enemy.kind === "lancer";
     const boss = enemy.kind === "boss";
-    const signatureBoss = boss && enemy.bossProfile && !enemy.stellar;
+    const signatureBoss = boss && Boolean(enemy.bossProfile?.sequence?.length);
     const creature = enemy.faction === "creature";
     const enraged = boss && enemy.hp <= enemy.maxHp / 2;
     const pressured = state.alarm || (state.hazard === "pressure" && state.elapsed >= 20);
@@ -2469,8 +2630,8 @@
     enemy.recover = Math.max(0, (enemy.recover ?? 0) - delta);
     enemy.moving = false;
     enemy.cooldown = Math.max(0, enemy.cooldown - delta);
-    enemy.attackRange = type.range + (enraged ? 0.22 : 0);
-    enemy.guarded = enemy.kind === "warden" && enemy.windup <= 0 && enemy.recover <= 0;
+    enemy.attackRange = (enemy.windup > 0 ? enemy.attackCue?.reach : undefined) ?? (type.range + (enraged ? 0.22 : 0));
+    enemy.guarded = enemy.kind === "warden" && enemy.windup <= 0 && enemy.recover <= 0 && !(enemy.chargeTime > 0);
 
     if (enemy.volleyAt != null && state.elapsed >= enemy.volleyAt) {
       const side = (enemy.id + enemy.volleyShots) % 2 ? 1 : -1;
@@ -2489,6 +2650,7 @@
       }
       return;
     }
+    if (signatureBoss) enemy.windup = 0;
 
     if (enemy.chargeTime > 0) {
       advanceLancer(enemy, delta);
@@ -2496,13 +2658,19 @@
     }
 
     if (enemy.windup > 0) {
-      if (skirmisher && enemy.windup > type.windup * 0.59) {
+      if (skirmisher && !enemy.attackCue && enemy.windup > type.windup * 0.59) {
         const step = delta * (enemy.id % 2 ? 2.3 : -2.3);
         enemy.moving = move(enemy, -enemy.facingY * step, enemy.facingX * step, type.radius);
       }
       enemy.windup = Math.max(0, enemy.windup - delta);
       if (enemy.windup === 0) {
         enemy.recover = breaker ? 0.62 : boss || mortar || enemy.kind === "warden" ? 0.40 : 0.28;
+        if (enemy.attackCue) {
+          const cue = enemy.attackCue;
+          enemy.attackCue = undefined;
+          releaseEnemyPattern(enemy, cue, player);
+          return;
+        }
         if (ranged) {
           fireAimedBolt(enemy);
           if (marksman) {
@@ -2547,21 +2715,29 @@
       enemy.engaged = true;
     }
     setFacing(enemy, aim);
-    if (!signatureBoss && sight && gap <= enemy.attackRange * 0.94 && enemy.cooldown <= 0
+    const turn = (enemy.patternSeed ?? enemy.id) ^ (enemy.patternTurn ?? 0);
+    const useSecond = enemy.patternCount === 2 && (turn & 1) !== 0;
+    const cue = useSecond ? secondEnemyPatterns[enemy.kind] : undefined;
+    const reach = cue?.reach ?? enemy.attackRange;
+    if (!signatureBoss && sight && gap <= reach * 0.94 && enemy.cooldown <= 0
         && (ranged || mortar || lancer || hasLineOfSight(enemy, player))) {
-      const windup = type.windup * difficulty.windup * (enraged ? 0.86 : 1);
+      const windup = cue?.windup ?? type.windup * difficulty.windup * (enraged ? 0.86 : 1);
       const nearbyWindup = !ranged && !mortar && !lancer && !boss && allies.some((ally) => ally !== enemy
         && Math.abs(ally.windup - windup) < 0.14 && distance(ally, player) < 2.4);
       if (nearbyWindup) return;
       enemy.windup = windup;
+      enemy.attackCue = cue;
+      enemy.attackRange = reach;
+      enemy.patternTurn = (enemy.patternTurn ?? 0) + 1;
       enemy.cooldown = windup + Math.max(0.38, type.cooldown * difficulty.interval * (pressured ? 0.77 : 1)
         * (creature ? 0.88 : 1) * (enraged ? 0.83 : 1));
       enemy.guarded = false;
-      if (ranged || skirmisher || saboteur) {
+      if (cue) {
+        aimEnemyPattern(enemy, cue, player, aim, gap, type.radius);
+      } else if (ranged || skirmisher || saboteur) {
         enemy.aimX = player.x;
         enemy.aimY = player.y;
-      }
-      if (lancer && aim) {
+      } else if (lancer && aim) {
         const travel = Math.min(4.6, gap + 0.42);
         enemy.aimX = enemy.x + aim.x * travel;
         enemy.aimY = enemy.y + aim.y * travel;
@@ -2635,15 +2811,86 @@
     syncMusic();
   }
 
+  const bossAlternates = {
+    warden: ["pressure-gates", "sweep"],
+    hunter: ["pincer", "pursuit"],
+    engine: ["live-cross", "crossfire"],
+    beast: ["collapse", "rupture"],
+    stellar: ["star-lattice", "orbit"],
+  };
+
+  function bossSignatureMoves(boss) {
+    if (boss.signatureMoves?.length) return boss.signatureMoves;
+    const sequence = boss.bossProfile.sequence;
+    const seed = boss.patternSeed ?? 0;
+    const alternate = bossAlternates[boss.bossProfile.style]?.[0];
+    const hard = run.difficulty === "hard";
+    const easy = run.difficulty === "easy";
+    const opening = sequence[0];
+    const candidates = [...new Set([...sequence, alternate].filter(Boolean))];
+    const useOpening = easy || (boss.patternCount === 2 && !hard);
+    const primary = useOpening ? opening : candidates[seed % candidates.length];
+    const options = candidates.filter((move) => move !== primary);
+    boss.signatureMoves = [primary];
+    if (boss.patternCount === 2 && options.length) {
+      const secondary = hard && alternate !== primary ? alternate : options[(seed >>> 8) % options.length];
+      boss.signatureMoves.push(secondary ?? options[0]);
+    }
+    return boss.signatureMoves;
+  }
+
+  function bossLane(center, xAxis, yAxis, length, width) {
+    const clearance = Math.min(width, playerRadius);
+    if (!walkable(center.x, center.y, clearance)) return null;
+    const span = (sign) => {
+      let reach = 0;
+      for (let offset = .24; offset <= length + .01; offset += .24) {
+        if (!openStep(center, center.x + xAxis * offset * sign, center.y + yAxis * offset * sign, clearance)) break;
+        reach = offset;
+      }
+      return reach;
+    };
+    const forward = span(1);
+    const backward = span(-1);
+    const halfLength = (forward + backward) / 2;
+    if (halfLength < .48) return null;
+    const shift = forward - halfLength;
+    return { ...center, kind: "boss-lane", x: center.x + shift * xAxis, y: center.y + shift * yAxis,
+      xAxis, yAxis, halfLength, halfWidth: width };
+  }
+
+  function bossTargetHits(target, player, signature) {
+    if (!withinTier(target, player)) return false;
+    if (target.kind === "boss-lane") {
+      const dx = player.x - target.x;
+      const dy = player.y - target.y;
+      const along = dx * target.xAxis + dy * target.yAxis;
+      const across = dy * target.xAxis - dx * target.yAxis;
+      if (Math.abs(along) > target.halfLength || Math.abs(across) > target.halfWidth) return false;
+      return hasLineOfSight({ x: target.x + along * target.xAxis, y: target.y + along * target.yAxis }, player);
+    }
+    const range = distance(target, player);
+    return range <= target.radius && range >= (target.innerRadius ?? 0) && (!signature || hasLineOfSight(target, player));
+  }
+
   function startBossSignature(boss, player, mark, technique) {
     const { timing = 1, size = 1 } = boss.bossProfile;
     const difficulty = difficultyRules();
     state.bossSignatureIndex++;
     const facing = direction(player.x - boss.x, player.y - boss.y) || { x: 1, y: 0 };
     const side = state.bossSignatureIndex % 2 ? 1 : -1;
+    const timeScale = timing * difficulty.windup * (state.bossOverdrive ? .92 : state.bossPhaseTwo ? .96 : 1);
+    const sizeScale = size * (state.bossOverdrive ? 1.12 : state.bossPhaseTwo ? 1.05 : 1);
+    const hard = run.difficulty === "hard";
     const at = (origin, along, across, radius, delay) => mark(origin.x + along * facing.x - across * facing.y,
-      origin.y + along * facing.y + across * facing.x, radius * size, delay * timing * difficulty.windup);
+      origin.y + along * facing.y + across * facing.x, radius * sizeScale, delay * timeScale);
     const shot = (remaining, count, angle) => ({ ...at(boss, 0, 0, .92, remaining), volley: true, count, angle });
+    const lane = (along, across, angle, length, width, delay) => {
+      const xAxis = facing.x * Math.cos(angle) - facing.y * Math.sin(angle);
+      const yAxis = facing.y * Math.cos(angle) + facing.x * Math.sin(angle);
+      return bossLane(at(player, along, across, width, delay), xAxis, yAxis, length, width * sizeScale);
+    };
+    const ring = (inner, outer, delay) => ({ ...at(player, 0, 0, outer, delay), kind: "boss-ring", innerRadius: inner * sizeScale });
     let targets;
     switch (technique) {
       case "sweep":
@@ -2664,6 +2911,25 @@
         targets = [at(player, -2.18, 0, 1.13, 1.02), at(player, 2.18, 0, 1.13, 1.02),
           at(player, 0, -2.18, 1.13, 1.27), at(player, 0, 2.18, 1.13, 1.27), shot(1.33, 8, state.bossSignatureIndex * .48)];
         break;
+      case "pressure-gates":
+        targets = [lane(0, -1.45 * side, 0, 3.62, .58, .96), lane(0, 1.45 * side, 0, 3.62, .58, 1.22)];
+        if (hard) targets.push(lane(0, 0, 0, 3.18, .62, 1.55));
+        break;
+      case "pincer":
+        targets = [lane(0, -.82 * side, .60 * side, 2.76, .57, 1.03), lane(0, .82 * side, -.60 * side, 3.16, .57, 1.42)];
+        break;
+      case "live-cross":
+        targets = [lane(0, 0, 0, 3.84, .60, .98), lane(0, 0, Math.PI / 2, 3.84, .60, 1.37)];
+        if (hard) targets.push(lane(0, 1.48 * side, 0, 3.22, .55, 1.72));
+        break;
+      case "collapse":
+        targets = [ring(1.62, 3.92, 1.02), ring(.62, 2.46, 1.55)];
+        if (hard) targets.push(at(player, 0, 0, 1.24, 2.02));
+        break;
+      case "star-lattice":
+        targets = [lane(0, 0, 0, 4.62, .60, 1.03), lane(0, 0, Math.PI / 3, 4.34, .60, 1.35),
+          lane(0, 0, -Math.PI / 3, 4.34, .60, 1.67)];
+        break;
       default:
         targets = Array.from({ length: 6 }, (_, index) => {
           const angle = Math.PI * index / 3 + state.bossSignatureIndex * .32;
@@ -2671,21 +2937,23 @@
         });
         break;
     }
-    if (state.bossOverdrive) targets.push(at(player, .8, .8 * side, 1.12, 1.64));
-    for (let followup = 0; followup < difficulty.bossExtra; followup++) {
-      targets.push(at(player, 1.15 + followup * 1.35, side * (followup ? -1.55 : 1.55), 1.17, 1.76 + followup * .25));
+    targets = targets.filter(Boolean);
+    if (!targets.length) {
+      const fallback = lane(0, 0, 0, 3.1, .55, 1.12) ?? lane(0, 0, Math.PI / 2, 3.1, .55, 1.12);
+      targets.push(fallback ?? at(player, 0, 0, 1.04, 1.12));
     }
     state.bossTargets = targets;
-    boss.bossMove = technique;
+    const [alternate, alternatePose] = bossAlternates[boss.bossProfile.style] ?? [];
+    boss.bossMove = technique === alternate ? alternatePose : technique;
     boss.windup = Math.min(...targets.map(({ remaining }) => remaining));
-    boss.aimX = targets[0].x;
-    boss.aimY = targets[0].y;
+    boss.aimX = technique === "pincer" ? player.x : targets[0].x;
+    boss.aimY = technique === "pincer" ? player.y : targets[0].y;
     setFacing(boss, facing);
   }
 
   function updateBossShock(boss, delta) {
     if (!boss || boss.hp <= 0) return;
-    const signature = boss.bossProfile?.sequence?.length && !boss.stellar;
+    const signature = Boolean(boss.bossProfile?.sequence?.length);
     if (!signature && boss.hp > boss.maxHp / 2) return;
     const player = state.player;
     const deep = state.floor >= content.frontierFloor;
@@ -2715,8 +2983,7 @@
         state.shockBursts++;
         state.cameraShake = Math.max(state.cameraShake, 0.19);
         const damage = Math.min(Math.round(player.maxHp * 0.32), Math.round(boss.damage * (deep ? 0.77 : 0.70)));
-        if (distance(target, player) <= target.radius && withinTier(target, player) &&
-            (!signature || hasLineOfSight(target, player))) receiveEnemyHit(damage, true);
+        if (bossTargetHits(target, player, signature)) receiveEnemyHit(damage, true);
         if (target.volley) {
           const count = target.count ?? (deep ? 12 : 8);
           for (let index = 0; index < count; index++) {
@@ -2744,7 +3011,7 @@
       phase: state.bossOverdrive ? 3 : state.bossPhaseTwo ? 2 : 1,
     });
     if (signature) {
-      const { sequence } = boss.bossProfile;
+      const sequence = bossSignatureMoves(boss);
       const technique = sequence[state.bossSignatureIndex % sequence.length];
       const reach = technique === "sweep" || technique === "rupture" ? 4.3 : 8.6;
       if (!state.bossPhaseTwo && distance(boss, player) > reach) return;
