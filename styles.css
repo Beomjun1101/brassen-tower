@@ -829,6 +829,21 @@ kbd {
 .difficulty-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
 .difficulty-option { position: relative; display: grid; min-width: 0; cursor: pointer; }
 .difficulty-option input { position: absolute; top: 50%; left: 50%; width: 1px; height: 1px; margin: 0; opacity: 0; }
+.difficulty-option input[value="easy"] + .difficulty-card {
+  --difficulty-surface: #274034;
+  --difficulty-selected: #365948;
+  --difficulty-accent: #9bd9b2;
+}
+.difficulty-option input[value="normal"] + .difficulty-card {
+  --difficulty-surface: #443821;
+  --difficulty-selected: #5e492a;
+  --difficulty-accent: #e4be79;
+}
+.difficulty-option input[value="hard"] + .difficulty-card {
+  --difficulty-surface: #472e2c;
+  --difficulty-selected: #633a36;
+  --difficulty-accent: #efaaa0;
+}
 .difficulty-card {
   display: flex;
   align-items: center;
@@ -836,19 +851,19 @@ kbd {
   gap: 5px;
   min-height: 44px;
   padding: 4px 3px;
-  border: 1px solid #718879;
-  background: linear-gradient(145deg, #2c3e32, #202e25);
+  border: 1px solid var(--difficulty-accent);
+  background: var(--difficulty-surface);
   color: var(--text);
   font-size: .86rem;
   font-weight: 780;
   line-height: 1.2;
   white-space: nowrap;
 }
-.difficulty-card::before { width: 8px; height: 8px; border: 1px solid currentColor; border-radius: 50%; content: ""; }
-.difficulty-option input:checked + .difficulty-card { border-color: #a1d6bc; background: #314f42; color: #ecfff3; }
-.difficulty-option input:checked + .difficulty-card::before { border-color: var(--patina); background: var(--patina); }
-.difficulty-option input:focus-visible + .difficulty-card { outline: 2px solid var(--patina); outline-offset: -4px; }
-@media (hover: hover) { .difficulty-option:hover .difficulty-card { border-color: var(--patina); } }
+.difficulty-card::before { width: 8px; height: 8px; border: 1px solid var(--difficulty-accent); border-radius: 50%; content: ""; }
+.difficulty-option input:checked + .difficulty-card { background: var(--difficulty-selected); }
+.difficulty-option input:checked + .difficulty-card::before { background: var(--difficulty-accent); }
+.difficulty-option input:focus-visible + .difficulty-card { outline: 2px solid var(--text); outline-offset: -4px; }
+@media (hover: hover) { .difficulty-option:hover .difficulty-card { border-color: var(--text); } }
 
 #build-points { color: var(--brass); font: 800 .98rem/1.1 var(--mono); font-variant-numeric: tabular-nums; }
 .build-stats { display: grid; gap: 3px; margin-top: 6px; }
