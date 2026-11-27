@@ -2842,7 +2842,8 @@
 
   function bossTargets(context, baseCamera, targets, seconds, elevation) {
     for (const target of targets ?? []) {
-      const { x, y, radius, active, kind, remaining } = target;
+      const { x, y, radius, active, kind, remaining, warningLead } = target;
+      if (!active && warningLead !== undefined && remaining > warningLead) continue;
       const camera = raisedCamera(baseCamera, surfaceHeight(elevation, x, y));
       const charge = (Math.sin(seconds * 17) + 1) * 0.5;
       const size = Math.max(0.15, radius || 0.9);

@@ -2923,8 +2923,8 @@
         if (hard) targets.push(lane(0, 1.48 * side, 0, 3.22, .55, 1.72));
         break;
       case "collapse":
-        targets = [ring(1.62, 3.92, 1.02), ring(.62, 2.46, 1.55)];
-        if (hard) targets.push(at(player, 0, 0, 1.24, 2.02));
+        targets = [ring(1.62, 3.92, 1.02), { ...ring(.62, 2.46, 1.55), warningLead: .93 }];
+        if (hard) targets.push({ ...at(player, 0, 0, 1.24, 2.02), warningLead: .82 });
         break;
       case "star-lattice":
         targets = [lane(0, 0, 0, 4.62, .60, 1.03), lane(0, 0, Math.PI / 3, 4.34, .60, 1.35),
