@@ -3470,39 +3470,30 @@
   }
 
   function loseRewards() {
-    const cutoff = run.totalClears - 5;
     const worn = equippedRecords(rpg.equippedBySlot(run.progress));
     const retained = [];
     let progress = run.progress;
     let itemsLost = 0;
-    let recentGold = 0;
-    let oldBalance = 0;
     for (const entry of run.rewards) {
-      if (entry.kind === "gold") {
-        if (entry.earnedAt > cutoff) {
-          recentGold += entry.amount;
-        } else {
-          oldBalance += entry.amount;
-          retained.push(entry);
-        }
-      } else if (run.random() < 0.5) {
+      if (entry.kind === "gold" || run.random() < 0.5) {
         retained.push(entry);
       } else {
         itemsLost++;
         if (worn.has(entry)) progress = rpg.unequip(progress, entry.item.id);
       }
     }
-    const oldGoldLost = oldBalance - Math.floor(oldBalance / 3);
+    const goldLossPercent = run.gold > 0 ? 95 + Math.floor(run.random() * 5) : 0;
+    const goldRemaining = Math.floor(run.gold * (100 - goldLossPercent) / 100);
+    const goldLost = run.gold - goldRemaining;
     run.rewards = retained;
-    run.gold = oldBalance;
-    spendGold(oldGoldLost);
+    spendGold(goldLost);
     const { healOnKill, ...earned } = progress.earned;
     const levelStatsLost = Object.values(progress.earnedAttributes ?? {}).some((value) => value !== 0);
     const rewardStatsLost = Object.values(earned).some((value) => value !== 0);
     const extra = progress.extraGearSlots ?? [];
     progress = { ...progress, extraGearSlots: extra.slice(0, Math.floor(extra.length / 3)) };
     updateProgress(rpg.retainEarnedStats(rpg.removeGear(progress, ownedGearIds())));
-    return { itemsLost, goldLost: recentGold + oldGoldLost, levelStatsLost, rewardStatsLost, recoveryLost: healOnKill > 0 };
+    return { itemsLost, goldLost, goldLossPercent, levelStatsLost, rewardStatsLost, recoveryLost: healOnKill > 0 };
   }
 
   function endRun(victory) {
@@ -3525,7 +3516,8 @@
     renderGear();
     const report = [
       "레벨 1 · 경험치 0에서 다시 시작",
-      "손실 · 보유품 " + loss.itemsLost + "개 / 금화 " + goldText(loss.goldLost),
+      "손실 · 보유품 " + loss.itemsLost + "개 / 금화 " + goldText(loss.goldLost) +
+        (loss.goldLossPercent ? " · 손실률 " + loss.goldLossPercent + "%" : ""),
       loss.levelStatsLost ? "레벨업 스탯 60% 손실 · 기본 배분 유지" : "기본 배분 유지",
       ...(loss.rewardStatsLost ? ["보상으로 얻은 스탯 초기화"] : []),
       ...(loss.recoveryLost ? ["처치 시 회복 초기화"] : []),
