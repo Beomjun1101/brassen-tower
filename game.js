@@ -27,7 +27,8 @@
 
   const playerRadius = 0.29;
   const challengeGold = 12;
-  const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  const motionPreference = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+  const dieRebounds = [0.38, 0.49, 0.61, 0.73];
   const checkpointKey = "brass-spire-campaign-v1";
   const swingDurations = [0.24, 0.27, 0.32];
   const terrainCycles = {
@@ -61,6 +62,7 @@
   let allocation;
   let action;
   let notificationUntil = 0;
+  let reducedMotion = motionPreference?.matches ?? false;
   let previousTime = performance.now();
   let trackName = "";
 
@@ -228,7 +230,8 @@
     }
     if (stage.gateMarker) state.gateMarker = { ...stage.gateMarker, type: "sluice", active: false, openProgress: 0 };
     renderFloorSteps();
-    beginFloor();
+    if (stage.rolls.length) startEntry();
+    else beginFloor();
     syncHUD();
   }
 
@@ -295,7 +298,7 @@
         trackName = audio.cue(boss ? "boss" : state.theme, { theme: state.theme, floor: state.floor, foes: roster.join("/"), phase });
       }
     } else {
-      const menus = { title: "title", menu: "title", shelter: "shelter",
+      const menus = { title: "title", menu: "title", rolling: "entry", shelter: "shelter",
         gear: "reward", branch: "reward", defeat: "defeat", victory: "victory" };
       trackName = audio.cue(menus[state.mode]);
     }
@@ -477,7 +480,46 @@
     canvas.focus({ preventScroll: true });
   }
 
+  function setEntryTiming() {
+    state.reducedMotion = reducedMotion;
+    state.entryElapsed = 0;
+    state.entryTicks = 0;
+    state.entrySettleAt = reducedMotion ? 0 : 1780;
+    state.entryOpenAt = state.entrySettleAt + (reducedMotion ? 450 : 900);
+    state.entryDuration = state.entryOpenAt + (reducedMotion ? 180 : 550);
+    state.entryPhase = reducedMotion ? "settle" : "throw";
+  }
+
+  function startEntry() {
+    state.mode = "rolling";
+    state.entryRolls = stage.rolls;
+    setEntryTiming();
+    shell.dataset.appMode = state.mode;
+    elements["game-stage"].dataset.mode = state.mode;
+    elements.overlay.hidden = true;
+    elements.notification.hidden = true;
+    renderPack();
+    syncMusic();
+    setText("live-status", "주사위 굴리는 중");
+    canvas.tabIndex = 0;
+    canvas.focus({ preventScroll: true });
+  }
+
+  function advanceEntry(gap) {
+    state.entryElapsed += Math.min(65, gap);
+    const count = Math.min(state.entryRolls.length, dieRebounds.length);
+    while (!state.reducedMotion && state.entryTicks < count &&
+        state.entryElapsed >= state.entrySettleAt * dieRebounds[state.entryTicks]) {
+      audio.dieTick(state.entryTicks);
+      state.entryTicks++;
+    }
+    state.entryPhase = state.entryElapsed >= state.entryOpenAt ? "open"
+      : state.entryElapsed >= state.entrySettleAt ? "settle" : "throw";
+    if (state.entryElapsed >= state.entryDuration) beginFloor();
+  }
+
   function beginFloor() {
+    state.reducedMotion = false;
     state.revealTimer = reducedMotion ? 0 : 1.05;
     state.cameraShake = reducedMotion ? 0 : 0.14;
     enterPlayableScene();
@@ -1011,6 +1053,7 @@
           addEffect("pickup", player, 0.28);
         }
       }
+      return;
     }
   }
 
@@ -2062,7 +2105,9 @@
     previousTime = now;
     const paused = document.hidden || window.TowerAdmin?.isOpen();
     state.cameraShake = Math.max(0, state.cameraShake - Math.max(0, delta));
-    if (state.mode === "playing" && delta > 0 && !paused) {
+    if (!paused && state.mode === "rolling") {
+      advanceEntry(gap);
+    } else if (state.mode === "playing" && delta > 0 && !paused) {
       updateGame(delta);
     }
     if (now >= notificationUntil && !elements.notification.hidden) elements.notification.hidden = true;
@@ -2116,6 +2161,11 @@
   });
   window.addEventListener("keyup", (event) => keys.delete(event.code));
   window.addEventListener("blur", clearInput);
+  motionPreference?.addEventListener?.("change", ({ matches }) => {
+    reducedMotion = matches;
+    state.cameraShakeEnabled = !matches;
+    if (matches && state.mode === "rolling" && !state.reducedMotion) setEntryTiming();
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) clearInput();
     audio.setVisible(!document.hidden);

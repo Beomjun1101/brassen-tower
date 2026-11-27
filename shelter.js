@@ -1,6 +1,8 @@
 (() => {
   "use strict";
 
+  const workbenchSize = { w: 1.22, h: 0.70 };
+
   const settlements = [
     { title: "환수 물가 마을", theme: "sluice", fixture: "tank", width: 15, height: 11, cloth: "#487973", trim: "#e3bd86", layout: "well" },
     { title: "하층 교대 성당 마을", theme: "relay", fixture: "cables", width: 16, height: 11, cloth: "#626d85", trim: "#d0be9c", layout: "line" },
@@ -76,6 +78,8 @@
 
   function addVillageServices(room, floor) {
     const { width, height, spawn, storySocket, stations, obstacles, inhabited, layout, cloth, trim } = room;
+    const { x, y } = stations.find(({ kind }) => kind === "workbench");
+    obstacles.push({ x, y, ...workbenchSize, shelterDecor: true });
     const services = [
       { kind: "board", caption: "게시판", u: .25, v: .66, w: 1.02, h: .35 },
       { kind: "shop", caption: "상점", u: .65, v: .39, w: 1.48, h: .88 },
@@ -854,7 +858,8 @@
       for (const offset of [-0.41, 0.41]) {
         upright(context, camera, art, x + offset, y + 0.25, 0.04, 0.53, "#514231", Math.max(2, camera.unit * 0.07));
       }
-      box(context, camera, art, x, y, 1.22, 0.70, 0.11, "#62503d", "#403729", "#a88b5f", "#393122", 0.49);
+      box(context, camera, art, x, y, workbenchSize.w, workbenchSize.h, 0.11,
+        "#62503d", "#403729", "#a88b5f", "#393122", 0.49);
       box(context, camera, art, x - 0.35, y + 0.02, 0.28, 0.35, 0.21, "#4c5855", "#353c3b", "#8a9890", "#232e2c", 0.60);
       art.line(context, [p(-0.06, -0.13, 0.64), p(0.35, 0.14, 0.64)], "#d6c8a7", 2);
       art.line(context, [p(0.20, -0.19, 0.64), p(0.39, -0.01, 0.64)], "#d29365", 1.65);
