@@ -15,7 +15,7 @@
     "floor-value", "objective", "health-label", "health-fill", "gold-value",
     "stage-progress", "stage-title", "threat-label", "notification", "live-status", "overlay",
     "overlay-kicker", "overlay-title", "overlay-copy", "overlay-choices",
-    "primary-action", "touch-controls", "hero-label", "level-value", "xp-label", "xp-fill", "gear-list",
+    "primary-action", "entry-continue", "touch-controls", "hero-label", "level-value", "xp-label", "xp-fill", "gear-list",
     "game-stage", "floor-steps", "hazard-label", "timer-label", "dash-state", "minimap",
     "gear-compare", "compare-equipped", "compare-candidate", "compare-stats", "compare-detail",
     "build-editor", "build-points", "build-stats", "skip-gear",
@@ -205,6 +205,7 @@
 
   function enterFloor(number, health, routeId) {
     clearInput();
+    elements["entry-continue"].hidden = true;
     saveCheckpoint(number, health, routeId);
     if (content.isShelterFloor(number)) {
       openShelter(number, health);
@@ -485,9 +486,9 @@
     state.entryElapsed = 0;
     state.entryTicks = 0;
     state.entrySettleAt = reducedMotion ? 0 : 1780;
-    state.entryOpenAt = state.entrySettleAt + (reducedMotion ? 450 : 900);
+    state.entryOpenAt = state.entrySettleAt;
     state.entryDuration = state.entryOpenAt + (reducedMotion ? 180 : 550);
-    state.entryPhase = reducedMotion ? "settle" : "throw";
+    state.entryPhase = "throw";
   }
 
   function startEntry() {
@@ -503,19 +504,42 @@
     setText("live-status", "주사위 굴리는 중");
     canvas.tabIndex = 0;
     canvas.focus({ preventScroll: true });
+    if (state.reducedMotion) settleEntry();
+  }
+
+  function settleEntry() {
+    state.entryPhase = "settle";
+    state.entryElapsed = state.entrySettleAt;
+    const button = elements["entry-continue"];
+    button.hidden = false;
+    setText("live-status", "주사위가 멈췄습니다. 스페이스바를 누르거나 전투 시작을 선택하세요.");
+    if (!window.TowerAdmin?.isOpen()) button.focus({ preventScroll: true });
+  }
+
+  function openEntry() {
+    if (state.mode !== "rolling" || state.entryPhase !== "settle" || window.TowerAdmin?.isOpen()) return;
+    state.entryPhase = "open";
+    state.entryDuration = state.entryOpenAt + (reducedMotion ? 180 : 550);
+    clearInput();
+    elements["entry-continue"].hidden = true;
+    setText("live-status", "전투 입구가 열립니다.");
+    canvas.focus({ preventScroll: true });
   }
 
   function advanceEntry(gap) {
+    if (state.entryPhase === "settle") return;
     state.entryElapsed += Math.min(65, gap);
+    if (state.entryPhase === "open") {
+      if (state.entryElapsed >= state.entryDuration) beginFloor();
+      return;
+    }
     const count = Math.min(state.entryRolls.length, dieRebounds.length);
     while (!state.reducedMotion && state.entryTicks < count &&
         state.entryElapsed >= state.entrySettleAt * dieRebounds[state.entryTicks]) {
       audio.dieTick(state.entryTicks);
       state.entryTicks++;
     }
-    state.entryPhase = state.entryElapsed >= state.entryOpenAt ? "open"
-      : state.entryElapsed >= state.entrySettleAt ? "settle" : "throw";
-    if (state.entryElapsed >= state.entryDuration) beginFloor();
+    if (state.entryElapsed >= state.entrySettleAt) settleEntry();
   }
 
   function beginFloor() {
@@ -2119,6 +2143,7 @@
   }
 
   elements["primary-action"].addEventListener("click", () => action?.());
+  elements["entry-continue"].addEventListener("click", openEntry);
   elements["audio-toggle"].addEventListener("click", () => {
     audio.setEnabled(!audio.active()).then(refreshAudioUI);
   });
@@ -2142,6 +2167,11 @@
     if (event.defaultPrevented || event.altKey || event.metaKey || event.ctrlKey || !gameKeys.has(event.code)) return;
     if (event.code === "Space") {
       const button = event.target instanceof HTMLButtonElement ? event.target : null;
+      if (state.mode === "rolling" && (!button || button === elements["entry-continue"]) && !window.TowerAdmin?.isOpen()) {
+        event.preventDefault();
+        if (!event.repeat) openEntry();
+        return;
+      }
       if (button) {
         if (!elements.overlay.hidden && elements.overlay.contains(button)) {
           event.preventDefault();
@@ -2164,7 +2194,10 @@
   motionPreference?.addEventListener?.("change", ({ matches }) => {
     reducedMotion = matches;
     state.cameraShakeEnabled = !matches;
-    if (matches && state.mode === "rolling" && !state.reducedMotion) setEntryTiming();
+    if (matches && state.mode === "rolling" && state.entryPhase === "throw") {
+      setEntryTiming();
+      settleEntry();
+    }
   });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) clearInput();
@@ -2173,7 +2206,13 @@
   });
 
   canvas.addEventListener("pointerdown", (event) => {
-    if (state.mode !== "playing" || event.button !== 0) return;
+    if (event.button !== 0) return;
+    if (state.mode === "rolling") {
+      event.preventDefault();
+      openEntry();
+      return;
+    }
+    if (state.mode !== "playing") return;
     event.preventDefault();
     canvas.focus({ preventScroll: true });
     const aim = renderer.screenToWorld(canvas, event.clientX, event.clientY, state);

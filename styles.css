@@ -251,6 +251,24 @@ button:disabled { cursor: default; }
 }
 
 .notification:empty { display: none; }
+
+.entry-continue {
+  position: absolute;
+  z-index: 2;
+  bottom: 6%;
+  left: 50%;
+  transform: translateX(-50%);
+  min-height: 44px;
+  padding: 0 15px;
+  border: 1px solid #d4b184;
+  background: #22231f;
+  color: #f3e5ce;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.entry-continue:is(:hover, :focus-visible) { background: #3d3529; }
+.entry-continue kbd { margin-left: 6px; }
+@media (pointer: coarse) { .entry-continue kbd { display: none; } }
 .combat-hotbar {
   display: flex;
   align-items: center;
