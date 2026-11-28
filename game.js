@@ -78,6 +78,8 @@
       lateHealth: 0.85, lateDamage: 0.32, latePursuit: 0.20 },
   };
   const dashDuration = 0.18;
+  const bossDoorDuration = .70;
+  const bossEntranceSpeed = 2.65;
   const dialogModes = new Set(["playing", "rolling", "tutorial", "shelter", "gear", "branch"]);
   const dialogFocus = new WeakMap();
   const difficulties = {
@@ -243,10 +245,15 @@
     return difficulties[run?.difficulty] ?? difficulties.easy;
   }
 
+  function isOpenGateLeaf(wall) {
+    return (wall.gateLeaf && state.gateMarker?.openProgress >= 1) ||
+      (wall.bossGateLeaf && state.bossGate?.progress >= 1);
+  }
+
   function isOpen(x, y, radius) {
     if (x < radius || y < radius || x > state.map.width - radius || y > state.map.height - radius) return false;
     return state.obstacles.every((wall) => {
-      if (wall.gateLeaf && state.gateMarker?.openProgress >= 1) return true;
+      if (isOpenGateLeaf(wall)) return true;
       const gapX = Math.max(0, Math.abs(x - wall.x) - wall.w / 2);
       const gapY = Math.max(0, Math.abs(y - wall.y) - wall.h / 2);
       return gapX * gapX + gapY * gapY >= radius * radius;
@@ -432,6 +439,7 @@
       state.sparkCycle = -1;
     }
     installCombatExit();
+    installBossGate();
     renderFloorSteps();
     if (stage.rolls.length) startEntry();
     else beginFloor();
@@ -522,6 +530,10 @@
     migrateSceneDifficulty(state);
     if (!state.shelter && state.gateMarker?.type !== "departure") {
       installCombatExit([state.player, ...livingEnemies()]);
+    }
+    if (state.pendingBoss && !state.bossGate) {
+      delete state.bossArrivalAt;
+      installBossGate();
     }
     state.cameraShakeEnabled = !reducedMotion;
     renderFloorSteps();
@@ -1391,6 +1403,7 @@
     elements["status-trigger"].hidden = !hasStatus;
     elements["pause-trigger"].hidden = !hasStatus;
     const objective = state.departure && !state.shelter ? departurePrompt()
+      : state.bossArrivalAt !== undefined ? "보스가 관문을 통과하고 있습니다."
       : state.pendingBoss ? "선발대를 모두 쓰러뜨리세요." : stage?.objective;
     setText("objective", state.revealed ? objective : "");
     if (minimapSection.hidden !== !state.revealed) minimapSection.hidden = !state.revealed;
@@ -1846,7 +1859,8 @@
   }
 
   function waitingForCombatStart(delay) {
-    return !state.shelter && !state.combatComplete && state.elapsed + 0.000001 < delay;
+    return !state.shelter && !state.combatComplete &&
+      (state.bossArrivalAt !== undefined || state.elapsed + 0.000001 < delay);
   }
 
   function attack() {
@@ -2367,7 +2381,7 @@
     if (!bounds || bounds[0] > 0) return 0;
     let impact = bounds[1] < 1 ? bounds[1] : Infinity;
     for (const wall of state.obstacles) {
-      if (wall.gateLeaf && state.gateMarker?.openProgress >= 1) continue;
+      if (isOpenGateLeaf(wall)) continue;
       const left = wall.x - wall.w / 2, right = wall.x + wall.w / 2;
       const back = wall.y - wall.h / 2, front = wall.y + wall.h / 2;
       const expanded = flightBox(ray, left - radius, right + radius, back - radius, front + radius);
@@ -2908,35 +2922,100 @@
     syncMusic();
   }
 
-  function updateBossArrival(remaining) {
+  function installBossGate() {
+    const boss = state.pendingBoss;
+    if (!boss) return;
+    const directions = [{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 0, y: -1 }];
+    const radius = enemyTypes.boss.radius;
+    const endPoints = [boss, ...directions.map((aim) => walkingAttackTarget(boss, aim, 2.8, radius))];
+    const occupants = [state.player, ...livingEnemies()];
+    for (const end of endPoints) {
+      for (const aim of directions) {
+        const back = { x: -aim.x, y: -aim.y };
+        const start = walkingAttackTarget(end, back, 2.65, radius);
+        if (distance(start, end) < 2.64) continue;
+        const x = start.x + 1.15 * aim.x;
+        const y = start.y + 1.15 * aim.y;
+        const sideClear = [-1, 1].every((side) =>
+          walkable(x - aim.y * side * 1.04, y + aim.x * side * 1.04, .21));
+        if (!sideClear || !withinTier(start, end, .08)) continue;
+        const bypass = [-1, 1].some((side) => [-1.05, -.5, 0, .54].every((along) =>
+          walkable(x + aim.x * along - aim.y * side * 1.56, y + aim.y * along + aim.x * side * 1.56, playerRadius)));
+        if (!bypass) continue;
+        const gate = { x, y, axis: aim.x ? "x" : "y", width: 1.85, apertureHeight: 2.80,
+          jambDepth: 1.26, jambOffset: -.37 * (aim.x || aim.y), progress: 0, start, end: { x: end.x, y: end.y }, aim };
+        const leaf = { x, y, w: aim.x ? .27 : gate.width, h: aim.x ? gate.width : .27,
+          height: gate.apertureHeight, bossGateLeaf: true, bossGateDecor: true };
+        const posts = [-1, 1].map((side) => {
+          const across = side * (gate.width / 2 + .14);
+          return { x: x + (aim.x ? gate.jambOffset : across), y: y + (aim.x ? across : gate.jambOffset),
+            w: aim.x ? gate.jambDepth : .28, h: aim.x ? .28 : gate.jambDepth,
+            height: gate.apertureHeight + .20, bossGateDecor: true };
+        });
+        const parts = [leaf, ...posts];
+        if (occupants.some((actor) => parts.some((part) => Math.abs(actor.x - part.x) < part.w / 2 + .45 &&
+            Math.abs(actor.y - part.y) < part.h / 2 + .45))) continue;
+        state.bossGate = gate;
+        state.obstacles = [...state.obstacles, ...parts];
+        return;
+      }
+    }
+  }
+
+  function updateBossArrival(remaining, delta) {
     const boss = state.pendingBoss;
     if (!boss || remaining > 0 || state.player.pendingHits.length) return;
+    const gate = state.bossGate;
     if (state.bossArrivalAt === undefined) {
-      state.bossArrivalAt = state.elapsed + .65;
+      state.bossArrivalAt = state.elapsed + bossDoorDuration;
+      if (gate) gate.openingAt = state.elapsed;
       state.projectiles = [];
+      state.playerProjectiles = [];
+      state.player.pendingStrike = undefined;
       state.mortarTargets = [];
-      notify("선발대 격파 · 보스 접근");
+      notify("선발대 격파 · 관문 개방");
       return;
     }
-    if (state.elapsed < state.bossArrivalAt) return;
+    if (gate) {
+      gate.progress = Math.max(0, Math.min(1, 1 - (state.bossArrivalAt - state.elapsed) / bossDoorDuration));
+      if (gate.progress < 1) return;
+      if (!gate.walking) {
+        Object.assign(boss, gate.start);
+        setFacing(boss, gate.aim);
+        gate.walking = true;
+      }
+      const end = gate.clearanceStep ?? gate.end;
+      const gap = distance(boss, end);
+      const aim = direction(end.x - boss.x, end.y - boss.y);
+      if (aim) {
+        const advance = Math.min(gap, bossEntranceSpeed * delta);
+        setFacing(boss, aim);
+        boss.moving = true;
+        boss.x += aim.x * advance;
+        boss.y += aim.y * advance;
+        if (gap - advance > .001) return;
+      }
+      if (!gate.clearanceStep && distance(boss, state.player) < 1.8) {
+        const away = Math.atan2(boss.y - state.player.y, boss.x - state.player.x);
+        for (let index = 0; index < 8; index++) {
+          const angle = away + index * Math.PI / 4;
+          const aim = { x: Math.cos(angle), y: Math.sin(angle) };
+          const position = walkingAttackTarget(boss, aim, 2.1, enemyTypes.boss.radius);
+          if (distance(position, state.player) < 1.8 ||
+              (position.x - gate.x) * gate.aim.x + (position.y - gate.y) * gate.aim.y < .58) continue;
+          gate.clearanceStep = position;
+          return;
+        }
+      }
+      gate.walking = false;
+      gate.completedAt = state.elapsed;
+    } else if (state.elapsed < state.bossArrivalAt) return;
 
-    if (distance(boss, state.player) < 1.8) {
-      const clearance = enemyTypes.boss.radius;
-      const away = Math.atan2(boss.y - state.player.y, boss.x - state.player.x);
-      const positions = Array.from({ length: 8 }, (_, index) => {
-        const angle = away + index * Math.PI / 4;
-        return walkingAttackTarget(boss, { x: Math.cos(angle), y: Math.sin(angle) }, 2.8, clearance);
-      });
-      const open = positions.find((position) => distance(position, state.player) >= 1.8);
-      if (open) Object.assign(boss, open);
-    }
-
+    boss.moving = false;
     state.enemies.push(boss);
     delete state.pendingBoss;
     delete state.bossArrivalAt;
     state.bossShockCooldown = .9;
-    state.effects.push({ kind: "boss-phase", bossStyle: boss.bossProfile?.style, x: boss.x, y: boss.y, life: .75, maxLife: .75 });
-    state.cameraShake = Math.max(state.cameraShake, .14);
     notify((stage.bossName ?? "수호자") + " 등장");
     syncMusic();
   }
@@ -3374,7 +3453,8 @@
     updateAlarm();
     const remaining = livingEnemies().length;
     updateCombatWave(remaining);
-    updateBossArrival(remaining);
+    updateBossArrival(remaining, delta);
+    if (state.bossArrivalAt !== undefined) return;
     const alive = livingEnemies();
     const boss = state.enemies.find((enemy) => enemy.kind === "boss");
     const combatCleared = state.kind === "combat" && !alive.length && (state.wave > 1 || !stage.wave.length);

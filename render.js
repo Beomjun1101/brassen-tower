@@ -143,7 +143,17 @@
     }
     const x = camera.x;
     const y = camera.y;
-    if (gate) {
+    const bossGate = state.bossGate;
+    const bossFocus = !reduced && state.mode === "playing" && Number.isFinite(bossGate?.openingAt)
+      ? eased(clamp((state.elapsed - bossGate.openingAt) / .46, 0, 1)) *
+        (1 - eased(clamp((state.elapsed - (bossGate.completedAt ?? state.elapsed)) / .48, 0, 1)))
+      : 0;
+    if (bossFocus > 0) {
+      const [gx, gy] = point(camera, bossGate.x + bossGate.aim.x * .60, bossGate.y + bossGate.aim.y * .60,
+        surfaceHeight(state.elevation, bossGate.x, bossGate.y) + 1.38);
+      camera.x += (bounds.width * .50 - gx) * bossFocus;
+      camera.y += (bounds.height * .46 - gy) * bossFocus;
+    } else if (gate) {
       const [gx, gy] = point(camera, gate.x, gate.y, 0.7);
       const push = 0.83 * eased((state.elapsed - gate.openSince + 0.045) / 0.30);
       camera.x += (bounds.width * 0.52 - gx) * push;
@@ -1445,6 +1455,7 @@
       } else if (object.type === "story-gate") {
         const { span, height, progress } = storyGateSize(object);
         const alongX = object.axis !== "y";
+        const { depth: jamb, offset } = rollingGateHousing(object);
         const box = (side, depth, width, thickness, bottom, top) => add({
           x: object.x + (alongX ? depth : side),
           y: object.y + (alongX ? side : depth),
@@ -1452,8 +1463,8 @@
           h: alongX ? width : thickness,
         }, z + bottom, z + top);
         box(0, .145, span, .012, height * progress, height);
-        box(0, 0, span + .60, .61, height - .015, height + .335);
-        for (const side of [-1, 1]) box(side * (span / 2 + .14), 0, .28, .52, 0, height + .20);
+        box(0, offset, span + .60, jamb + .09, height - .015, height + .335);
+        for (const side of [-1, 1]) box(side * (span / 2 + .14), offset, .28, jamb, 0, height + .20);
       } else if (object.kind === "exit") {
         const x = object.x + .64, y = object.y;
         const progress = clamp(object.openProgress ?? Number(Boolean(object.active)), 0, 1);
@@ -2674,9 +2685,14 @@
     return Math.max(0, length);
   }
 
+  function blocksAttackCue(wall, state) {
+    return !(wall.gateLeaf && state.gateMarker?.openProgress >= 1) &&
+      !(wall.bossGateLeaf && state.bossGate?.progress >= 1);
+  }
+
   function enemyPatternCue(context, camera, enemy, state, elevation) {
     const cue = enemy.attackCue;
-    const { map, obstacles, gateMarker } = state;
+    const { map, obstacles } = state;
     const dx = enemy.aimX - enemy.x;
     const dy = enemy.aimY - enemy.y;
     const targetDistance = Math.hypot(dx, dy);
@@ -2686,7 +2702,7 @@
     const reach = Math.max(0, corridor ? Math.min(nominal, targetDistance) : nominal);
     if (reach < .03) return;
     const blockers = (obstacles ?? [])
-      .filter((wall) => !(wall.gateLeaf && gateMarker?.openProgress >= 1) &&
+      .filter((wall) => blocksAttackCue(wall, state) &&
         Math.abs(wall.x - enemy.x) < reach + wall.w / 2 + 1 && Math.abs(wall.y - enemy.y) < reach + wall.h / 2 + 1)
       .map(centeredBounds);
     const floor = (x, y) => point(camera, x, y, surfaceHeight(elevation, x, y) + .025);
@@ -2956,7 +2972,7 @@
       const progress = clamp(-remaining / (target.activeLife ?? .32), 0, 1);
       if (themed && (kind === "boss-shot" || kind === "boss-sweep")) {
         blockers ??= (state.obstacles ?? [])
-          .filter((wall) => !(wall.gateLeaf && state.gateMarker?.openProgress >= 1)).map(centeredBounds);
+          .filter((wall) => blocksAttackCue(wall, state)).map(centeredBounds);
         bossDirectionalCue(context, baseCamera, target, state, elevation, themed, progress, blockers);
         continue;
       }
@@ -3208,7 +3224,11 @@
     };
   }
 
-  function rollingStoryGate(context, camera, entry, palette) {
+  function rollingGateHousing(entry) {
+    return { depth: entry.jambDepth ?? .52, offset: entry.jambOffset ?? 0 };
+  }
+
+  function rollingStoryGate(context, camera, entry, palette, seconds, reduced) {
     const { span, height, progress } = storyGateSize(entry);
     const unit = camera.unit;
     const half = span * 0.5;
@@ -3217,13 +3237,33 @@
       entry.x + (alongX ? depth : side), entry.y + (alongX ? side : depth), z);
     const face = (left, right, bottom, top, depth) => [at(left, bottom, depth), at(right, bottom, depth),
       at(right, top, depth), at(left, top, depth)];
+    const { depth: jamb, offset } = rollingGateHousing(entry);
     const box = (left, length, depth, tall, lift, colors) => prism(context, raisedCamera(camera, lift),
-      entry.x + (alongX ? -depth / 2 : left), entry.y + (alongX ? left : -depth / 2),
+      entry.x + (alongX ? offset - depth / 2 : left), entry.y + (alongX ? left : offset - depth / 2),
       alongX ? depth : length, alongX ? length : depth, tall, ...colors, palette.seam);
     const housing = [palette.capSide, palette.wallX, palette.wallY];
     const light = progress > 0.93 ? "#b9e3b8" : progress > 0.04 ? "#f6c178" : "#ee886e";
     const feet = [at(-half - .32, .016, -.40), at(half + .32, .016, -.40),
       at(half + .32, .016, .43), at(-half - .32, .016, .43)];
+    if (entry.bossEntrance) {
+      const back = -(entry.aim.x || entry.aim.y);
+      const alley = [at(-half, .015, .06 * back), at(half, .015, .06 * back),
+        at(half * .82, .015, 1.8 * back), at(-half * .82, .015, 1.8 * back)];
+      const shade = context.createLinearGradient(...at(0, .015, .06 * back), ...at(0, .015, 1.8 * back));
+      shade.addColorStop(0, "#975e385e");
+      shade.addColorStop(1, "#121921b0");
+      poly(context, alley, shade, "#93674669", 1);
+      if (!reduced && progress > .03 && progress < 1) {
+        for (const side of [-1, 1]) {
+          for (let plume = 0; plume < 5; plume++) {
+            const rise = (progress + plume * .18) % 1;
+            const drift = Math.sin(seconds * 4 + plume) * .045;
+            ellipse(context, ...at(side * (half + .14 + rise * .28) + drift, .17 + rise * .61, -.06),
+              unit * (.08 + rise * .16), unit * (.06 + rise * .10), rise < .45 ? "#d5d5bc43" : "#c5d9c523");
+          }
+        }
+      }
+    }
     poly(context, feet, "#1b252dc4", palette.inlay + "a0", 1.0);
     for (const mark of [-.28, .0, .28]) {
       line(context, [at(-half, .029, mark), at(half, .029, mark)], palette.materialLight + "7a", .84);
@@ -3250,13 +3290,13 @@
       context.restore();
     }
     for (const side of [-1, 1]) {
-      box(side < 0 ? -half - .28 : half, .28, .52, height + .20, 0, housing);
+      box(side < 0 ? -half - .28 : half, .28, jamb, height + .20, 0, housing);
       const center = side * (half + .14);
       line(context, [at(center, .18, .267), at(center, height + .12, .267)], "#ac856280", 1.3);
       ellipse(context, ...at(center, height * .73, .28), unit * .073, unit * .096, "#262b35", "#b08862", 1.15);
       ellipse(context, ...at(center, height * .73, .291), Math.max(1.5, unit * .036), Math.max(1.6, unit * .050), light);
     }
-    box(-half - .30, span + .60, .61, .35, height - .015,
+    box(-half - .30, span + .60, jamb + .09, .35, height - .015,
       [palette.cap, palette.capSide, palette.wallY]);
     line(context, [at(-half - .23, height + .24, .31), at(half + .23, height + .24, .31)], "#d7b183", 1.35);
     for (const side of [-1, 1]) {
@@ -5461,7 +5501,7 @@
         case "story-gate": {
           const { span, height } = storyGateSize(object);
           if (!isInView(local, object, span + .6, height + 1.6, span * slope + .9)) break;
-          rollingStoryGate(context, local, object, palette);
+          rollingStoryGate(context, local, object, palette, seconds, reduced);
           break;
         }
         case "story-actor":
@@ -5637,7 +5677,8 @@
     const brushes = state.shelter ? shelterBrushes(palette, seconds, reduced) : null;
     const activeCharge = state.bossTargets?.find((target) => target.active && target.charge && target.travelLeft > 0);
     const objects = [
-      ...(state.obstacles ?? []).filter((entry) => !entry.shelterDecor && !entry.gateDecor && !(state.storyGate && entry.storyGate))
+      ...(state.obstacles ?? []).filter((entry) => !entry.shelterDecor && !entry.gateDecor &&
+        !entry.bossGateDecor && !(state.storyGate && entry.storyGate))
         .map((entry) => ({ ...entry, type: "obstacle" })),
       ...(state.items ?? []).map((entry) => ({ ...entry, type: "item" })),
       ...(state.shelter?.decor ?? []).map((entry) => ({ ...entry, type: "shelter-decoration" })),
@@ -5649,6 +5690,11 @@
       }),
     ];
     if (state.gateMarker) objects.push({ ...state.gateMarker, type: "item", kind: "exit" });
+    if (state.bossGate) objects.push({ ...state.bossGate, type: "story-gate", bossEntrance: true });
+    if (state.bossGate?.walking && state.pendingBoss) {
+      const boss = state.pendingBoss;
+      objects.push({ ...boss, type: "enemy", entering: true, pose: actorPose(motion, boss, boss.id) });
+    }
     if (state.storyGate) {
       const { height: apertureHeight, ...gate } = state.storyGate;
       objects.push({ ...gate, apertureHeight, type: "story-gate" });
@@ -5716,7 +5762,7 @@
     for (const entry of visibleEnemies) {
       context.save();
       clipActorOcclusion(context, camera, entry.occlusionMasks);
-      enemyHealth(context, raisedCamera(camera, entry.height), entry);
+      if (!entry.entering) enemyHealth(context, raisedCamera(camera, entry.height), entry);
       context.restore();
     }
     if (state.mode === "playing" && visiblePlayer?.hp > 0) {
