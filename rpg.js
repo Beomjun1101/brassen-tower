@@ -2,10 +2,11 @@
   "use strict";
 
   const startingPoints = 5;
+  const wisdomXpPercent = 5;
   const attributes = [
     { id: "strength", title: "힘", effect: "공격력 +4" },
     { id: "vitality", title: "체력", effect: "최대 체력 +9" },
-    { id: "wisdom", title: "지혜", effect: "획득 경험치 +10%" },
+    { id: "wisdom", title: "지혜", effect: "획득 경험치 +" + wisdomXpPercent + "%" },
     { id: "luck", title: "행운", effect: "층 통과 금화 +2" },
     { id: "agility", title: "민첩", effect: "이동 +0.18칸/초 · 대쉬 재사용 −0.045초" },
   ];
@@ -196,7 +197,7 @@
     const luck = points("luck");
     const agility = points("agility");
     const stats = { maxHp: 106 + vitality * 9, damage: 27 + strength * 4, speed: 3.75 + agility * 0.18,
-      attackCooldown: baseAttackInterval, dashCooldown: 0.80 - agility * 0.045, xpBonus: wisdom * 0.10, goldOnClear: luck * 2,
+      attackCooldown: baseAttackInterval, dashCooldown: 0.80 - agility * 0.045, xpBonus: wisdom * wisdomXpPercent / 100, goldOnClear: luck * 2,
       attackRange: 1.8, damageReduction: 0, healOnKill: 0, dashStrike: 0,
       guardBreak: 0, finishingDamage: 0, dashGrace: 0 };
     for (const [key, value] of Object.entries(progress.earned)) stats[key] += value;
