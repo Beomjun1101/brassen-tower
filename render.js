@@ -2008,6 +2008,22 @@
     if (!state.revealed) return;
     const accepts = (entry) => layer === undefined
       || (surfaceHeight(elevation, entry.x, entry.y) > 0.04 ? 1 : 0) === layer;
+    const bossGate = state.bossGate;
+    if (bossGate && accepts(bossGate)) {
+      const local = onSurface(camera, elevation, bossGate);
+      const { x, y, aim } = bossGate;
+      const width = bossGate.width / 2;
+      const depth = (bossGate.passageDepth ?? 1.98) - .18;
+      const at = (along, across) => point(local, x + aim.x * along - aim.y * across,
+        y + aim.y * along + aim.x * across, .022);
+      const shade = context.createLinearGradient(...at(.10, 0), ...at(-depth, 0));
+      shade.addColorStop(0, "#81563b70");
+      shade.addColorStop(1, "#0c141ccf");
+      poly(context, [at(.10, -width), at(.10, width), at(-depth, width), at(-depth, -width)], shade);
+      for (const edge of [-width * .74, width * .74]) {
+        line(context, [at(.02, edge), at(-depth, edge)], "#a0794f94", 1.10);
+      }
+    }
     const marker = state.gateMarker;
     const exit = state.items?.find((entry) => entry.kind === "exit" && !entry.collected);
     if (marker && Number.isFinite(marker.x) && Number.isFinite(marker.y) && accepts(marker)) {
@@ -2520,6 +2536,7 @@
   }
 
   function obstacleHeight(entry, palette) {
+    if (entry.bossPassageWall) return entry.panelHeight;
     if (entry.structural) return 1.48;
     const dressed = entry.w > 0.90 && entry.h > 0.74;
     return palette.obstacleHeight * (dressed ? 0.69 : 1);
@@ -2570,7 +2587,7 @@
   }
 
   function obstacle(context, camera, entry, palette, seconds, theme, reduced) {
-    if (palette.landscape && palette.landscape !== "rupture") {
+    if (!entry.bossPassageWall && palette.landscape && palette.landscape !== "rupture") {
       rockObstacle(context, camera, entry, palette);
       return;
     }
@@ -3246,13 +3263,6 @@
     const feet = [at(-half - .32, .016, -.40), at(half + .32, .016, -.40),
       at(half + .32, .016, .43), at(-half - .32, .016, .43)];
     if (entry.bossEntrance) {
-      const back = -(entry.aim.x || entry.aim.y);
-      const alley = [at(-half, .015, .06 * back), at(half, .015, .06 * back),
-        at(half * .82, .015, 1.8 * back), at(-half * .82, .015, 1.8 * back)];
-      const shade = context.createLinearGradient(...at(0, .015, .06 * back), ...at(0, .015, 1.8 * back));
-      shade.addColorStop(0, "#975e385e");
-      shade.addColorStop(1, "#121921b0");
-      poly(context, alley, shade, "#93674669", 1);
       if (!reduced && progress > .03 && progress < 1) {
         for (const side of [-1, 1]) {
           for (let plume = 0; plume < 5; plume++) {

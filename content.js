@@ -1622,5 +1622,5 @@
   }
 
   window.TowerContent = { floorCount, shelterInterval, frontierFloor, isShelterFloor, isBossFloor, getRegion, createFloor,
-    heightAt, canTraverse, isDry, exitPlatforms, exitGateWalls, combatExit, routes, routeOptions };
+    heightAt, canTraverse, isDry, layoutAccess, exitPlatforms, exitGateWalls, combatExit, routes, routeOptions };
 })();
