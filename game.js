@@ -816,6 +816,7 @@
     run = undefined;
     stage = null;
     state = viewFloor(1, entrance, previewStats.maxHp, "title");
+    elements["entry-continue"].hidden = true;
     elements.overlay.dataset.titleMenu = String(menu);
     notify(null);
     renderGear();
