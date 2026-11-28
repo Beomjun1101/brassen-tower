@@ -69,13 +69,15 @@
   };
   const entrance = { width: 34, height: 26, spawn: { x: 4, y: 13 }, enemies: [], obstacles: [], items: [] };
   const previewFloorLimit = 30;
-  const currentEnemyScalingVersion = 4;
+  const currentEnemyScalingVersion = 5;
   const enemyScalingByVersion = {
     1: { healthPerFloor: 0.04, damagePerFloor: 0.025, cooldownPerFloor: 0.01 },
     2: { healthPerFloor: 0.015, damagePerFloor: 0.01, cooldownPerFloor: 0.005 },
     3: { healthPerFloor: 0.015, damagePerFloor: 0.01, cooldownPerFloor: 0.005, lateHealth: 0.30, lateDamage: 0.15 },
     4: { healthPerFloor: 0.015, damagePerFloor: 0.01, cooldownPerFloor: 0.005,
       lateHealth: 0.85, lateDamage: 0.32, latePursuit: 0.20 },
+    5: { healthPerFloor: 0.015, damagePerFloor: 0.01, cooldownPerFloor: 0.005,
+      lateHealth: 0.85, lateDamage: 0.32, latePursuit: 0.20, regularHealth: 1.20, regularPursuit: 1.07 },
   };
   const dashDuration = 0.18;
   const bossDoorDuration = .70;
@@ -100,6 +102,7 @@
     saboteur: { hp: 72, speed: 2.06, damage: 24, range: 5.85, windup: 0.72, cooldown: 1.71, radius: 0.35 },
     boss: { hp: 405, speed: 2.24, damage: 34, range: 2.78, windup: 0.83, cooldown: 0.92, radius: 0.58 },
   };
+  const secondBossPhase = { health: 1.08, damage: 1.15, speed: 1.18, interval: .80, range: 1.08 };
   const bossPacing = {
     warden: { speed: .82, pause: 1.35 }, hunter: { speed: 1.25, pause: .94 },
     engine: { speed: .94, pause: 1.16 }, beast: { speed: 1.10, pause: 1.05 },
@@ -334,7 +337,8 @@
     const initialCooldown = scaling ? 0.83 - previewDepth * scaling.cooldownPerFloor
       : depth === 0 ? 0.83 : 0.66 - (previewDepth - 1) * 0.005;
     const creature = enemy.faction === "creature";
-    const hp = Math.round(base.hp * healthScale * (enemy.elite ? 1.24 : 1) * difficulty.health);
+    const regularHealth = enemy.kind === "boss" ? 1 : (scaling?.regularHealth ?? 1);
+    const hp = Math.round(base.hp * healthScale * regularHealth * (enemy.elite ? 1.24 : 1) * difficulty.health);
     return {
       ...enemy, ...enemyPatterns(floor, index), id: index, hp, maxHp: hp, windup: 0, attackRange: base.range,
       damage: Math.round(((base.damage + (enemy.elite ? 3 : 0)) * damageScale + (creature ? 3 : 0))
@@ -1891,7 +1895,8 @@
     const player = state.player;
     let healthLimit = 0;
     if (enemy.kind === "boss") {
-      if (!state.bossFirstRelease) healthLimit = Math.floor(enemy.maxHp / 2);
+      if (!state.bossPhaseTwo) healthLimit = Math.floor(enemy.maxHp / 2);
+      else if (!state.bossFirstRelease) return false;
       else if (!enemy.bossProfile?.sequence?.length && !state.overdriveReleased) healthLimit = Math.floor(enemy.maxHp * 0.27);
     }
     if (enemy.hp <= healthLimit) return false;
@@ -1907,7 +1912,10 @@
     const armor = enemy.guarded && frontal ? 0.26 + 0.74 * guardBreak : 1;
     enemy.hp = Math.max(healthLimit, enemy.hp - Math.max(1, Math.round((damage + dashDamage + finishing + counter) * armor)));
     enemy.flash = 0.16;
-    if (weapon.stagger && enemy.kind !== "boss" && !enemy.guarded) {
+    if (weapon.stagger && enemy.kind !== "boss" && !enemy.guarded && state.elapsed >= (enemy.staggerReadyAt ?? 0)) {
+      if (state.enemyScalingVersion >= 5) {
+        enemy.staggerReadyAt = state.elapsed + weapon.stagger + enemyTypes[enemy.kind].windup + .25;
+      }
       enemy.windup = 0;
       enemy.chargeTime = 0;
       enemy.recover = Math.max(enemy.recover ?? 0, weapon.stagger);
@@ -2745,7 +2753,7 @@
     const boss = enemy.kind === "boss";
     const signatureBoss = boss && Boolean(enemy.bossProfile?.sequence?.length);
     const creature = enemy.faction === "creature";
-    const enraged = boss && enemy.hp <= enemy.maxHp / 2;
+    const enraged = boss && state.bossPhaseTwo;
     const pressured = state.alarm || (state.hazard === "pressure" && state.elapsed >= 20);
     enemy.flash = Math.max(0, enemy.flash - delta);
     enemy.recover = Math.max(0, (enemy.recover ?? 0) - delta);
@@ -2753,6 +2761,7 @@
     enemy.cooldown = Math.max(0, enemy.cooldown - delta);
     enemy.attackRange = (enemy.windup > 0 ? enemy.attackCue?.reach : undefined) ?? (type.range + (enraged ? 0.22 : 0));
     enemy.guarded = enemy.kind === "warden" && enemy.windup <= 0 && enemy.recover <= 0 && !(enemy.chargeTime > 0);
+    if (enraged && !state.bossFirstRelease) return;
 
     if (enemy.volleyAt != null && state.elapsed >= enemy.volleyAt) {
       const side = (enemy.id + enemy.volleyShots) % 2 ? 1 : -1;
@@ -2872,10 +2881,12 @@
     const retreat = (ranged || mortar || saboteur) && sight && gap < (ranged ? 3.2 : 2.75);
     if (aim && enemy.engaged && (pursue || retreat)) {
       const bossSpeed = signatureBoss ? (bossPacing[enemy.bossProfile.style]?.speed ?? 1) : 1;
-      const latePursuit = enemyScalingByVersion[state.enemyScalingVersion]?.latePursuit ?? 0;
-      const pursuitSpeed = ranged || mortar || saboteur ? 1 : 1 + lateFloorProgress(state.floor) * latePursuit;
+      const scaling = enemyScalingByVersion[state.enemyScalingVersion];
+      const regularPursuit = boss ? 1 : (scaling?.regularPursuit ?? 1);
+      const pursuitSpeed = ranged || mortar || saboteur ? 1
+        : regularPursuit * (1 + lateFloorProgress(state.floor) * (scaling?.latePursuit ?? 0));
       const speed = (type.speed + (creature ? (runner ? 0.33 : 0.24) : 0)) * bossSpeed * difficulty.speed * pursuitSpeed;
-      const step = speed * (enraged ? 1.23 : 1) * (pressured ? 1.22 : 1) *
+      const step = speed * (enraged ? secondBossPhase.speed : 1) * (pressured ? 1.22 : 1) *
         (enemy.recover > 0 ? 0.56 : 1) * delta;
       let x = retreat ? -aim.x : aim.x;
       let y = retreat ? -aim.y : aim.y;
@@ -2903,7 +2914,9 @@
   function updateCombatWave(remaining) {
     if (state.wave > 1 || !stage.wave.length) return;
     const deep = state.floor >= content.frontierFloor;
-    const trigger = state.floor === 1 ? 1 : deep ? 3 : 2;
+    const baseTrigger = state.floor === 1 ? 1 : deep ? 3 : 2;
+    const earlier = state.enemyScalingVersion >= 5 ? Number(state.floor >= 6) + Number(state.floor >= 21) : 0;
+    const trigger = earlier ? Math.min(baseTrigger + earlier, state.enemies.length - 1) : baseTrigger;
     if (!state.waveArrival) {
       if (state.kind !== "combat" || remaining > trigger) return;
       const warning = deep ? 1.0 : 1.18;
@@ -3153,7 +3166,8 @@
     const side = (state.bossSignatureIndex++ + layout) % 2 ? 1 : -1;
     const aimAngle = Math.atan2(player.y - boss.y, player.x - boss.x);
     const baseTiming = timing * difficultyRules().windup;
-    const sizeScale = size * (.89 + .022 * environment + .022 * layout + .009 * encounter);
+    const phaseRange = phaseTwo ? secondBossPhase.range : 1;
+    const sizeScale = size * (.89 + .022 * environment + .022 * layout + .009 * encounter) * phaseRange;
     const duration = (seconds) => seconds * baseTiming;
     const factor = 1 + (layout - 1) * .07;
     const center = (origin, radius, delay, effect) => ({
@@ -3161,8 +3175,9 @@
     });
     const shot = (angle, count, spread, delay, effect, radial = false) => ({
       ...center(boss, .85, delay, effect), kind: "boss-shot", aimAngle: angle, count, spread,
-      radial, shotReach: (effect === "shell" ? 10 : 8) + environment * .29,
-      velocity: (effect === "shell" ? 8.8 : 7.1) + environment * .20, targetX: player.x, targetY: player.y,
+      radial, shotReach: ((effect === "shell" ? 10 : 8) + environment * .29) * phaseRange,
+      velocity: ((effect === "shell" ? 8.8 : 7.1) + environment * .20) * phaseRange,
+      targetX: player.x, targetY: player.y,
     });
     const sweep = (angle, width, reach, delay) => ({
       ...center(boss, reach, delay, "slash"), kind: "boss-sweep", aimAngle: angle, halfAngle: width,
@@ -3191,7 +3206,7 @@
         targets = [sweep(aimAngle, .78 + layout * .075, 3.12, .84)];
         break;
       case "shield-rush":
-        targets = [charge("slam", 4.6, "sweep")];
+        targets = [charge("slam", 4.6, "sweep"), lane(aimAngle + angleOffset, side * .95, 3.25, .55, 1.58, "vent")];
         break;
       case "pressure-gates":
         targets = [lane(aimAngle, side * .83, 3.75, .57, .87, "vent"),
@@ -3203,10 +3218,14 @@
         targets = [charge("trail", technique === "pincer" ? 6.5 : 5.6,
           phaseTwo ? (layout % 2 === 0 ? "charge" : "sweep") : technique === "pincer" ? "sweep" : null,
           technique === "pincer" ? side * .11 : 0)];
+        if (phaseTwo) targets.push(lane(aimAngle + angleOffset * .65, side * 1.28, 3.6, .50, 1.58, "trail"));
         break;
       case "barrage":
         targets = [shot(aimAngle, 3, spread, .88, "shell")];
-        if (phaseTwo) targets.push(shot(aimAngle + angleOffset * .55, 3, spread, 1.43, "shell"));
+        if (phaseTwo) {
+          targets.push(shot(aimAngle + angleOffset * .55, 3, spread, 1.43, "shell"));
+          targets.push(lane(aimAngle - angleOffset, -side * .9, 3.1, .52, 1.82, "vent"));
+        }
         break;
       case "crossfire":
         targets = [shot(aimAngle, 3 + (encounter % 2) * 2, spread, .83, "shell")];
@@ -3225,7 +3244,10 @@
       }
       case "rupture":
         targets = [ring(boss, 0, 2.35, .85, "quake"), ring(boss, 2.35, 3.95, 1.17, "quake")];
-        if (phaseTwo) targets.push(ring(boss, 3.95, 5.50, 1.49, "quake"));
+        if (phaseTwo) {
+          targets.push(ring(boss, 3.95, 5.50, 1.49, "quake"));
+          targets.push(ring(player, 0, 1.22, 1.88, "quake"));
+        }
         break;
       case "collapse":
         targets = [ring(player, 1.72, 4.05, .94, "quake"), ring(player, 0, 1.72, 1.46, "quake")];
@@ -3236,10 +3258,15 @@
         targets.push(phaseTwo
           ? shot(aimAngle - angleOffset, 7, 0, 1.52, "star", true)
           : center(player, 1.12, 1.35, "star"));
+        if (phaseTwo) targets.push(lane(aimAngle + angleOffset, side * 1.30, 3.8, .52, 1.93, "star"));
         break;
     }
     targets = targets.filter(Boolean);
     if (!targets.length) targets.push(shot(aimAngle, 3, spread, .96, bossStyle === "stellar" ? "star" : "shell"));
+    if (phaseTwo && targets.length === 1 && !targets[0].follow) {
+      const effect = { warden: "vent", hunter: "trail", engine: "shell", beast: "quake", stellar: "star" }[bossStyle];
+      targets.push(shot(aimAngle + angleOffset, 3, spread, 1.54, effect));
+    }
     for (const target of targets) target.warningLead = duration(1.04);
     state.bossTargets = targets;
     boss.bossMove = { "shield-rush": "sweep", "pressure-gates": "sweep", pincer: "pursuit",
@@ -3287,7 +3314,7 @@
   function updateBossShock(boss, delta) {
     if (!boss || boss.hp <= 0) return;
     const signature = Boolean(boss.bossProfile?.sequence?.length);
-    if (!signature && boss.hp > boss.maxHp / 2) return;
+    if (!signature && !state.bossPhaseTwo && boss.hp > boss.maxHp / 2) return;
     const player = state.player;
     const deep = state.floor >= content.frontierFloor;
     if (signature && state.bossOverdrive) {
@@ -3295,18 +3322,21 @@
       boss.shielded = false;
     }
     if (!state.bossPhaseTwo && boss.hp <= boss.maxHp / 2) {
+      const previousHp = boss.hp;
       state.bossPhaseTwo = true;
+      boss.maxHp = Math.round(boss.maxHp * secondBossPhase.health);
+      boss.hp = boss.maxHp;
+      boss.damage = Math.round(boss.damage * secondBossPhase.damage);
       boss.shielded = true;
-      state.bossShockCooldown = signature ? .75 : .15;
-      if (signature) {
-        state.bossTargets = [];
-        state.projectiles = state.projectiles.filter((bolt) => !bolt.bossStyle);
-        state.bossSignatureIndex = 0;
-        boss.windup = 0;
-        boss.recover = .75;
-        state.effects.push({ kind: "boss-phase", bossStyle: boss.bossProfile.style, x: boss.x, y: boss.y, life: .75, maxLife: .75 });
-        notify((stage.bossName ?? "수호자") + " · 2페이즈", 1500);
-      } else notify((stage.bossName ?? "수호자") + "의 다음 기술 · 바닥 표식 밖으로 피하세요.");
+      state.bossShockCooldown = .75;
+      state.bossTargets = [];
+      state.projectiles = state.projectiles.filter((bolt) => !bolt.bossStyle);
+      state.bossSignatureIndex = 0;
+      boss.windup = 0;
+      boss.recover = .75;
+      state.effects.push({ kind: "boss-phase", bossStyle: boss.bossProfile?.style, x: boss.x, y: boss.y, life: .75, maxLife: .75 });
+      addEffect("recovery", boss, .85, boss.hp - previousHp);
+      notify((stage.bossName ?? "수호자") + " · 2페이즈 · 체력 완전 회복", 1900);
       syncMusic();
       return;
     }
@@ -3318,7 +3348,8 @@
       syncMusic();
     }
     if (state.bossTargets.length) {
-      const damage = Math.min(Math.round(player.maxHp * .32), Math.round(boss.damage * (deep ? .77 : .70)));
+      const damageCap = state.bossPhaseTwo ? .34 : .32;
+      const damage = Math.min(Math.round(player.maxHp * damageCap), Math.round(boss.damage * (deep ? .77 : .70)));
       for (const target of [...state.bossTargets]) {
         target.remaining -= delta;
         if (target.active) {
@@ -3359,14 +3390,15 @@
       if (!state.bossTargets.length) {
         boss.recover = .38;
         const pacing = signature ? (bossPacing[boss.bossProfile.style]?.pause ?? 1.12) : 1.22;
-        state.bossShockCooldown = pacing * (deep ? .78 : 1) * difficultyRules().interval * (signature && state.bossPhaseTwo ? .85 : 1);
+        state.bossShockCooldown = pacing * (deep ? .78 : 1) * difficultyRules().interval *
+          (state.bossPhaseTwo ? secondBossPhase.interval : 1);
         if (state.bossOverdrive) state.bossShockCooldown = state.overdriveReleased ? (deep ? .56 : .72) : .15;
       }
       return;
     }
     state.bossShockCooldown -= delta;
     if (state.bossShockCooldown > 0) return;
-    if (signature && state.bossPhaseTwo && !state.bossFirstRelease) {
+    if (state.bossPhaseTwo && !state.bossFirstRelease) {
       // The transition finishes even if the player is behind cover.
       state.bossFirstRelease = true;
       boss.shielded = false;
