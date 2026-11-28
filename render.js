@@ -2840,23 +2840,188 @@
       radius * (0.3 + (1 - clamp(enemy.windup / 0.85, 0, 1)) * 0.69), null, "#ffad825e", 1);
   }
 
-  function bossTargets(context, baseCamera, targets, seconds, elevation) {
+  const bossAttackColors = {
+    warden: { edge: "#ffc685", flash: "#fff0bc", fill: "#b45b31", metal: "#aa7760" },
+    hunter: { edge: "#ff9cb1", flash: "#ffe2ce", fill: "#c6465b", metal: "#b26b78" },
+    engine: { edge: "#92deeb", flash: "#fff5d0", fill: "#50aac4", metal: "#f08d54" },
+    beast: { edge: "#cbdc83", flash: "#ffffc0", fill: "#7b8c48", metal: "#869760" },
+    stellar: { edge: "#ccb8ff", flash: "#fdf1ff", fill: "#8858dc", metal: "#b8a3fd" },
+  };
+
+  function bossImpact(context, camera, target, size, color, progress) {
+    const { x, y, bossStyle, effect } = target;
+    const unit = camera.unit;
+    const center = point(camera, x, y, .06);
+    const swell = Math.sin(Math.PI * progress);
+    const at = (angle, span, z = .04) => point(camera,
+      x + Math.cos(angle) * span, y + Math.sin(angle) * span, z);
+    context.save();
+    context.globalAlpha *= 1 - progress * .85;
+
+    if (effect === "vent") {
+      // Wide exhaust plumes lift and soften as the pressure is released.
+      for (let index = 0; index < 5; index++) {
+        const angle = index * tau / 5;
+        const tip = at(angle, size * (.10 + progress * .50), .15 + swell * (.68 + index % 3 * .22));
+        const steam = context.createRadialGradient(...tip, 0, ...tip, unit * (.26 + progress * .40));
+        steam.addColorStop(0, index % 2 ? "#ffceb188" : "#e6ffff9c");
+        steam.addColorStop(1, "#a3d8e000");
+        ellipse(context, ...tip, unit * (.26 + progress * .40), unit * (.29 + progress * .54), steam);
+        line(context, [at(angle, size * .12, .04), tip], index % 2 ? "#ffc99090" : "#c1f5ee85",
+          Math.max(1.1, unit * .049));
+      }
+    } else if (bossStyle === "beast" || bossStyle === "warden" || bossStyle === "engine") {
+      const organic = bossStyle === "beast";
+      for (let index = 0; index < (organic ? 7 : 6); index++) {
+        const angle = index * tau / (organic ? 7 : 6) + .41;
+        const near = size * (.16 + .1 * (index % 3));
+        const far = size * (.70 + .16 * (index % 2)) * (.78 + progress * .22);
+        line(context, [center, at(angle + .13, near), at(angle - .14, (near + far) / 2), at(angle, far)],
+          organic ? "#301f18" : "#432d27", Math.max(1.8, unit * .069));
+        const tip = at(angle - .07, far * 1.04, .10 + swell * (.16 + (index % 3) * .12));
+        poly(context, [at(angle - .09, far * .70), tip, at(angle + .12, far * .93)], color.metal, color.edge, 1.1);
+        if (!organic) line(context, [at(angle, far * .85, .10), at(angle, far * 1.09, .14 + swell * .33)],
+          color.flash, 1.55);
+      }
+    } else if (bossStyle === "stellar") {
+      const vertices = Array.from({ length: 12 }, (_, index) => at(index * tau / 12 + progress * .28,
+        size * (index % 2 ? .19 : .40 + progress * .55), .08 + swell * .66));
+      poly(context, vertices, "#b294ff58", color.flash, Math.max(1.3, unit * .04));
+      for (let index = 0; index < 5; index++) {
+        const spark = at(index * tau / 5 + progress * .8, size * (.48 + .49 * progress), .18 + swell * .91);
+        ellipse(context, ...spark, Math.max(1.2, unit * .053), Math.max(1.05, unit * .044), color.flash);
+      }
+    } else if (bossStyle === "hunter") {
+      const claws = [-.36, 0, .36];
+      for (const [index, offset] of claws.entries()) {
+        const angle = (target.aimAngle ?? 0) + offset;
+        const path = [at(angle - .34, size * .22, .10), at(angle, size * .52, .38 + swell * .31),
+          at(angle + .30, size * (.70 + progress * .27), .26 + index * .05)];
+        line(context, path, "#f252686e", Math.max(3.1, unit * .125));
+        line(context, path, color.flash, Math.max(1.2, unit * .037));
+      }
+    }
+    context.restore();
+  }
+
+  function bossDirectionalCue(context, baseCamera, target, state, elevation, color, progress, blockers) {
+    const { x, y, active, aimAngle, kind } = target;
+    const origin = point(baseCamera, x, y, surfaceHeight(elevation, x, y) + .04);
+    const sample = (angle, reach, height = .04) => {
+      const dx = Math.cos(angle), dy = Math.sin(angle);
+      const limit = cueRayLimit(target, dx, dy, reach, state.map, blockers);
+      const u = x + dx * limit, v = y + dy * limit;
+      return point(baseCamera, u, v, surfaceHeight(elevation, u, v) + height);
+    };
+    if (kind === "boss-shot") {
+      if (active) {
+        bossImpact(context, onSurface(baseCamera, elevation, target), target, .68, color, progress);
+        return;
+      }
+      const { count = 1, spread = 0, shotReach = 6 } = target;
+      for (let index = 0; index < count; index++) {
+        const angle = aimAngle + (target.radial ? index * tau / count : (index - (count - 1) / 2) * spread);
+        const shaft = [origin, sample(angle, shotReach)];
+        line(context, shaft, color.fill + "6b", Math.max(3.3, baseCamera.unit * .13));
+        context.save();
+        context.setLineDash([7, 5]);
+        line(context, shaft, color.edge, Math.max(1.3, baseCamera.unit * .044));
+        context.restore();
+      }
+      return;
+    }
+    const { halfAngle, radius } = target;
+    const angles = Array.from({ length: 21 }, (_, index) => aimAngle - halfAngle + index * halfAngle / 10);
+    const rim = angles.map((angle) => sample(angle, radius));
+    poly(context, [origin, ...rim], color.fill + (active ? "6e" : "48"), color.edge, 1.75);
+    if (active) {
+      const crest = angles.map((angle, index) => sample(angle, radius * (.74 + progress * .26),
+        .07 + Math.sin(index * Math.PI / 20) * .47 * (1 - progress * .30)));
+      line(context, crest, color.edge + "88", Math.max(3.7, baseCamera.unit * .27));
+      line(context, crest, color.flash, Math.max(1.8, baseCamera.unit * .056));
+    } else {
+      line(context, rim, color.flash, Math.max(1.6, baseCamera.unit * .048));
+    }
+  }
+
+  function bossTargets(context, baseCamera, targets, seconds, elevation, state) {
+    let blockers;
     for (const target of targets ?? []) {
       const { x, y, radius, active, kind, remaining, warningLead } = target;
       if (!active && warningLead !== undefined && remaining > warningLead) continue;
       const camera = raisedCamera(baseCamera, surfaceHeight(elevation, x, y));
       const charge = (Math.sin(seconds * 17) + 1) * 0.5;
       const size = Math.max(0.15, radius || 0.9);
+      const themed = state && (bossAttackColors[target.bossStyle] ?? bossAttackColors.warden);
+      const progress = clamp(-remaining / (target.activeLife ?? .32), 0, 1);
+      if (themed && (kind === "boss-shot" || kind === "boss-sweep")) {
+        blockers ??= (state.obstacles ?? [])
+          .filter((wall) => !(wall.gateLeaf && state.gateMarker?.openProgress >= 1)).map(centeredBounds);
+        bossDirectionalCue(context, baseCamera, target, state, elevation, themed, progress, blockers);
+        continue;
+      }
       if (kind === "boss-lane") {
         const { xAxis, yAxis, halfLength, halfWidth } = target;
-        const at = (along, across) => point(camera, x + along * xAxis - across * yAxis, y + along * yAxis + across * xAxis, .03);
-        const color = active ? "#ffe0ae" : "#ffad7c";
+        const at = (along, across, height = .03) => point(camera,
+          x + along * xAxis - across * yAxis, y + along * yAxis + across * xAxis, height);
+        const color = active ? themed?.flash ?? "#ffe0ae" : themed?.edge ?? "#ffad7c";
+        const fill = themed ? themed.fill + (active ? "59" : "36") : active ? "#ff65396e" : "#db512f4f";
         context.save();
+        if (active && target.charge) context.globalAlpha *= .56 * (1 - progress * .75);
         if (!active) context.setLineDash([Math.max(4, camera.unit * .2), 3]);
         poly(context, [at(-halfLength, -halfWidth), at(halfLength, -halfWidth),
-          at(halfLength, halfWidth), at(-halfLength, halfWidth)], active ? "#ff65396e" : "#db512f4f", color, active ? 2.8 : 2);
+          at(halfLength, halfWidth), at(-halfLength, halfWidth)], fill, color, active ? 2.65 : 1.9);
         context.setLineDash([]);
-        line(context, [at(-halfLength, 0), at(halfLength, 0)], active ? "#fff1c4" : "#e9916a80", active ? 2.6 : 1);
+        if (target.charge) {
+          const arrows = Math.max(1, Math.floor(halfLength * 1.6));
+          for (let index = 1; index <= arrows; index++) {
+            const q = halfLength * (2 * index / (arrows + 1) - 1);
+            line(context, [at(q - .24, -halfWidth * .48), at(q + .22, 0), at(q - .24, halfWidth * .48)], color, 1.5);
+          }
+          if (active && themed) {
+            const front = halfLength - target.travelLeft;
+            for (const side of [-1, 1]) {
+              const fade = Math.max(-halfLength, front - .84);
+              const crest = Math.max(fade, front - .33);
+              line(context, [at(fade, side * halfWidth * .79, .06), at(crest, side * halfWidth * .55, .16),
+                at(front, side * halfWidth * .63, target.effect === "slam" ? .13 : .37)],
+              themed.edge, Math.max(2.3, camera.unit * .11));
+            }
+          }
+        } else if (active && themed) {
+          context.globalAlpha *= 1 - progress * .78;
+          const vent = target.effect === "vent";
+          const beam = target.effect === "beam";
+          const height = beam ? .31 : .10;
+          const trail = [at(-halfLength, 0, height), at(halfLength, 0, height)];
+          if (!vent) {
+            line(context, trail, themed.fill + "a0", Math.max(3.5, camera.unit * (beam ? .28 : .20)));
+            line(context, trail, themed.flash, Math.max(1.8, camera.unit * .065));
+          }
+          for (let index = 0; index < 6; index++) {
+            const q = halfLength * (2 * (index + .5) / 6 - 1);
+            const side = index % 2 ? 1 : -1;
+            if (vent) {
+              const reach = .15 + Math.sin(Math.PI * progress) * (.42 + .16 * (index % 3));
+              const tip = at(q + progress * .32, halfWidth * .65 * side, reach);
+              const width = camera.unit * (.18 + progress * .22);
+              const plume = context.createRadialGradient(...tip, 0, ...tip, width);
+              plume.addColorStop(0, "#fff0cfba");
+              plume.addColorStop(1, "#fff0cf00");
+              ellipse(context, ...tip, width, width * 1.19, plume);
+              line(context, [at(q, 0, .05), tip], "#ffd0a39c", Math.max(1.4, camera.unit * .049));
+            } else if (target.effect === "star") {
+              const gem = at(q + .14, halfWidth * side, .19 + progress * .41);
+              const width = camera.unit * .064;
+              poly(context, [[gem[0] - width, gem[1]], [gem[0], gem[1] - width * 1.55],
+                [gem[0] + width, gem[1]], [gem[0], gem[1] + width * 1.55]], themed.flash);
+            } else {
+              line(context, [at(q, 0, height), at(q + .19, halfWidth * side, .16 + progress * .31)], themed.edge, 1.3);
+            }
+          }
+        } else {
+          line(context, [at(-halfLength, 0), at(halfLength, 0)], themed?.edge ?? "#e9916a80", 1);
+        }
         context.restore();
         continue;
       }
@@ -2869,12 +3034,31 @@
         context.ellipse(px, py, size * scale, size * scale * slope, 0, 0, tau);
         context.moveTo(px + inner * scale, py);
         context.ellipse(px, py, inner * scale, inner * scale * slope, 0, 0, tau);
-        context.fillStyle = active ? "#ff653970" : "#d755354d";
+        context.fillStyle = themed ? themed.fill + (active ? "68" : "3f") : active ? "#ff653970" : "#d755354d";
         context.fill("evenodd");
-        const color = active ? "#ffe0ae" : "#ffad7c";
+        const color = active ? themed?.flash ?? "#ffe0ae" : themed?.edge ?? "#ffad7c";
         dangerRing(context, camera, x, y, size, null, color, 2.3, !active);
         dangerRing(context, camera, x, y, inner, null, color, 1.8, !active);
+        if (active && themed) {
+          const span = size - inner;
+          for (let index = 0; index < 10; index++) {
+            const angle = index * tau / 10;
+            const at = (offset, span, height) => point(camera, x + Math.cos(angle + offset) * span,
+              y + Math.sin(angle + offset) * span, height);
+            const ripple = inner + span * progress;
+            const height = Math.sin(Math.PI * progress) * (.24 + .17 * (index % 3));
+            poly(context, [at(-.10, ripple, .05), at(0, Math.min(size, ripple + span * .28), height),
+              at(.09, Math.min(size, ripple + span * .37), .05)], themed.metal, color, 1.2);
+          }
+        }
         context.restore();
+        continue;
+      }
+      if (themed) {
+        dangerRing(context, camera, x, y, size, themed.fill + (active ? "63" : "40"),
+          active ? themed.flash : themed.edge, 2.25, !active);
+        if (active) bossImpact(context, camera, target, size, themed, progress);
+        else groundRing(context, camera, x, y, size * (.57 + charge * .22), null, themed.edge + "a0", 1.4);
         continue;
       }
       if (kind === "mortar" && active) {
@@ -2915,12 +3099,6 @@
         const reach = size * 0.27;
         line(context, [point(camera, x - reach, y - reach * sign),
           point(camera, x + reach, y + reach * sign)], ringColor, 1.6);
-      }
-      if (active) {
-        const [targetX, targetY] = point(camera, x, y);
-        const height = camera.unit * 1.5;
-        line(context, [[targetX + 5, targetY - height], [targetX - 4, targetY - height * 0.55],
-          [targetX + 4, targetY - height * 0.51], [targetX, targetY]], "#fff0c0", 2.4);
       }
       context.restore();
     }
@@ -3678,8 +3856,10 @@
     const prior = frame.previousPoses.get(key);
     const { step, reduced } = frame;
     const enemyWindup = actor.windup || 0;
-    const charge = reduced ? Number(actor.chargeTime > 0) : clamp((actor.chargeTime || 0) / 0.13, 0, 1);
-    const aimed = (enemyWindup > 0 || charge > 0) && Number.isFinite(actor.aimX) && Number.isFinite(actor.aimY);
+    const charge = actor.bossCharging ? 1
+      : reduced ? Number(actor.chargeTime > 0) : clamp((actor.chargeTime || 0) / 0.13, 0, 1);
+    const aimed = !actor.bossCharging && (enemyWindup > 0 || charge > 0)
+      && Number.isFinite(actor.aimX) && Number.isFinite(actor.aimY);
     const intended = aimed ? { facingX: actor.aimX - actor.x, facingY: actor.aimY - actor.y } : actor;
     const [targetX, targetY] = direction(intended);
     const targetAngle = Math.atan2(targetY, targetX);
@@ -5075,6 +5255,32 @@
     const z = absolute ? entry.absoluteZ : surfaceHeight(elevation, entry.x, entry.y) + 0.56;
     const [x, y] = point(camera, entry.x, entry.y, z);
     const radius = Math.max(2.7, (entry.radius || 0.13) * camera.unit);
+    const themed = bossAttackColors[entry.bossStyle];
+    if (themed) {
+      if (!reduced) projectileTrail(context, camera, entry, z, Math.min(.09, entry.flightAge ?? .09),
+        themed.edge + "78", radius * 1.68, volumes);
+      const previous = point(camera, entry.x - (entry.vx || 0), entry.y - (entry.vy || 0), z - (entry.vz || 0));
+      const length = Math.hypot(x - previous[0], y - previous[1]) || 1;
+      const dx = (x - previous[0]) / length, dy = (y - previous[1]) / length;
+      const at = (forward, side) => [x + radius * (forward * dx - side * dy), y + radius * (forward * dy + side * dx)];
+      paintProjectilePart(context, camera, entry, z, 0, volumes, () => {
+        if (entry.bossStyle === "engine") {
+          line(context, [at(-1.12, 0), at(.92, 0)], "#304446", radius * 1.54);
+          line(context, [at(-1.01, 0), at(.91, 0)], themed.edge, radius * .86);
+          line(context, [at(-.18, -.49), at(-.18, .49)], themed.metal, 1.35);
+        } else if (entry.bossStyle === "stellar") {
+          ellipse(context, x, y, radius * 1.85, radius * 1.85, themed.fill + "58");
+          poly(context, [at(1.32, 0), at(.28, .29), at(0, 1.11), at(-.27, .26),
+            at(-1.24, 0), at(-.22, -.28), at(0, -1.11), at(.20, -.27)], themed.flash, themed.edge, 1);
+        } else {
+          const dart = entry.bossStyle === "hunter";
+          poly(context, [at(dart ? 1.85 : 1.12, 0), at(-.18, dart ? .48 : .86), at(-1.0, .40),
+            at(-.62, -.71), at(.42, -.69)], themed.metal, themed.edge, 1.3);
+          line(context, [at(-.50, -.10), at(dart ? 1.18 : .70, -.16)], themed.flash, 1.05);
+        }
+      });
+      return;
+    }
     if (!reduced) {
       const trail = Math.min(.08, entry.flightAge ?? .08);
       projectileTrail(context, camera, entry, z, trail, "#fb724c90", radius * 1.54, volumes);
@@ -5159,7 +5365,18 @@
     const unit = camera.unit;
     context.save();
     context.globalAlpha = alpha;
-    if (entry.kind === "slash") {
+    const bossColor = bossAttackColors[entry.bossStyle];
+    if (entry.kind === "boss-phase" && bossColor) {
+      const progress = 1 - alpha;
+      const reach = 1.08 + (reduced ? 0 : progress * 1.50);
+      groundRing(context, camera, entry.x, entry.y, reach, bossColor.fill + "42", bossColor.edge, 2.4);
+      groundRing(context, camera, entry.x, entry.y, reach * .76, null, bossColor.flash, 1.65);
+      if (!reduced) bossImpact(context, camera, {
+        ...entry, effect: entry.bossStyle === "engine" ? "vent" : entry.effect,
+      }, reach, bossColor, progress);
+    } else if (entry.kind === "boss-impact" && bossColor) {
+      bossImpact(context, camera, entry, reduced ? .24 : .46, bossColor, 1 - alpha);
+    } else if (entry.kind === "slash") {
       const angle = Math.atan2(entry.facingY ?? 0, entry.facingX ?? 1);
       const arc = [];
       for (let part = 0; part <= 10; part++) {
@@ -5333,7 +5550,7 @@
     const zone = state.holdZone;
     if (zone && (layer === undefined || matches(zone))) holdArea(context, onSurface(camera, elevation, zone), zone);
     hazardTiles(context, camera, hazards, seconds, elevation);
-    bossTargets(context, camera, targets, seconds, elevation);
+    bossTargets(context, camera, targets, seconds, elevation, state);
     bossTargets(context, camera, shells, seconds, elevation);
     for (const enemy of enemies) {
       if (enemy.kind === "boss" && enemy.bossMove && state.bossTargets?.length) continue;
@@ -5418,13 +5635,18 @@
     const elevation = state.elevation;
     const enemies = state.combatComplete || story ? [] : (state.enemies ?? []).filter((entry) => entry.hp > 0);
     const brushes = state.shelter ? shelterBrushes(palette, seconds, reduced) : null;
+    const activeCharge = state.bossTargets?.find((target) => target.active && target.charge && target.travelLeft > 0);
     const objects = [
       ...(state.obstacles ?? []).filter((entry) => !entry.shelterDecor && !entry.gateDecor && !(state.storyGate && entry.storyGate))
         .map((entry) => ({ ...entry, type: "obstacle" })),
       ...(state.items ?? []).map((entry) => ({ ...entry, type: "item" })),
       ...(state.shelter?.decor ?? []).map((entry) => ({ ...entry, type: "shelter-decoration" })),
       ...(state.stations ?? []).map((entry) => ({ ...entry, type: "station" })),
-      ...enemies.map((entry, index) => ({ ...entry, type: "enemy", pose: actorPose(motion, entry, entry.id ?? index) })),
+      ...enemies.map((entry, index) => {
+        const actor = entry.kind === "boss" && activeCharge ? { ...entry, bossCharging: true,
+          facingX: activeCharge.xAxis, facingY: activeCharge.yAxis } : entry;
+        return { ...actor, type: "enemy", pose: actorPose(motion, actor, actor.id ?? index) };
+      }),
     ];
     if (state.gateMarker) objects.push({ ...state.gateMarker, type: "item", kind: "exit" });
     if (state.storyGate) {
@@ -5505,7 +5727,11 @@
     }
     const swingVisible = state.player && (state.player.swingLife ?? state.player.attackFlash) > 0;
     for (const entry of state.effects ?? []) {
-      if (entry.kind !== "slash" || !swingVisible) effect(context, onSurface(camera, elevation, entry), entry, reduced);
+      if (entry.kind === "slash" && swingVisible) continue;
+      if (entry.kind === "boss-impact" && Number.isFinite(entry.absoluteZ)) {
+        paintProjectilePart(context, camera, entry, entry.absoluteZ, 0, volumes, () =>
+          effect(context, raisedCamera(camera, entry.absoluteZ - .07), entry, reduced));
+      } else effect(context, onSurface(camera, elevation, entry), entry, reduced);
     }
     if (state.mode === "playing") objectiveLabels(context, camera, state, visibleStoryActors);
     if (story) storyLighting(context, camera, state);

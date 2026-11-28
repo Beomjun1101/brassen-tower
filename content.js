@@ -157,9 +157,10 @@
     return sequence;
   }
 
-  function profileForBoss(floor, theme, macro, placement, minor) {
+  function profileForBoss(floor, theme, dice) {
+    const { environment: macro, layout: placement, encounter: minor } = dice;
     if (floor === floorCount) {
-      return { id: "stellar-1332", style: "stellar", sequence: ["orbit", "crossfire", "rupture"],
+      return { id: "stellar-1332", style: "stellar", sequence: ["orbit", "crossfire", "rupture"], dice,
         accent: "#e4d1ff", timing: 1, size: 1,
         appearance: { variant: 3, material: "#665a96", accent: "#ede0ff", head: 3, weapon: 3, frame: 3 } };
     }
@@ -187,7 +188,7 @@
     const appearance = { variant, material, accent: trim,
       head: silhouette % 4, weapon: Math.floor(silhouette / 4) % 4, frame: Math.floor(silhouette / 16) };
     return { id: `${style}-${floor}-${theme}-${macro}-${placement}-${minor}`, style, accent,
-      sequence, timing, size, name: names[pattern], appearance };
+      sequence, timing, size, name: names[pattern], appearance, dice };
   }
 
   const rosterNames = {
@@ -1425,7 +1426,10 @@
     const fixedTheme = ordinaryCombat ? undefined : sites[floor]?.theme;
     const theme = opening?.theme ?? fixedTheme ?? rolledDestination?.[0]
       ?? (hasDivider ? regionSpec.dividerTheme : regionSpec.theme);
-    const bossProfile = bossTrial ? profileForBoss(floor, theme, macro, placement, minor) : null;
+    const patternDice = final
+      ? { environment: roll(next, 6), layout: roll(next, 4), encounter: roll(next, 4) }
+      : { environment: macro, layout: placement, encounter: minor };
+    const bossProfile = bossTrial ? profileForBoss(floor, theme, patternDice) : null;
     const bossName = authoredBoss?.bossName ?? bossProfile?.name;
     const spawnEnemy = (kind, [x, y], elite = false, index = 0) => ({
       x, y: foldY(y), kind, elite, ...combatant(floor, kind, index, macro, theme),
@@ -1479,7 +1483,11 @@
     if (waterMap) {
       routeLayout.push(`다리 ${waterway === "split" ? 4 : profile.crossings.length}곳`);
     }
-    const rolls = [
+    const rolls = final ? [
+      { sides: 6, value: patternDice.environment, label: "별불 세기" },
+      { sides: 4, value: patternDice.layout, label: "별불 궤도" },
+      { sides: 4, value: patternDice.encounter, label: "보스 공격 패턴" },
+    ] : [
       { sides: 6, value: macro, label: rolledDestination ? "시설 상태" : template.macroLabel, detail: environment.join(" · ") },
       { sides: 4, value: placement, label: distributionFloor ? "통로와 전력 셀 배치" : "전장 지형", detail: routeLayout.join(" · ") },
       { sides: 4, value: minor, label: floor === 1 ? "입구 경비 편성" : template.minorLabel, detail: `${changes.detail} · ${gold} 금화` },
@@ -1525,7 +1533,7 @@
       unlockAfter: variation.unlockAfter,
       hold: variation.duration ? { x: holdPosition[0], y: foldY(holdPosition[1]), radius: 2.25, duration: variation.duration } : null,
       rule: variation.name,
-      rolls: final ? [] : rolls,
+      rolls,
       terrain: createTerrain({ geometry, theme, layout, profile, waterway, foldY, transmission,
         terraced: Boolean(elevation), boss: Boolean(bossTrial), macro }),
       obstacles: (final ? finalTrial.obstacles : roomShapes[geometry]).flatMap(([x, y, w, h], index) => {
