@@ -2,7 +2,7 @@
   "use strict";
 
   const config = window.BrassenCloudConfig;
-  const configured = Boolean(config?.url && config?.publishableKey);
+  const configured = window.location.protocol !== "file:" && Boolean(config?.url && config?.publishableKey);
   const listeners = new Set();
   let status = { configured, loading: configured, user: null, error: null };
 
