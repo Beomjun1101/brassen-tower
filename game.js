@@ -1730,8 +1730,7 @@
   }
 
   function currentAttackInterval(weapon, route, stats = run.stats) {
-    const multiplier = (route.attackCooldownMultiplier ?? 1) * (weapon.interval ?? 1);
-    return rpg.attackInterval(stats, multiplier, weapon.intervalOffset);
+    return rpg.attackInterval(stats, route.attackCooldownMultiplier ?? 1, weapon.intervalOffset, weapon.interval);
   }
 
   function currentMoveSpeed(route = {}, stats = run.stats) {
@@ -3769,7 +3768,8 @@
     let unit = "";
     if (key === "speed") unit = "칸/초";
     if (key === "attackRange") unit = "칸";
-    if (["attackCooldown", "dashCooldown", "dashGrace"].includes(key)) unit = "초";
+    if (key === "attackCooldown") return sign + Number(number.toFixed(3)) + "초";
+    if (["dashCooldown", "dashGrace"].includes(key)) unit = "초";
     return sign + Number(number.toFixed(2)) + unit;
   }
 

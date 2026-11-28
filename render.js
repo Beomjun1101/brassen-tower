@@ -1953,7 +1953,8 @@
     for (const [kind, render] of Object.entries(layers)) {
       for (const entry of surfaces) {
         if (entry.kind !== kind || entry.w <= 0 || entry.h <= 0) continue;
-        const height = surfaceHeight(elevation, entry.x, entry.y);
+        // Water and its crossings occupy the ground plane even when their center touches a raised deck.
+        const height = kind === "water" || kind === "bridge" ? 0 : surfaceHeight(elevation, entry.x, entry.y);
         if (layer !== undefined && (height > 0.04 ? 1 : 0) !== layer) continue;
         render(context, raisedCamera(camera, height), entry, seconds, reduced);
       }

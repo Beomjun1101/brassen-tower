@@ -39,7 +39,7 @@
   };
   const lowerIsBetter = new Set(["attackCooldown", "dashCooldown"]);
   const baseAttackInterval = 0.20;
-  const minimumAttackInterval = 0.125;
+  const minimumAttackInterval = 0.175;
   const killRecoveryCap = 7.5;
 
   const levelThresholds = [0, 50, 100, 175, 265, 395, 555, 755, 1000, 1300, 1665, 2110];
@@ -213,17 +213,21 @@
     return stats;
   }
 
-  function attackInterval(stats, routeMultiplier = 1, weaponOffset = 0) {
-    const weaponFactor = 1 + weaponOffset / baseAttackInterval;
-    return Math.max(minimumAttackInterval, stats.attackCooldown * weaponFactor * routeMultiplier);
+  function attackInterval(stats, routeMultiplier = 1, weaponOffset = 0, weaponMultiplier = 1) {
+    const baseline = Math.max(minimumAttackInterval, (baseAttackInterval + weaponOffset) * weaponMultiplier);
+    const rawMultiplier = stats.attackCooldown * routeMultiplier / baseAttackInterval;
+    if (rawMultiplier >= 1) return baseline * rawMultiplier;
+    const reduction = Math.sqrt(Math.min(1, 1 - rawMultiplier));
+    return minimumAttackInterval + (baseline - minimumAttackInterval) * (1 - reduction);
   }
 
-  function compareStats(progress, candidate, resolveStats = getStats) {
-    const before = resolveStats(progress);
-    const after = resolveStats(candidate);
+  function compareStats(progress, candidate, resolveStats) {
+    const getComparisonStats = resolveStats ?? getStats;
+    const before = getComparisonStats(progress);
+    const after = getComparisonStats(candidate);
     return Object.entries(statLabels).flatMap(([key, label]) => {
-      const previous = key === "attackCooldown" ? attackInterval(before) : before[key];
-      const current = key === "attackCooldown" ? attackInterval(after) : after[key];
+      const previous = key === "attackCooldown" && !resolveStats ? attackInterval(before) : before[key];
+      const current = key === "attackCooldown" && !resolveStats ? attackInterval(after) : after[key];
       const delta = Number((current - previous).toFixed(4));
       return delta ? [{ key, label, before: previous, after: current, delta,
         improved: lowerIsBetter.has(key) ? delta < 0 : delta > 0 }] : [];
