@@ -76,17 +76,20 @@ async function handle(request: Request) {
     const [saved] = await sql`
       select checkpoint, revision from brassen_private.campaigns where user_id = ${account.id}::uuid
     `;
-    return reply(200, saved ?? null);
+    if (!saved) return reply(200, null);
+    const checkpoint = typeof saved.checkpoint === "string" ? JSON.parse(saved.checkpoint) : saved.checkpoint;
+    if (!validCheckpoint(checkpoint)) return reply(503, { code: "STORAGE" });
+    return reply(200, { checkpoint, revision: saved.revision });
   }
 
   const checkpoint = input.checkpoint === null ? null : JSON.stringify(input.checkpoint);
   if (checkpoint && encoder.encode(checkpoint).length > maxSaveBytes) return reply(413, { code: "CHECKPOINT" });
   const rows = input.revision === null ? await sql`
     insert into brassen_private.campaigns (user_id, checkpoint, revision)
-    values (${account.id}::uuid, ${checkpoint}::jsonb, 1)
+    values (${account.id}::uuid, ${checkpoint}::text::jsonb, 1)
     on conflict (user_id) do nothing returning revision
   ` : await sql`
-    update brassen_private.campaigns set checkpoint = ${checkpoint}::jsonb, revision = revision + 1
+    update brassen_private.campaigns set checkpoint = ${checkpoint}::text::jsonb, revision = revision + 1
     where user_id = ${account.id}::uuid and revision = ${input.revision}
     returning revision
   `;
