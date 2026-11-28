@@ -158,8 +158,8 @@
     return distance(enemy, grid.points[waypoint]) > arrivedAt ? waypoint : null;
   }
 
-  function direction(enemy, desired, radius, { state, walkable, openStep }) {
-    const target = state.player;
+  function direction(enemy, desired, radius, { state, walkable, openStep, destination }) {
+    const target = destination ?? state.player;
     const direct = unit(target.x - enemy.x, target.y - enemy.y);
     if (!direct) return null;
     const navigation = navigationFor(state);
@@ -167,6 +167,11 @@
     if (!route || route.navigation !== navigation || route.radius !== radius) {
       route = { navigation, radius, waypoint: null };
       actorRoutes.set(enemy, route);
+    }
+    if (route.destination !== destination) {
+      route.destination = destination;
+      route.waypoint = null;
+      route.direct = null;
     }
     if (directPath(route, enemy, target, radius, walkable, openStep)) {
       const aim = desired && unit(desired.x, desired.y);

@@ -2737,7 +2737,79 @@
     state.projectiles = state.projectiles.filter((bolt) => bolt.life > 0);
   }
 
-  function updateEnemy(enemy, allies, delta) {
+  const supportKinds = new Set(["sentry", "marksman", "mortar"]);
+  const frontlineKinds = new Set(["guard", "runner", "lancer", "warden", "skirmisher", "breaker"]);
+  const supportPositions = new WeakMap();
+
+  function combatFormation(enemies) {
+    const front = enemies.filter(({ kind }) => frontlineKinds.has(kind));
+    const support = enemies.filter(({ kind }) => supportKinds.has(kind));
+    if (!front.length || !support.length) return null;
+    const player = state.player;
+    const lead = front.reduce((closest, enemy) => distance(enemy, player) < distance(closest, player) ? enemy : closest);
+    if (distance(lead, player) > 11.2 || !support.some((enemy) => distance(enemy, lead) < 12)) return null;
+    return { lead, front, support };
+  }
+
+  function allyInFireLane(origin, target, front) {
+    const aim = direction(target.x - origin.x, target.y - origin.y);
+    if (!aim) return false;
+    const length = distance(origin, target);
+    return front.some((enemy) => {
+      const x = enemy.x - origin.x;
+      const y = enemy.y - origin.y;
+      const along = aim.x * x + aim.y * y;
+      return along > .42 && along < length - .26 && Math.abs(aim.x * y - aim.y * x) < enemyTypes[enemy.kind].radius + .18
+        && withinTier(origin, enemy);
+    });
+  }
+
+  function supportSteering(enemy, formation, type, clearSight) {
+    const player = state.player;
+    const mortar = enemy.kind === "mortar";
+    const gap = distance(enemy, player);
+    const fireLaneClear = mortar || !allyInFireLane(enemy, player, formation.front);
+    const flank = direction(formation.lead.x - player.x, formation.lead.y - player.y) ??
+      direction(enemy.x - player.x, enemy.y - player.y) ?? { x: 1, y: 0 };
+    const trail = (enemy.x - formation.lead.x) * flank.x + (enemy.y - formation.lead.y) * flank.y;
+    const minimum = mortar ? 4.9 : 3.8;
+    if (clearSight && fireLaneClear && gap >= minimum && trail > -.40 && gap <= type.range * .91) {
+      supportPositions.delete(enemy);
+      return null;
+    }
+
+    const route = { state, walkable, openStep };
+    const cached = supportPositions.get(enemy);
+    if (cached && state.elapsed < cached.until && distance(cached.player, player) < 1.25) {
+      return cached.destination ? window.TowerPursuit.direction(enemy, null, type.radius,
+        { ...route, destination: cached.destination }) : null;
+    }
+    const preferred = Math.min(mortar ? 6.35 : 5.35, Math.max(minimum + .55, distance(formation.lead, player) + 1.15));
+    const side = formation.support.indexOf(enemy) % 2 ? -1 : 1;
+    const positions = [];
+    for (const radius of [preferred, preferred - .85, preferred + .75]) {
+      for (const offset of [side * 1.6, -side * 1.6, side * 2.7, -side * 2.7, 0]) {
+        const destination = { x: player.x + flank.x * radius - flank.y * offset,
+          y: player.y + flank.y * radius + flank.x * offset };
+        const range = distance(destination, player);
+        if (range < minimum || range > type.range * .92 || !walkable(destination.x, destination.y, type.radius) ||
+            (!mortar && (!hasLineOfSight(destination, player, true) || allyInFireLane(destination, player, formation.front)))) continue;
+        const crowd = formation.support.some((ally) => ally !== enemy && distance(ally, destination) < 1.15);
+        positions.push({ destination, cost: distance(enemy, destination) + (offset * side < 0 ? .55 : 0) + (crowd ? 2.2 : 0) });
+      }
+    }
+
+    for (const { destination } of positions.sort((a, b) => a.cost - b.cost).slice(0, 4)) {
+      const steering = window.TowerPursuit.direction(enemy, null, type.radius, { ...route, destination });
+      if (!steering) continue;
+      supportPositions.set(enemy, { destination, player: { x: player.x, y: player.y }, until: state.elapsed + .50 });
+      return steering;
+    }
+    supportPositions.set(enemy, { player: { x: player.x, y: player.y }, until: state.elapsed + .32 });
+    return null;
+  }
+
+  function updateEnemy(enemy, allies, delta, formation) {
     const player = state.player;
     const type = enemyTypes[enemy.kind];
     const difficulty = difficultyRules();
@@ -2839,11 +2911,13 @@
     const aim = direction(player.x - enemy.x, player.y - enemy.y);
     const sight = ranged ? (gap < type.range * 1.10 && hasLineOfSight(enemy, player, true))
       : lancer || saboteur ? (gap < type.range * 1.10 && hasLineOfSight(enemy, player) && closeReach(enemy, player))
-      : mortar || closeReach(enemy, player);
+      : mortar || (closeReach(enemy, player) &&
+        (!formation || !frontlineKinds.has(enemy.kind) || hasLineOfSight(enemy, player)));
     const detection = 10.5 + (creature ? 1.65 : 0);
     const heardCombat = gap < detection + 3 && allies.some((ally) => ally !== enemy
       && (ally.windup > 0 || ally.flash > 0) && distance(ally, enemy) < 5.2);
-    if (gap < detection || enemy.hp < enemy.maxHp || boss || heardCombat) {
+    const supporting = (ranged || mortar) && formation && distance(formation.lead, enemy) < 12;
+    if (gap < detection || enemy.hp < enemy.maxHp || boss || heardCombat || (supporting && formation.lead.engaged)) {
       enemy.engaged = true;
     }
     setFacing(enemy, aim);
@@ -2851,9 +2925,12 @@
     const useSecond = enemy.patternCount === 2 && (turn & 1) !== 0;
     const cue = useSecond ? secondEnemyPatterns[enemy.kind] : undefined;
     const reach = cue?.reach ?? enemy.attackRange;
-    if (!signatureBoss && sight && gap <= reach * 0.94 && enemy.cooldown <= 0
+    const supportStep = supporting && enemy.engaged ? supportSteering(enemy, formation, type, sight) : null;
+    const fireBlocked = supporting && ranged && allyInFireLane(enemy, player, formation.front);
+    if (!supportStep && !fireBlocked && !signatureBoss && sight && gap <= reach * 0.94 && enemy.cooldown <= 0
         && (ranged || mortar || lancer || hasLineOfSight(enemy, player))) {
-      const windup = (cue?.windup ?? type.windup * difficulty.windup * (enraged ? 0.86 : 1)) / attackRate;
+      const baseWindup = (cue?.windup ?? type.windup * difficulty.windup * (enraged ? 0.86 : 1)) / attackRate;
+      const windup = supporting ? baseWindup + Math.max(0, Math.min(.25, formation.lead.windup + .10 - baseWindup)) : baseWindup;
       const nearbyWindup = !ranged && !mortar && !lancer && !boss && allies.some((ally) => ally !== enemy
         && Math.abs(ally.windup - windup) < 0.14 && distance(ally, player) < 2.4);
       if (nearbyWindup) return;
@@ -2877,9 +2954,11 @@
       if (mortar) mortarSalvo(enemy, player, attackRate);
       return;
     }
+    const flankWithLead = formation && enemy !== formation.lead && frontlineKinds.has(enemy.kind) &&
+      distance(enemy, formation.lead) < 6 && gap > reach * .94 && gap < 7.2;
     const pursue = !sight || gap > (ranged || mortar || saboteur ? type.range * 0.86 : Math.min(enemy.attackRange * 0.76, 1.42));
     const retreat = (ranged || mortar || saboteur) && sight && gap < (ranged ? 3.2 : 2.75);
-    if (aim && enemy.engaged && (pursue || retreat)) {
+    if (aim && enemy.engaged && (supportStep || pursue || retreat)) {
       const bossSpeed = signatureBoss ? (bossPacing[enemy.bossProfile.style]?.speed ?? 1) : 1;
       const scaling = enemyScalingByVersion[state.enemyScalingVersion];
       const regularPursuit = boss ? 1 : (scaling?.regularPursuit ?? 1);
@@ -2890,7 +2969,11 @@
         (enemy.recover > 0 ? 0.56 : 1) * delta;
       let x = retreat ? -aim.x : aim.x;
       let y = retreat ? -aim.y : aim.y;
-      if (runner && sight && gap > enemy.attackRange && gap < (creature ? 5.2 : 3.8)) {
+      if (flankWithLead && sight) {
+        const side = enemy.id % 2 ? 1 : -1;
+        x -= aim.y * side * .58;
+        y += aim.x * side * .58;
+      } else if (runner && sight && gap > enemy.attackRange && gap < (creature ? 5.2 : 3.8)) {
         const side = enemy.id % 2 ? 1 : -1;
         const drift = creature ? 0.55 : 0.36;
         x -= aim.y * side * drift;
@@ -2906,7 +2989,8 @@
         }
       }
       const desired = direction(x, y) || aim;
-      const steering = retreat ? desired : window.TowerPursuit.direction(enemy, desired, type.radius, { state, walkable, openStep });
+      const steering = supportStep || (retreat ? desired
+        : window.TowerPursuit.direction(enemy, desired, type.radius, { state, walkable, openStep }));
       if (steering) enemy.moving = move(enemy, steering.x * step, steering.y * step, type.radius);
     }
   }
@@ -3530,7 +3614,8 @@
     }
 
     if (!waitingForCombatStart(enemyStartDelay)) {
-      for (const enemy of alive) updateEnemy(enemy, alive, delta);
+      const formation = combatFormation(alive);
+      for (const enemy of alive) updateEnemy(enemy, alive, delta, formation);
       updateBolts(delta);
       updateMortars(delta);
       updateBossShock(boss, delta);
