@@ -99,12 +99,11 @@ HTML에서 CSS와 JavaScript를 상대 경로로 불러오는 정적 게임입�
 
 ## GitHub 로그인과 기기 간 저장
 
-게임은 GitHub Pages에서 실행됩니다. Supabase Auth는 GitHub 계정으로 로그인할 때 사용합니다. 저장 파일은 계정마다 하나씩 GitHub 비공개 저장소에 기록됩니다.
+게임은 GitHub Pages에서 실행됩니다. Supabase Auth로 GitHub 로그인하고, Supabase Postgres의 비공개 스키마에 계정별 진행 상황을 저장합니다.
 
-1. Supabase 프로젝트를 만들고 GitHub OAuth App을 등록합니다. GitHub OAuth App의 홈페이지는 게임 주소, 콜백 URL은 Supabase GitHub 인증 제공자에 표시된 URL을 입력합니다. OAuth Client ID와 Secret은 해당 인증 제공자에 설정합니다. [GitHub 로그인 설정](https://supabase.com/docs/guides/auth/social-sign-in/auth-github)
-2. Supabase 인증의 Site URL과 허용 리디렉션에 `https://beomjun1101.github.io/brassen-tower/`를 등록합니다.
-3. 저장 전용 비공개 GitHub 저장소를 만들고 README로 초기화합니다. 해당 저장소만 지정한 fine-grained token에 Contents 읽기·쓰기 권한을 부여합니다. Supabase Edge Function Secrets에 `SAVE_GITHUB_REPOSITORY`(`소유자/저장소`)와 `SAVE_GITHUB_TOKEN`을 설정합니다.
-4. Supabase CLI의 `supabase functions deploy campaign --project-ref <project-ref>`로 함수를 배포합니다.
-5. [cloud-config.js](cloud-config.js)에 프로젝트 URL과 공개용 publishable key를 입력하고 GitHub Pages를 배포합니다.
+1. Supabase 프로젝트와 GitHub OAuth App을 연결하고 사이트 URL을 게임 주소 `https://beomjun1101.github.io/brassen-tower/`로 설정합니다. [GitHub 로그인 설정](https://supabase.com/docs/guides/auth/social-sign-in/auth-github)
+2. [캠페인 저장 스키마](supabase/migrations/20261128000200_create_private_campaigns.sql)를 적용합니다.
+3. Edge Function `campaign`을 배포합니다. 함수는 Supabase 기본 연결 정보 `SUPABASE_DB_URL`을 사용합니다.
+4. [cloud-config.js](cloud-config.js)에 Supabase 프로젝트 URL과 공개용 publishable key를 입력한 뒤 GitHub Pages에 반영합니다.
 
-계정에 클라우드 저장이 없으면 시작 메뉴에서 이 기기의 저장을 계정에 복사할 수 있습니다. 두 기기에서 기록이 겹치면 더 최근의 클라우드 기록을 불러올 수 있습니다.
+계정에 기존 저장이 없으면 시작 메뉴에서 이 기기의 기록을 계정에 복사할 수 있습니다. 두 기기의 기록이 충돌하면 더 최근의 클라우드 기록을 불러올 수 있습니다.
