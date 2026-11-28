@@ -532,7 +532,7 @@
       installCombatExit([state.player, ...livingEnemies()]);
     }
     if (state.pendingBoss && (!state.bossGate ||
-        (!state.bossGate.passageDepth && state.bossArrivalAt === undefined))) {
+        (!state.bossGate.embedded && state.bossArrivalAt === undefined))) {
       installBossGate();
     }
     state.cameraShakeEnabled = !reducedMotion;
@@ -2928,107 +2928,69 @@
     const walls = state.obstacles.filter((wall) => !wall.bossGateDecor && !wall.bossPassageWall);
     const map = { ...stage, obstacles: walls, spawn: state.player };
     const access = content.layoutAccess(map, .55, playerRadius);
-    if (access) {
-      const directions = [{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 0, y: -1 }];
-      const targets = [state.player, ...livingEnemies()];
-      const entrances = access.points().sort((a, b) => distance(a, boss) - distance(b, boss));
-      const checkedTargets = targets.filter((target) => access.reaches(target, playerRadius));
-      for (const [rear, wing] of [[2.65, 1.36], [2.12, .85]]) {
-        const width = 1.85;
-        const half = width / 2;
-        const height = 2.8;
-        for (const entrance of entrances) {
-          for (const aim of directions) {
-            const point = (along, across) => ({ x: entrance.x + aim.x * along - aim.y * across,
-              y: entrance.y + aim.y * along + aim.x * across });
-            const end = point(1.50, 0);
-            const start = point(.82 - rear, 0);
-            if (!access.reaches(end, playerRadius) || !withinTier(start, end, .08)) continue;
+    if (!access) return;
 
-            const passageWall = (along, across, depth, span, wallHeight) => ({
-              ...point(along, across), w: aim.x ? depth : span, h: aim.x ? span : depth,
-              height: wallHeight, panelHeight: wallHeight, bossPassageWall: true,
-            });
-            const shell = [passageWall(-rear, 0, .36, width + .68, 1.88)];
-            for (const side of [-1, 1]) {
-              shell.push(passageWall(-rear / 2, side * (half + .15), rear, .30, 1.88));
-              shell.push(passageWall(0, side * (half + wing / 2), .54, wing, height + .335));
-            }
-            const leaf = { ...passageWall(0, 0, .27, width, height), bossPassageWall: false,
-              bossGateLeaf: true, bossGateDecor: true };
-            const overlaps = (wall, part, margin = 0) => Math.abs(wall.x - part.x) < (wall.w + part.w) / 2 + margin &&
-              Math.abs(wall.y - part.y) < (wall.h + part.h) / 2 + margin;
-            const parts = [...shell, leaf];
-            if (parts.some((part) => walls.some((wall) => overlaps(wall, part, .01)) ||
-                targets.some((actor) => overlaps({ ...actor, w: .80, h: .80 }, part)))) continue;
-            const clear = (spot) => withinTier(entrance, spot, .08) &&
-              spot.x >= .18 && spot.y >= .18 && spot.x <= map.width - .18 && spot.y <= map.height - .18 &&
-              content.isDry(state.elevation, state.terrain, spot.x, spot.y, .18);
-            if (!parts.every((part) => [-1, 1].every((sx) => [-1, 1].every((sy) =>
-              clear({ x: part.x + sx * part.w / 2, y: part.y + sy * part.h / 2 }))))) continue;
-            // Keep the closed room off the routes to the vanguard and the open room reachable by the boss.
-            const closedAccess = content.layoutAccess({ ...map, obstacles: [...walls, ...parts] }, .55, playerRadius);
-            if (!closedAccess || !closedAccess.reaches(end, playerRadius) ||
-                !checkedTargets.every((target) => closedAccess.reaches(target, playerRadius))) continue;
-            const radius = enemyTypes.boss.radius;
-            const route = { ...map, obstacles: [...walls, ...shell], spawn: end };
-            const passageAccess = content.layoutAccess(route, .64, radius);
-            if (!passageAccess || !passageAccess.link(end, start, radius) ||
-                !passageAccess.reaches(state.player, playerRadius)) continue;
-            const length = distance(start, end);
-            const steps = Math.ceil(length / .22);
-            const along = (step) => point(.82 - rear + length * step / steps, 0);
-            const clearWalk = Array.from({ length: steps }, (_, i) => i).every((i) =>
-              passageAccess.link(along(i), along(i + 1), radius));
-            if (!clearWalk) continue;
-
-            state.bossGate = { ...entrance, axis: aim.x ? "x" : "y", width, apertureHeight: height,
-              jambDepth: .54, jambOffset: 0, passageDepth: rear, progress: 0, start, end, aim };
-            state.obstacles = [...walls, ...parts];
-            return;
-          }
-        }
+    const width = 2.10;
+    const height = 2.65;
+    const frameHeight = height + .335;
+    const halfOpening = width / 2;
+    const candidates = [];
+    for (const wall of walls) {
+      if (wall.fixture || wall.gateDecor) continue;
+      const horizontal = wall.w > wall.h;
+      const length = horizontal ? wall.w : wall.h;
+      const depth = horizontal ? wall.h : wall.w;
+      if (length < width + 1.05 || depth > 4.4) continue;
+      const limit = (length - width - 1.05) / 2;
+      const cuts = new Set([0, Math.max(-limit, Math.min(limit, horizontal ? boss.x - wall.x : boss.y - wall.y))]);
+      for (let offset = .36; offset < limit + .001; offset += .36) {
+        cuts.add(-offset);
+        cuts.add(offset);
+      }
+      for (const cut of cuts) {
+        const x = wall.x + (horizontal ? cut : 0);
+        const y = wall.y + (horizontal ? 0 : cut);
+        const score = distance({ x, y }, boss) + Math.max(0, depth - .58) * 2.4;
+        candidates.push({ wall, x, y, horizontal, length, depth, cut, score });
       }
     }
-    if (!state.bossGate) installStandaloneBossGate();
-  }
 
-  function installStandaloneBossGate() {
-    const boss = state.pendingBoss;
-    if (!boss) return;
-    const directions = [{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 0, y: -1 }];
-    const radius = enemyTypes.boss.radius;
-    const endPoints = [boss, ...directions.map((aim) => walkingAttackTarget(boss, aim, 2.8, radius))];
-    const occupants = [state.player, ...livingEnemies()];
-    for (const end of endPoints) {
-      for (const aim of directions) {
-        const back = { x: -aim.x, y: -aim.y };
-        const start = walkingAttackTarget(end, back, 2.65, radius);
-        if (distance(start, end) < 2.64) continue;
-        const x = start.x + 1.15 * aim.x;
-        const y = start.y + 1.15 * aim.y;
-        const sideClear = [-1, 1].every((side) =>
-          walkable(x - aim.y * side * 1.04, y + aim.x * side * 1.04, .21));
-        if (!sideClear || !withinTier(start, end, .08)) continue;
-        const bypass = [-1, 1].some((side) => [-1.05, -.5, 0, .54].every((along) =>
-          walkable(x + aim.x * along - aim.y * side * 1.56, y + aim.y * along + aim.x * side * 1.56, playerRadius)));
-        if (!bypass) continue;
-        const gate = { x, y, axis: aim.x ? "x" : "y", width: 1.85, apertureHeight: 2.80,
-          jambDepth: 1.26, jambOffset: -.37 * (aim.x || aim.y), progress: 0, start, end: { x: end.x, y: end.y }, aim };
-        const leaf = { x, y, w: aim.x ? .27 : gate.width, h: aim.x ? gate.width : .27,
-          height: gate.apertureHeight, bossGateLeaf: true, bossGateDecor: true };
-        const posts = [-1, 1].map((side) => {
-          const across = side * (gate.width / 2 + .14);
-          return { x: x + (aim.x ? gate.jambOffset : across), y: y + (aim.x ? across : gate.jambOffset),
-            w: aim.x ? gate.jambDepth : .28, h: aim.x ? .28 : gate.jambDepth,
-            height: gate.apertureHeight + .20, bossGateDecor: true };
-        });
-        const parts = [leaf, ...posts];
-        if (occupants.some((actor) => parts.some((part) => Math.abs(actor.x - part.x) < part.w / 2 + .45 &&
-            Math.abs(actor.y - part.y) < part.h / 2 + .45))) continue;
-        state.bossGate = gate;
-        state.obstacles = [...state.obstacles, ...parts];
-        return;
+    for (const candidate of candidates.sort((a, b) => a.score - b.score)) {
+      const { wall, x, y, horizontal, length, depth, cut } = candidate;
+      const nearSide = Math.sign(horizontal ? state.player.y - y : state.player.x - x) || 1;
+      const radius = enemyTypes.boss.radius;
+      const slices = [[-length / 2, cut - halfOpening], [cut + halfOpening, length / 2]].map(([from, to]) => {
+        const offset = (from + to) / 2;
+        const span = to - from;
+        return { ...wall, x: wall.x + (horizontal ? offset : 0), y: wall.y + (horizontal ? 0 : offset),
+          w: horizontal ? span : depth, h: horizontal ? depth : span,
+          height: frameHeight, panelHeight: frameHeight, embeddedGateWall: true };
+      });
+      const openWalls = walls.flatMap((entry) => entry === wall ? slices : [entry]);
+      for (const side of [nearSide, -nearSide]) {
+        const aim = horizontal ? { x: 0, y: side } : { x: side, y: 0 };
+        const point = (along) => ({ x: x + aim.x * along, y: y + aim.y * along });
+        const front = depth / 2 + 1.12;
+        const end = point(front);
+        if (!access.reaches(end, playerRadius)) continue;
+        const approach = content.layoutAccess({ ...map, obstacles: openWalls, spawn: end }, .64, radius);
+        if (!approach?.reaches(state.player, playerRadius)) continue;
+        for (const rear of [depth / 2 + 1.95, depth / 2 + 1.35]) {
+          const start = point(-rear);
+          if (!withinTier(start, end, .08) || !approach.link(end, start, radius)) continue;
+          const steps = Math.ceil((front + rear) / .22);
+          const step = (index) => point(-rear + (front + rear) * index / steps);
+          if (!Array.from({ length: steps }, (_, i) => i).every((i) => approach.link(step(i), step(i + 1), radius))) continue;
+
+          // While closed, the gate fills exactly the same footprint as the removed wall section.
+          const leaf = { x, y, w: horizontal ? width : depth, h: horizontal ? depth : width,
+            height: frameHeight, bossGateLeaf: true, bossGateDecor: true };
+          state.bossGate = { x, y, axis: horizontal ? "y" : "x", width, apertureHeight: height,
+            jambDepth: depth, jambOffset: 0, panelOffset: (depth / 2 - .10) * side - .145,
+            passageDepth: rear + .18, embedded: true, progress: 0, start, end, aim };
+          state.obstacles = [...openWalls, leaf];
+          return;
+        }
       }
     }
   }

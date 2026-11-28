@@ -1462,7 +1462,7 @@
           w: alongX ? thickness : width,
           h: alongX ? width : thickness,
         }, z + bottom, z + top);
-        box(0, .145, span, .012, height * progress, height);
+        box(0, .145 + (object.panelOffset ?? 0), span, .012, height * progress, height);
         box(0, offset, span + .60, jamb + .09, height - .015, height + .335);
         for (const side of [-1, 1]) box(side * (span / 2 + .14), offset, .28, jamb, 0, height + .20);
       } else if (object.kind === "exit") {
@@ -2536,7 +2536,7 @@
   }
 
   function obstacleHeight(entry, palette) {
-    if (entry.bossPassageWall) return entry.panelHeight;
+    if (entry.embeddedGateWall || entry.bossPassageWall) return entry.panelHeight;
     if (entry.structural) return 1.48;
     const dressed = entry.w > 0.90 && entry.h > 0.74;
     return palette.obstacleHeight * (dressed ? 0.69 : 1);
@@ -2587,7 +2587,7 @@
   }
 
   function obstacle(context, camera, entry, palette, seconds, theme, reduced) {
-    if (!entry.bossPassageWall && palette.landscape && palette.landscape !== "rupture") {
+    if (!entry.embeddedGateWall && !entry.bossPassageWall && palette.landscape && palette.landscape !== "rupture") {
       rockObstacle(context, camera, entry, palette);
       return;
     }
@@ -3251,7 +3251,8 @@
     const half = span * 0.5;
     const alongX = entry.axis !== "y";
     const at = (side, z, depth = 0.19) => point(camera,
-      entry.x + (alongX ? depth : side), entry.y + (alongX ? side : depth), z);
+      entry.x + (alongX ? depth + (entry.panelOffset ?? 0) : side),
+      entry.y + (alongX ? side : depth + (entry.panelOffset ?? 0)), z);
     const face = (left, right, bottom, top, depth) => [at(left, bottom, depth), at(right, bottom, depth),
       at(right, top, depth), at(left, top, depth)];
     const { depth: jamb, offset } = rollingGateHousing(entry);
