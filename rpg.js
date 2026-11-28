@@ -2,6 +2,7 @@
   "use strict";
 
   const startingPoints = 5;
+  const maxStartingPointsPerStat = 2;
   const wisdomXpPercent = 5;
   const attributes = [
     { id: "strength", title: "힘", effect: "공격력 +4" },
@@ -71,7 +72,7 @@
     const build = {};
     for (const { id } of attributes) {
       const value = allocation[id];
-      const points = Number.isInteger(value) ? Math.max(0, Math.min(value, remaining)) : 0;
+      const points = Number.isInteger(value) ? Math.max(0, Math.min(value, remaining, maxStartingPointsPerStat)) : 0;
       build[id] = points;
       remaining -= points;
     }
@@ -237,7 +238,7 @@
     return { item, replaced, changes: compareStats(progress, equip(progress, gearId), resolveStats) };
   }
 
-  window.TowerRpg = { startingPoints, killRecoveryCap, attributes, slots, gearSlotCapacity,
+  window.TowerRpg = { startingPoints, maxStartingPointsPerStat, killRecoveryCap, attributes, slots, gearSlotCapacity,
     createProgress, gainXp, levelAttributeGains, killXp, getLevelStatus,
     rewardChoices, rewardGear, removeGear, equippedBySlot, equip, unequip, getStats, attackInterval, compareGear, compareStats,
     gainStat, retainEarnedStats };

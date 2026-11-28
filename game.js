@@ -850,12 +850,12 @@
       const points = allocation[plus.dataset.stat];
       row.querySelector("output").textContent = String(points);
       minus.disabled = points <= 0;
-      plus.disabled = remaining <= 0;
+      plus.disabled = remaining <= 0 || points >= rpg.maxStartingPointsPerStat;
     }
     const { maxHp, damage } = rpg.getStats(rpg.createProgress(allocation));
     state.player.hp = maxHp;
     state.player.maxHp = maxHp;
-    setText("overlay-copy", "최대 체력 " + maxHp + " · 공격력 " + damage);
+    setText("overlay-copy", "스탯별 최대 " + rpg.maxStartingPointsPerStat + "포인트 · 최대 체력 " + maxHp + " · 공격력 " + damage);
     elements["primary-action"].disabled = remaining > 0;
   }
 
@@ -3643,8 +3643,11 @@
     allocation[step.dataset.stat] += Number(step.dataset.step);
     updateBuild();
     if (step.disabled) {
-      const next = remainingPoints() ? step.parentElement.querySelector("button[data-step='1']") : elements["primary-action"];
-      next.focus({ preventScroll: true });
+      const plus = "button[data-step='1']:enabled";
+      const next = remainingPoints()
+        ? step.parentElement.querySelector(plus) ?? elements["build-stats"].querySelector(plus)
+        : elements["primary-action"];
+      next?.focus({ preventScroll: true });
     }
   });
   window.addEventListener("keydown", (event) => {
