@@ -853,7 +853,10 @@
     if (checkpoint) options.push({
       id: "resume", title: "이어하기", description: checkpoint.floor + (hasSavedScene(checkpoint) ? "층 저장 지점 · " : "층 입장부터 · ") +
         difficulties[normalizeDifficulty(checkpoint.run.difficulty)].name,
-      choose: () => { if (!restoreCheckpoint(checkpoint)) setupBuild(); },
+      choose: () => {
+        audio.unlock().then(refreshAudioUI);
+        if (!restoreCheckpoint(checkpoint)) setupBuild();
+      },
     });
     if (menu && !account?.blocked) options.push({
       id: "new-run", title: "새 등반", description: checkpoint ? "1층에 들어가면 새 기록이 저장됩니다." : "능력치 5점을 배분해 전투를 준비합니다.",
@@ -1592,6 +1595,7 @@
     if (state.mode === "playing" && state.shelter) saveVillage();
     syncHUD();
     renderPack();
+    audio?.effect?.("loot");
     notify(entry.item.title + (entry.kind === "gear" ? " 장착" : " 사용"));
     return true;
   }
@@ -1644,6 +1648,7 @@
     const recovery = recoverHealth(state.player.maxHp * .05 * levelsGained);
     const gains = rpg.levelAttributeGains(previous, run.progress).map(({ title, amount }) => title + " +" + amount);
     if (gains.length) {
+      audio?.effect?.("level");
       addEffect("level", state.player, 0.76);
       const messages = ["레벨 상승 · Lv. " + progress.level, ...gains];
       if (recovery > 0) messages.push("체력 " + statValue("maxHp", recovery, true));
@@ -1918,13 +1923,17 @@
       }
       enemy.windup = 0;
       enemy.chargeTime = 0;
+      delete enemy.coordinatingTurn;
+      cancelSupportAttack(enemy);
       enemy.recover = Math.max(enemy.recover ?? 0, weapon.stagger);
       enemy.cooldown = Math.max(enemy.cooldown, weapon.stagger);
     }
     if (!reducedMotion && player.attackVariant === 2) state.cameraShake = Math.max(state.cameraShake, 0.12);
+    audio?.effect?.("enemy-hit", armor < .50 ? "armor" : undefined);
     addEffect(armor < 0.50 ? "charge" : "hit", enemy, 0.28);
     if (!enemy.hp) {
       enemy.windup = 0;
+      cancelSupportAttack(enemy);
       if (enemy.kind === "boss") {
         state.bossTargets = [];
         state.projectiles = state.projectiles.filter((bolt) => !bolt.bossStyle);
@@ -1945,6 +1954,7 @@
     if (!strike || strike.at > state.elapsed) return;
     player.pendingStrike = undefined;
     const { weapon } = strike;
+    audio?.effect?.("attack", weapon.projectile ?? (weapon.stagger ? "heavy" : "blade"));
     if (weapon.projectile) {
       const speed = weapon.speed;
       const height = elevationAt(player);
@@ -2004,6 +2014,7 @@
       player.dashStrikeUntil = state.elapsed + 1;
     }
     player.invulnerable = Math.max(player.invulnerable, 0.23 + run.stats.dashGrace);
+    audio?.effect?.("dash");
     addEffect("dash", player, 0.30);
   }
 
@@ -2150,6 +2161,7 @@
           price: goldText(price) + " 금화", disabled: sold || run.gold < price, choose: () => {
             if (visit.purchases.length > 0 || run.gold < price) return;
             spendGold(price);
+            audio?.effect?.("purchase");
             if (item.kind === "stat") updateProgress(rpg.gainStat(run.progress, item.stat, item.amount));
             else if (comparison) receiveGear(comparison.gear, item);
             else recordReward(item.kind, item);
@@ -2290,6 +2302,7 @@
   function completeParry() {
     state.player.parryExpiresAt = null;
     if (state.player.weapon === "hooks") state.player.counterUntil = state.elapsed + .75;
+    audio?.effect?.("parry");
     addEffect("parry", state.player, .40);
     notify("패링 성공", 900);
   }
@@ -2346,6 +2359,8 @@
     state.hitCount++;
     player.invulnerable = Math.max(player.invulnerable, 0.56);
     state.cameraShake = Math.max(state.cameraShake, 0.19);
+    if (blocked === damage) audio?.effect?.("enemy-hit", "armor");
+    else audio?.effect?.("hurt");
     addEffect(blocked === damage ? "charge" : "hit", player, 0.35);
     return true;
   }
@@ -2511,6 +2526,7 @@
     if (!aim) return;
     const angle = Math.atan2(aim.y, aim.x) + spread;
     fireBolt(enemy, enemy.damage, { x: Math.cos(angle), y: Math.sin(angle) }, target, velocity);
+    audio?.effect?.("enemy-shot");
     addEffect("charge", enemy, 0.23);
   }
 
@@ -2609,6 +2625,7 @@
       x: Math.max(playerRadius, Math.min(state.map.width - playerRadius, x)),
       y: Math.max(playerRadius, Math.min(state.map.height - playerRadius, y)),
       kind: "mortar", radius: 1.32 + playerRadius * .4, remaining, active: false, damage: enemy.damage,
+      coordinatedBy: enemy.coordinatedBy,
     });
     state.mortarTargets.push(mark(player.x, player.y, enemy.windup));
     if (enemy.attackCue?.style === "cluster") {
@@ -2719,8 +2736,13 @@
         }
         continue;
       }
+      if (!marker.active && marker.coordinatedBy && !coordinatedAttackActive(marker.coordinatedBy)) {
+        marker.remaining = -.31;
+        continue;
+      }
       if (marker.remaining > 0 || marker.active) continue;
       marker.active = true;
+      if (marker.kind === "mortar") audio?.effect?.("mortar");
       state.cameraShake = Math.max(state.cameraShake, 0.15);
       if (distance(marker, state.player) <= marker.radius && withinTier(marker, state.player) &&
           (marker.kind !== "aftershock" || hasLineOfSight(marker, state.player))) receiveEnemyHit(marker.damage);
@@ -2809,6 +2831,89 @@
     return null;
   }
 
+  function enemyAttackRate(kind) {
+    return supportKinds.has(kind) ? Math.min(1.5, 1 + (state.floor - 1) * .01) : 1;
+  }
+
+  function nextEnemyCue(enemy) {
+    const turn = (enemy.patternSeed ?? enemy.id) ^ (enemy.patternTurn ?? 0);
+    return enemy.patternCount === 2 && (turn & 1) !== 0 ? secondEnemyPatterns[enemy.kind] : undefined;
+  }
+
+  function beginEnemyAttack(enemy, cue, windup, attackRate, reach, enraged = false) {
+    const kind = enemy.kind;
+    const type = enemyTypes[kind];
+    const player = state.player;
+    const aim = direction(player.x - enemy.x, player.y - enemy.y);
+    const gap = distance(enemy, player);
+    const pressured = state.alarm || (state.hazard === "pressure" && state.elapsed >= 20);
+    enemy.windup = windup;
+    enemy.attackCue = cue;
+    enemy.attackRange = reach;
+    enemy.patternTurn = (enemy.patternTurn ?? 0) + 1;
+    enemy.cooldown = windup + Math.max(.38, type.cooldown * difficultyRules().interval * (pressured ? .77 : 1) *
+      (enemy.faction === "creature" ? .88 : 1) * (enraged ? .83 : 1)) / attackRate;
+    enemy.guarded = false;
+    if (cue && !(enemy.coordinatedBy && cue.style === "lead")) {
+      aimEnemyPattern(enemy, cue, player, aim, gap, type.radius);
+    } else if (kind === "sentry" || kind === "marksman" || kind === "skirmisher" || kind === "saboteur") {
+      enemy.aimX = player.x;
+      enemy.aimY = player.y;
+    } else if (kind === "lancer" && aim) {
+      const travel = Math.min(4.6, gap + .42);
+      enemy.aimX = enemy.x + aim.x * travel;
+      enemy.aimY = enemy.y + aim.y * travel;
+    }
+    if (kind === "mortar") mortarSalvo(enemy, player, attackRate);
+  }
+
+  function cancelSupportAttack(enemy) {
+    const signal = enemy.coordinatedBy;
+    if (!signal) return;
+    delete enemy.coordinatedBy;
+    if (enemy.kind === "mortar") {
+      state.mortarTargets = state.mortarTargets.filter((marker) => marker.active ||
+        marker.coordinatedBy?.id !== signal.id || marker.coordinatedBy.turn !== signal.turn);
+    }
+  }
+
+  function coordinatedAttackActive(signal) {
+    return state.enemies.some((enemy) => enemy.id === signal.id && enemy.hp > 0 && enemy.coordinatingTurn === signal.turn);
+  }
+
+  function coordinateSupport(lead, leadCue, windup, formation, delta) {
+    const player = state.player;
+    const gap = distance(lead, player);
+    const chargeDelay = leadCue?.style === "dash" ? Math.max(0, gap - leadCue.width - playerRadius) / leadCue.velocity
+      : leadCue?.style === "rail" ? .48 + Math.max(0, Math.min(2, Math.round((gap - 1.15) / 1.45))) * .18
+      : lead.kind === "lancer" ? Math.max(0, gap - .75) / 10 : 0;
+    for (const shooter of formation.support) {
+      if (shooter.cooldown > delta || shooter.windup > 0 || shooter.volleyAt != null || distance(shooter, lead) >= 12) continue;
+      const kind = shooter.kind;
+      const type = enemyTypes[kind];
+      const shotGap = distance(shooter, player);
+      const mortar = kind === "mortar";
+      if (shotGap < Math.max(mortar ? 4.8 : 3.5, gap + .45) || shotGap > type.range * .94 ||
+          (!mortar && (!hasLineOfSight(shooter, player, true) || allyInFireLane(shooter, player, formation.front)))) continue;
+      const cue = nextEnemyCue(shooter);
+      const rate = enemyAttackRate(kind);
+      const flight = mortar ? 0 : Math.max(0, shotGap - .34 - playerRadius - .14) / (cue?.velocity ?? 8.2);
+      const normalWindup = (cue?.windup ?? type.windup * difficultyRules().windup) / rate;
+      const minimumTell = Math.max(.38, normalWindup * .76);
+      // Time the projectile contact after the melee hit, rather than making both enemies release simultaneously.
+      const leadWindup = Math.max(windup, minimumTell + flight - chargeDelay - .18);
+      if (leadWindup - windup > .48) continue;
+      const turn = (lead.patternTurn ?? 0) + 1;
+      lead.coordinatingTurn = turn;
+      shooter.coordinatedBy = { id: lead.id, turn };
+      shooter.engaged = true;
+      setFacing(shooter, direction(player.x - shooter.x, player.y - shooter.y));
+      beginEnemyAttack(shooter, cue, leadWindup + chargeDelay + .18 - flight, rate, type.range);
+      return leadWindup;
+    }
+    return windup;
+  }
+
   function updateEnemy(enemy, allies, delta, formation) {
     const player = state.player;
     const type = enemyTypes[enemy.kind];
@@ -2820,7 +2925,7 @@
     const ranged = enemy.kind === "sentry" || marksman;
     const runner = enemy.kind === "runner";
     const mortar = enemy.kind === "mortar";
-    const attackRate = ranged || mortar ? Math.min(1.5, 1 + (state.floor - 1) * 0.01) : 1;
+    const attackRate = enemyAttackRate(enemy.kind);
     const lancer = enemy.kind === "lancer";
     const boss = enemy.kind === "boss";
     const signatureBoss = boss && Boolean(enemy.bossProfile?.sequence?.length);
@@ -2862,12 +2967,20 @@
     }
 
     if (enemy.windup > 0) {
+      if (enemy.coordinatedBy && !coordinatedAttackActive(enemy.coordinatedBy)) {
+        cancelSupportAttack(enemy);
+        enemy.windup = 0;
+        enemy.attackCue = undefined;
+        enemy.cooldown = Math.min(enemy.cooldown, .30);
+        return;
+      }
       if (skirmisher && !enemy.attackCue && enemy.windup > type.windup * 0.59) {
         const step = delta * (enemy.id % 2 ? 2.3 : -2.3);
         enemy.moving = move(enemy, -enemy.facingY * step, enemy.facingX * step, type.radius);
       }
       enemy.windup = Math.max(0, enemy.windup - delta);
       if (enemy.windup === 0) {
+        delete enemy.coordinatedBy;
         enemy.recover = breaker ? 0.62 : boss || mortar || enemy.kind === "warden" ? 0.40 : 0.28;
         if (enemy.attackCue) {
           const cue = enemy.attackCue;
@@ -2921,37 +3034,23 @@
       enemy.engaged = true;
     }
     setFacing(enemy, aim);
-    const turn = (enemy.patternSeed ?? enemy.id) ^ (enemy.patternTurn ?? 0);
-    const useSecond = enemy.patternCount === 2 && (turn & 1) !== 0;
-    const cue = useSecond ? secondEnemyPatterns[enemy.kind] : undefined;
+    const cue = nextEnemyCue(enemy);
     const reach = cue?.reach ?? enemy.attackRange;
     const supportStep = supporting && enemy.engaged ? supportSteering(enemy, formation, type, sight) : null;
     const fireBlocked = supporting && ranged && allyInFireLane(enemy, player, formation.front);
-    if (!supportStep && !fireBlocked && !signatureBoss && sight && gap <= reach * 0.94 && enemy.cooldown <= 0
+    const lead = supporting && formation.lead;
+    const waitingForCharge = lead && lead.cooldown <= .30 && lead.windup <= 0 && !(lead.chargeTime > 0) &&
+      distance(lead, player) < enemyTypes[lead.kind].range + .9 && closeReach(lead, player) &&
+      hasLineOfSight(lead, player);
+    if (!supportStep && !fireBlocked && !waitingForCharge && !signatureBoss && sight && gap <= reach * .94 && enemy.cooldown <= 0
         && (ranged || mortar || lancer || hasLineOfSight(enemy, player))) {
-      const baseWindup = (cue?.windup ?? type.windup * difficulty.windup * (enraged ? 0.86 : 1)) / attackRate;
-      const windup = supporting ? baseWindup + Math.max(0, Math.min(.25, formation.lead.windup + .10 - baseWindup)) : baseWindup;
+      const baseWindup = (cue?.windup ?? type.windup * difficulty.windup * (enraged ? .86 : 1)) / attackRate;
       const nearbyWindup = !ranged && !mortar && !lancer && !boss && allies.some((ally) => ally !== enemy
-        && Math.abs(ally.windup - windup) < 0.14 && distance(ally, player) < 2.4);
+        && Math.abs(ally.windup - baseWindup) < .14 && distance(ally, player) < 2.4);
       if (nearbyWindup) return;
-      enemy.windup = windup;
-      enemy.attackCue = cue;
-      enemy.attackRange = reach;
-      enemy.patternTurn = (enemy.patternTurn ?? 0) + 1;
-      enemy.cooldown = windup + Math.max(0.38, type.cooldown * difficulty.interval * (pressured ? 0.77 : 1)
-        * (creature ? 0.88 : 1) * (enraged ? 0.83 : 1)) / attackRate;
-      enemy.guarded = false;
-      if (cue) {
-        aimEnemyPattern(enemy, cue, player, aim, gap, type.radius);
-      } else if (ranged || skirmisher || saboteur) {
-        enemy.aimX = player.x;
-        enemy.aimY = player.y;
-      } else if (lancer && aim) {
-        const travel = Math.min(4.6, gap + 0.42);
-        enemy.aimX = enemy.x + aim.x * travel;
-        enemy.aimY = enemy.y + aim.y * travel;
-      }
-      if (mortar) mortarSalvo(enemy, player, attackRate);
+      delete enemy.coordinatingTurn;
+      const windup = enemy === formation?.lead ? coordinateSupport(enemy, cue, baseWindup, formation, delta) : baseWindup;
+      beginEnemyAttack(enemy, cue, windup, attackRate, reach, enraged);
       return;
     }
     const flankWithLead = formation && enemy !== formation.lead && frontlineKinds.has(enemy.kind) &&
@@ -3098,7 +3197,10 @@
     const gate = state.bossGate;
     if (state.bossArrivalAt === undefined) {
       state.bossArrivalAt = state.elapsed + bossDoorDuration;
-      if (gate) gate.openingAt = state.elapsed;
+      if (gate) {
+        gate.openingAt = state.elapsed;
+        audio?.effect?.("boss-door");
+      }
       state.projectiles = [];
       state.playerProjectiles = [];
       state.player.pendingStrike = undefined;
@@ -3420,6 +3522,7 @@
       boss.recover = .75;
       state.effects.push({ kind: "boss-phase", bossStyle: boss.bossProfile?.style, x: boss.x, y: boss.y, life: .75, maxLife: .75 });
       addEffect("recovery", boss, .85, boss.hp - previousHp);
+      audio?.effect?.("boss-recovery");
       notify((stage.bossName ?? "수호자") + " · 2페이즈 · 체력 완전 회복", 1900);
       syncMusic();
       return;
@@ -3640,6 +3743,7 @@
   }
 
   function finishFloorRewards() {
+    audio?.effect?.("clear");
     run.cleared = state.floor;
     run.totalClears++;
     trackQuests({ type: "clear", trial: state.kind });
@@ -4170,11 +4274,15 @@
   });
 
   const previewStats = rpg.getStats(rpg.createProgress());
-  window.TowerAdmin?.setup({ maxFloor: content.floorCount, move(floor) {
-    if (!Number.isInteger(floor) || floor < 1 || floor > content.floorCount) return;
-    if (adminRun && run) enterFloor(floor, run.stats.maxHp);
-    else newRun(floor);
-  } });
+  window.TowerAdmin?.setup({
+    maxFloor: content.floorCount,
+    revoke() { if (adminRun) setupTitle(true); },
+    move(floor) {
+      if (!Number.isInteger(floor) || floor < 1 || floor > content.floorCount) return;
+      if (adminRun && run) enterFloor(floor, run.stats.maxHp);
+      else newRun(floor);
+    },
+  });
   setupTitle();
   campaign?.setup(checkpointKey, () => {
     if (state.mode === "title" && elements.overlay.dataset.titleMenu === "true") setupTitle(true);

@@ -67,7 +67,11 @@
   }
 
   function outputLevel() {
-    return enabled && visible ? maxOutputGain * masterVolume / 100 : 0;
+    return visible ? maxOutputGain * masterVolume / 100 : 0;
+  }
+
+  function effectsActive() {
+    return visible && masterVolume > 0 && context?.state === "running";
   }
 
   function setVolume(value) {
@@ -78,7 +82,6 @@
   }
 
   function unlock() {
-    if (!enabled) return Promise.resolve(false);
     try {
       if (!context) {
         const Audio = window.AudioContext || window.webkitAudioContext;
@@ -90,7 +93,7 @@
         limiter.threshold.value = -14;
         limiter.ratio.value = 3;
         output.connect(limiter).connect(context.destination);
-        noise = context.createBuffer(1, Math.floor(context.sampleRate * 0.25), context.sampleRate);
+        noise = context.createBuffer(1, Math.floor(context.sampleRate * 0.42), context.sampleRate);
         const samples = noise.getChannelData(0);
         let seed = 35191;
         for (let i = 0; i < samples.length; i++) {
@@ -100,10 +103,13 @@
         openBus();
       }
       return context.resume().then(() => {
-        if (!enabled || !visible) return false;
+        if (!visible) return false;
         output.gain.setTargetAtTime(outputLevel(), context.currentTime, 0.035);
-        timer ??= window.setInterval(pump, 42);
-        pump();
+        if (enabled) {
+          bus.gain.setTargetAtTime(1, context.currentTime, 0.055);
+          timer ??= window.setInterval(pump, 42);
+          pump();
+        }
         return active();
       }).catch(() => false);
     } catch {
@@ -115,7 +121,7 @@
     enabled = Boolean(value);
     try { localStorage.setItem(preference, enabled ? "on" : "off"); } catch {}
     if (enabled) return unlock();
-    if (context) output.gain.setTargetAtTime(0, context.currentTime, 0.025);
+    if (context) bus.gain.setTargetAtTime(0, context.currentTime, 0.025);
     window.clearInterval(timer);
     timer = undefined;
     return Promise.resolve(false);
@@ -123,7 +129,7 @@
 
   function setVisible(value) {
     visible = Boolean(value);
-    if (!context || !enabled) return;
+    if (!context) return;
     output.gain.setTargetAtTime(outputLevel(), context.currentTime, 0.026);
     if (visible) pump();
   }
@@ -137,7 +143,7 @@
     }
     bus = context.createGain();
     bus.gain.value = 0;
-    bus.gain.setTargetAtTime(1, time, 0.055);
+    if (enabled) bus.gain.setTargetAtTime(1, time, 0.055);
     bus.connect(output);
     nextTime = time + 0.060;
     step = 0;
@@ -235,14 +241,14 @@
   }
 
   function dieTick(index) {
-    if (!active()) return;
+    if (!effectsActive()) return;
     const time = context.currentTime + 0.012;
     tone(436 + index * 123, 318 + index * 109, time, 0.075, "triangle", 0.050, 2300, output);
     grains(time, 0.045, 1030 + index * 400, 0.038, output);
   }
 
   function deviceSignal(kind) {
-    if (!active()) return;
+    if (!effectsActive()) return;
     const time = context.currentTime + 0.016;
     if (kind === "valve") {
       tone(83, 49, time, 0.23, "triangle", 0.063, 510, output);
@@ -253,6 +259,94 @@
     }
   }
 
-  window.TowerAudio = { active, cue, dieTick, deviceSignal, setEnabled, setVisible, setVolume, unlock,
+  const effectTimes = new Map();
+
+  function effect(name, variant) {
+    if (!effectsActive()) return;
+    const now = context.currentTime;
+    if (now - (effectTimes.get(name) ?? -Infinity) < 0.065) return;
+    const time = now + 0.008;
+    const strike = (frequency, end, duration, wave, volume, cutoff, offset = 0) =>
+      tone(frequency, end, time + offset, duration, wave, volume, cutoff, output);
+    const noiseBurst = (duration, frequency, volume, offset = 0) =>
+      grains(time + offset, duration, frequency, volume, output);
+    switch (name) {
+      case "attack":
+        if (variant === "bow" || variant === "arrow") {
+          strike(288, 114, .11, "triangle", .105, 2250);
+          noiseBurst(.078, 3900, .076, .027);
+        } else if (variant === "magic" || variant === "spell") {
+          strike(390, 771, .14, "sine", .093, 3200);
+          strike(925, 517, .205, "triangle", .077, 2500, .047);
+          noiseBurst(.098, 3550, .045, .016);
+        } else if (variant === "heavy") {
+          noiseBurst(.18, 1020, .16);
+          strike(201, 77, .17, "triangle", .092, 1100);
+        } else {
+          noiseBurst(.073, 3200, .125);
+          noiseBurst(.10, 1490, .105, .028);
+        }
+        break;
+      case "enemy-hit":
+        strike(variant === "armor" ? 840 : 188, variant === "armor" ? 538 : 73,
+          .15, "triangle", .15, 1900);
+        noiseBurst(.075, variant === "armor" ? 3150 : 975, .14);
+        break;
+      case "hurt":
+        strike(165, 48, .24, "sawtooth", .21, 475);
+        noiseBurst(.13, 770, .16);
+        break;
+      case "dash":
+        noiseBurst(.18, 1960, .145);
+        noiseBurst(.15, 910, .095, .052);
+        break;
+      case "parry":
+        strike(1740, 1215, .16, "triangle", .17, 4100);
+        strike(989, 1401, .28, "sine", .115, 3900, .042);
+        noiseBurst(.07, 3840, .14);
+        break;
+      case "enemy-shot":
+        strike(295, 86, .13, "triangle", .132, 1325);
+        noiseBurst(.09, 2150, .098);
+        break;
+      case "mortar":
+        strike(103, 36, .27, "sine", .22, 430);
+        noiseBurst(.26, 475, .205, .020);
+        break;
+      case "boss-door":
+        strike(132, 67, .38, "sawtooth", .14, 455);
+        noiseBurst(.32, 880, .17);
+        noiseBurst(.26, 2145, .10, .18);
+        strike(246, 141, .20, "triangle", .12, 1400, .37);
+        break;
+      case "boss-recovery":
+        strike(72, 125, .39, "triangle", .18, 1000);
+        noiseBurst(.29, 1665, .09, .07);
+        strike(350, 710, .27, "sine", .17, 2000, .12);
+        break;
+      case "clear":
+        strike(392, null, .17, "triangle", .1, 2700);
+        strike(587, null, .26, "triangle", .13, 2700, .12);
+        break;
+      case "loot":
+        strike(740, 850, .11, "triangle", .095, 4400);
+        strike(1109, null, .19, "sine", .10, 3800, .063);
+        break;
+      case "level":
+        for (const [index, pitch] of [440, 554, 659, 880].entries()) {
+          strike(pitch, null, .21, "triangle", .09, 2720, index * .072);
+        }
+        break;
+      case "purchase":
+        strike(1050, 700, .09, "triangle", .085, 3300);
+        noiseBurst(.075, 2900, .077);
+        strike(1350, 940, .082, "triangle", .068, 3700, .057);
+        break;
+      default: return;
+    }
+    effectTimes.set(name, now);
+  }
+
+  window.TowerAudio = { active, cue, dieTick, deviceSignal, effect, setEnabled, setVisible, setVolume, unlock,
     volume: () => masterVolume, wantsSound: () => enabled };
 })();

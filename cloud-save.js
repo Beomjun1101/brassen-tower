@@ -2,6 +2,7 @@
   "use strict";
 
   const config = window.BrassenCloudConfig;
+  const adminGitHubId = "286293704";
   const configured = window.location.protocol !== "file:" && Boolean(config?.url && config?.publishableKey);
   const listeners = new Set();
   let status = { configured, loading: configured, user: null, error: null };
@@ -59,6 +60,30 @@
     return id;
   }
 
+  async function verifyAdmin(expectedUser) {
+    if (!expectedUser || status.user?.id !== expectedUser) return false;
+    const client = await ready;
+    if (!client) return false;
+    const { data, error } = await client.auth.getSession();
+    if (error) throw error;
+    const session = data?.session;
+    if (!session || session.user?.id !== expectedUser) return false;
+    const token = session.access_token;
+    const [verifiedUser, verifiedClaims] = await Promise.all([
+      client.auth.getUser(token), client.auth.getClaims(token),
+    ]);
+    if (verifiedUser.error || verifiedClaims.error) throw verifiedUser.error ?? verifiedClaims.error;
+    const user = verifiedUser.data?.user;
+    const claims = verifiedClaims.data?.claims;
+    if (status.user?.id !== expectedUser || user?.id !== expectedUser || claims?.sub !== expectedUser ||
+        !claims.amr?.some(({ method }) => method === "oauth")) return false;
+
+    const oauthIdentities = user.identities?.filter(({ provider }) => provider !== "email" && provider !== "phone") ?? [];
+    const [identity] = oauthIdentities;
+    return oauthIdentities.length === 1 && identity.provider === "github" &&
+      String(identity.provider_id ?? identity.identity_data?.sub ?? identity.id) === adminGitHubId;
+  }
+
   window.BrassenCloud = {
     subscribe(listener) {
       listeners.add(listener);
@@ -81,6 +106,7 @@
       const { error } = await client.auth.signOut({ scope: "local" });
       if (error) throw error;
     },
+    verifyAdmin,
     async load(expectedUser) {
       return campaignRequest("load", expectedUser);
     },
