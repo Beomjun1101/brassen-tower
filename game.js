@@ -362,6 +362,9 @@
   }
 
   function viewFloor(number, data, health, mode, damageMultiplier = 1) {
+    const enemies = data.enemies.map((enemy, index) => createEnemy(
+      enemy.kind === "boss" ? { ...enemy, bossProfile: data.bossProfile } : enemy, index, number, damageMultiplier));
+    const pendingBoss = data.kind === "boss" ? enemies.find((enemy) => enemy.kind === "boss") : undefined;
     return {
       floor: number,
       kind: data.kind, theme: data.theme, region: data.region, revealed: false,
@@ -369,8 +372,8 @@
       facility: data.facility ?? null,
       elevation: data.elevation ?? null,
       player: createPlayer(health, run?.stats ?? previewStats, data.spawn),
-      enemies: data.enemies.map((enemy, index) => createEnemy(enemy.kind === "boss" ? { ...enemy, bossProfile: data.bossProfile } : enemy,
-        index, number, damageMultiplier)),
+      enemies: pendingBoss ? enemies.filter((enemy) => enemy !== pendingBoss) : enemies,
+      pendingBoss,
       obstacles: data.obstacles,
       terrain: (data.terrain ?? []).map((surface) => ({ ...surface, status: "idle" })),
       items: data.items.map((item) => ({ ...item, collected: false, active: item.kind !== "exit" })),
@@ -587,7 +590,7 @@
       if (state.shelter) {
         trackName = audio.cue("shelter");
       } else {
-        const boss = state.kind === "boss";
+        const boss = state.kind === "boss" && !state.pendingBoss;
         const roster = livingEnemies().map((enemy) => enemy.kind + (enemy.elite ? " elite" : "")).sort();
         const phase = boss ? (state.bossPhaseTwo ? 1 : 0) + (state.bossOverdrive ? 1 : 0) : state.wave - 1 + Number(state.alarm);
         trackName = audio.cue(boss ? "boss" : state.theme, { theme: state.theme, floor: state.floor, foes: roster.join("/"), phase });
@@ -1009,6 +1012,7 @@
     state.cameraShake = reducedMotion ? 0 : 0.14;
     enterPlayableScene();
     const messages = [state.floor === 1 ? "경비대 접근 · 가까이서 공격하세요" : stage.title];
+    if (state.pendingBoss) messages.push("선발대를 모두 쓰러뜨리면 보스가 등장합니다");
     if (state.floor === 2 && state.elevation) messages.push("계단으로 상단과 하단을 오갈 수 있습니다");
     if (run.pendingGear) {
       messages.push(run.pendingGear + " 장착");
@@ -1386,7 +1390,8 @@
     const hasStatus = Boolean(run) && dialogModes.has(state.mode);
     elements["status-trigger"].hidden = !hasStatus;
     elements["pause-trigger"].hidden = !hasStatus;
-    const objective = state.departure && !state.shelter ? departurePrompt() : stage?.objective;
+    const objective = state.departure && !state.shelter ? departurePrompt()
+      : state.pendingBoss ? "선발대를 모두 쓰러뜨리세요." : stage?.objective;
     setText("objective", state.revealed ? objective : "");
     if (minimapSection.hidden !== !state.revealed) minimapSection.hidden = !state.revealed;
     setText("health-label", Math.ceil(state.player.hp) + " / " + maxHp);
@@ -1413,6 +1418,8 @@
       if (boss) {
         progress = (stage.bossName ?? "수호자") + " " + Math.ceil(boss.hp / boss.maxHp * 100) + "%";
         progress += state.bossPhaseTwo ? " · 2페이즈" : " · 1페이즈";
+      } else if (state.pendingBoss) {
+        progress = state.bossArrivalAt ? "보스 등장 중" : "선발대 · 남은 적 " + alive.length;
       }
     }
     if (!state.revealed || state.shelter || state.combatComplete) progress = "";
@@ -2901,6 +2908,39 @@
     syncMusic();
   }
 
+  function updateBossArrival(remaining) {
+    const boss = state.pendingBoss;
+    if (!boss || remaining > 0 || state.player.pendingHits.length) return;
+    if (state.bossArrivalAt === undefined) {
+      state.bossArrivalAt = state.elapsed + .65;
+      state.projectiles = [];
+      state.mortarTargets = [];
+      notify("선발대 격파 · 보스 접근");
+      return;
+    }
+    if (state.elapsed < state.bossArrivalAt) return;
+
+    if (distance(boss, state.player) < 1.8) {
+      const clearance = enemyTypes.boss.radius;
+      const away = Math.atan2(boss.y - state.player.y, boss.x - state.player.x);
+      const positions = Array.from({ length: 8 }, (_, index) => {
+        const angle = away + index * Math.PI / 4;
+        return walkingAttackTarget(boss, { x: Math.cos(angle), y: Math.sin(angle) }, 2.8, clearance);
+      });
+      const open = positions.find((position) => distance(position, state.player) >= 1.8);
+      if (open) Object.assign(boss, open);
+    }
+
+    state.enemies.push(boss);
+    delete state.pendingBoss;
+    delete state.bossArrivalAt;
+    state.bossShockCooldown = .9;
+    state.effects.push({ kind: "boss-phase", bossStyle: boss.bossProfile?.style, x: boss.x, y: boss.y, life: .75, maxLife: .75 });
+    state.cameraShake = Math.max(state.cameraShake, .14);
+    notify((stage.bossName ?? "수호자") + " 등장");
+    syncMusic();
+  }
+
   function updateAlarm() {
     if (!state.timeLimit || state.elapsed < state.timeLimit) return;
     if (!state.alarm) {
@@ -3332,7 +3372,9 @@
     }
 
     updateAlarm();
-    updateCombatWave(livingEnemies().length);
+    const remaining = livingEnemies().length;
+    updateCombatWave(remaining);
+    updateBossArrival(remaining);
     const alive = livingEnemies();
     const boss = state.enemies.find((enemy) => enemy.kind === "boss");
     const combatCleared = state.kind === "combat" && !alive.length && (state.wave > 1 || !stage.wave.length);
